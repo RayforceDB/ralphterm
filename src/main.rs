@@ -23,7 +23,7 @@ use store::{SessionRecord, SessionStore};
 
 #[derive(Debug, Parser)]
 #[command(name = "ralphterm")]
-#[command(about = "PTY-backed Claude/Codex multiplexor API", long_about = None)]
+#[command(about = "Terminal-native Claude/Codex orchestration API", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

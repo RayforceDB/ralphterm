@@ -1,10 +1,10 @@
-# PTY Multiplexor Implementation Plan
+# RalphTerm PTY Multiplexor Plan
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Build a Rust service that preserves ralphex-style autonomous planning/review workflows while replacing `claude -p`/one-shot CLI automation with real interactive PTY sessions for Claude Code and Codex.
+**Goal:** Build a Rust service for autonomous planning, implementation, and review workflows while replacing brittle one-shot CLI automation with real interactive PTY sessions for Claude Code and Codex.
 
-**Architecture:** `ralphterm` is a local daemon. It spawns one official CLI per session inside a real PTY, pastes prompts as user input, streams terminal output over WebSocket, and exposes REST controls for input, resize, cancel, transcript, and status. Ralphex can later call this daemon as an executor backend instead of invoking `claude --print` directly.
+**Architecture:** `ralphterm` is a local daemon. It spawns one official CLI per session inside a real PTY, pastes prompts as user input, streams terminal output over WebSocket, and exposes REST controls for input, resize, cancel, transcript, and status. Higher-level workflow engines call this daemon instead of invoking AI CLIs directly.
 
 **Tech Stack:** Rust 2021, tokio, axum, portable-pty, serde, uuid, dashmap. Tests use unit tests first, then API integration tests using harmless shell commands before real Claude/Codex smoke tests.
 
@@ -12,27 +12,28 @@
 
 ## Constraints
 
-- Do not call provider private APIs.
-- Do not emulate auth or bypass product limits.
-- Do not depend on `claude -p`/`--print` for normal operation.
-- Use official local CLIs exactly as a user would: `claude`, `codex`, or user-provided command.
-- Approval automation must be explicit policy, visible in logs, and conservative by default.
+- Do not use `claude -p` or `--print` as the normal path.
+- Do not call private provider APIs.
+- Do not store provider credentials.
+- Bind to `127.0.0.1` by default.
+- Let the official CLI own login, identity, safety prompts, and rate limits.
+- Make approvals explicit and auditable.
 - Secrets stay in the user CLI/keychain/profile. The mux stores no provider credentials.
 
-## Ralphex Compatibility Targets
+## Workflow Compatibility Targets
 
-Mirror the current ralphex executor contract:
+Mirror the executor contract required by autonomous engineering tools:
 
 - Input: a long prompt string.
-- Output: streamed text chunks plus final transcript.
-- Signals: `COMPLETED`, `ALL_TASKS_DONE`, `FAILED`, `QUESTION`, `PLAN_READY`, `REVIEW_DONE`.
+- Output: streamed text plus final transcript.
+- Signals: `COMPLETED`, `FAILED`, `QUESTION`, `PLAN_READY`, `REVIEW_DONE`.
 - Controls: cancellation, idle timeout, session timeout.
 - Metadata: exit code, detected signal, recent text, transcript path.
-- Future adapter: a small `ralphex` executor wrapper can translate `Executor.Run(ctx, prompt)` into `POST /v1/sessions` + WebSocket streaming.
+- Adapter: a small CLI wrapper can translate `run(prompt)` into `POST /v1/sessions` + WebSocket streaming.
 
 ## Task 1: Keep the MVP compiling
 
-**Objective:** Preserve the current checked-in Rust skeleton and keep `cargo check` green.
+**Objective:** Ensure the baseline daemon builds before adding features.
 
 **Files:**
 - Modify: `Cargo.toml`
@@ -42,120 +43,125 @@ Mirror the current ralphex executor contract:
 - Modify: `src/signals.rs`
 
 **Steps:**
-1. Run `~/.cargo/bin/cargo check`.
-2. Fix any compile errors.
-3. Run `~/.cargo/bin/cargo fmt`.
-4. Run `~/.cargo/bin/cargo test`.
-5. Commit: `feat: add pty mux api skeleton`.
+1. Run `cargo fmt --all -- --check`.
+2. Run `cargo clippy --all-targets --all-features -- -D warnings`.
+3. Run `cargo test --all`.
+4. Fix only compile/lint/test failures.
+5. Commit: `chore: keep mvp build green`.
 
-## Task 2: Add shell-command test agent
+## Task 2: Add deterministic shell-agent API tests
 
-**Objective:** Allow deterministic tests without Claude/Codex by creating sessions with `command=/bin/sh` and args.
-
-**Files:**
-- Modify: `src/pty_agent.rs`
-- Modify: `src/store.rs`
-- Create: `tests/api_shell.rs`
-
-**Steps:**
-1. Add an integration test that starts the server on an ephemeral port.
-2. `POST /v1/sessions` with `agent=claude`, `command=/bin/sh`, `args=["-lc", "cat; echo COMPLETED"]`, prompt `hello`.
-3. Subscribe to `/events` and assert output contains `hello` and signal becomes `COMPLETED`.
-4. Assert `/transcript` returns the whole PTY transcript.
-5. Commit: `test: cover pty session lifecycle with shell agent`.
-
-## Task 3: Fix PTY resize properly
-
-**Objective:** Wire `/resize` to the active PTY master instead of the current accepted/no-op placeholder.
+**Objective:** Prove session lifecycle without real Claude/Codex dependencies.
 
 **Files:**
+- Create: `tests/session_api.rs`
+
+**Test fixture:**
+
+```bash
+/bin/sh -lc 'read line; printf "%s\n" "$line"; echo COMPLETED'
+```
+
+**Assertions:**
+- `POST /v1/sessions` returns an id.
+- status eventually becomes `exited`.
+- signal is `COMPLETED`.
+- exit code is `0`.
+- transcript contains the prompt and completion marker.
+
+## Task 3: Implement real PTY resize
+
+**Objective:** Wire `POST /resize` to `portable-pty` resize instead of consuming placeholder messages.
+
+**Files:**
 - Modify: `src/store.rs`
 
 **Steps:**
-1. Refactor session internals so the PTY master can be shared safely for resize while reader/writer handles remain active.
-2. Add a unit/integration test using `stty size` to prove resize affects the child PTY.
-3. Commit: `feat: implement live pty resize`.
+1. Store a resize-capable PTY handle in `SessionHandle`.
+2. Update `SessionStore::resize` to call `resize(PtySize { rows, cols, ... })`.
+3. Add a unit-level test around request validation.
+4. Commit: `feat: resize live pty sessions`.
 
 ## Task 4: Add idle/session timeouts
 
-**Objective:** Match ralphex safety behavior for hung CLIs.
+**Objective:** Protect operators from hung CLIs.
 
 **Files:**
-- Modify: `src/main.rs`
-- Modify: `src/store.rs`
 - Modify: `src/pty_agent.rs`
+- Modify: `src/store.rs`
 
 **Steps:**
-1. Add `idle_timeout_ms` and `session_timeout_ms` to `CreateSessionRequest`.
-2. Reset idle deadline on every output chunk.
-3. Kill the child process on timeout and emit `SessionEvent::Error` with a typed reason.
-4. Test with `/bin/sh -lc 'sleep 60'` and short timeout.
+1. Add optional `idle_timeout_secs` and `max_runtime_secs` to `SessionConfig`.
+2. Track last output timestamp.
+3. Kill and mark timed out when limits are exceeded.
+4. Emit timeout events.
 5. Commit: `feat: enforce session and idle timeouts`.
 
-## Task 5: Add ralphex executor adapter
+## Task 5: Add generic executor adapter
 
-**Objective:** Let ralphex use this mux as a drop-in execution backend.
+**Objective:** Let external workflow tools use RalphTerm as a drop-in execution backend.
 
 **Files:**
 - Create: `adapters/ralphterm-exec/README.md`
 - Create: `adapters/ralphterm-exec/ralphterm-exec.sh`
-- Later modify upstream ralphex `pkg/executor` only after adapter works.
 
 **Steps:**
 1. Script reads prompt from stdin.
-2. Script creates a mux session.
-3. Script streams WebSocket output to stdout.
-4. Script exits non-zero if mux session exits failed/timed out.
-5. Configure ralphex with `claude_command = /path/to/ralphterm-exec.sh` and empty args.
-6. Commit: `feat: add ralphex executor adapter`.
+2. Script posts to local RalphTerm daemon.
+3. Script streams output to stdout.
+4. Script exits non-zero if the mux session fails or times out.
+5. Document configuration for any workflow engine that supports custom commands.
+6. Commit: `feat: add generic executor adapter`.
 
 ## Task 6: Add approval policy hooks
 
-**Objective:** Support real-user workflows without silent unsafe bypasses.
+**Objective:** Detect approval prompts and surface them safely.
 
 **Files:**
-- Create: `src/approval.rs`
+- Create: `src/approvals.rs`
 - Modify: `src/store.rs`
-- Modify: `src/main.rs`
+- Modify: `src/signals.rs`
 
 **Steps:**
-1. Define policy enum: `manual`, `allow-readonly`, `allow-configured-patterns`.
-2. Detect common Claude/Codex approval prompts in PTY output.
-3. Emit `approval-requested` event with prompt text.
-4. Only send approval keys if the policy explicitly matches.
-5. Log every auto-approval event in transcript metadata.
-6. Commit: `feat: add explicit approval policy hooks`.
+1. Add `ApprovalRequest` struct.
+2. Detect common prompt phrases in output.
+3. Emit `approval-requested` event.
+4. Add manual approval input endpoint.
+5. Add a strict allowlist-based auto policy only after manual mode works.
+6. Commit: `feat: add approval request events`.
 
-## Task 7: Real CLI smoke tests
+## Task 7: Add opt-in real CLI smoke tests
 
-**Objective:** Verify the mux works with installed Claude/Codex without relying on private internals.
+**Objective:** Verify real Claude/Codex PTY behavior without making CI depend on logged-in CLIs.
 
 **Files:**
 - Create: `scripts/smoke-claude.sh`
 - Create: `scripts/smoke-codex.sh`
 
 **Steps:**
-1. Check `command -v claude` and `command -v codex`.
-2. Start mux locally.
-3. Run harmless prompt: `Reply with COMPLETED only.`
-4. Verify signal detection.
-5. Do not run in CI unless credentials are present and user opts in.
+1. Check `command -v claude` or `command -v codex`.
+2. Check auth status if available.
+3. Start a short local session.
+4. Require user opt-in env var, e.g. `RALPHTERM_SMOKE_REAL_CLI=1`.
+5. Never run real CLI smoke tests in default CI.
 6. Commit: `test: add opt-in real cli smoke tests`.
 
-## Task 8: Ralphex feature parity roadmap
+## Task 8: Feature parity roadmap
 
-**Objective:** Document parity against ralphex features so users can keep evaluating the workflow.
+**Objective:** Document the workflow features RalphTerm must own directly.
 
 **Files:**
-- Create: `docs/ralphex-compat.md`
+- Create: `docs/milestones/m1-autonomous-engineering.md`
 
 **Content:**
-- Task execution loop: adapter target.
-- Review phases: supported through repeated mux sessions.
-- Plan creation: supported through interactive session plus QUESTION/PLAN_READY signals.
-- Web dashboard: mux API can feed ralphex dashboard or its own UI.
-- Notifications: remain in ralphex initially.
-- Worktrees/git: remain in ralphex initially.
-- Docker isolation: future.
+- task intake
+- planning phase
+- implementation phase
+- review phase
+- dashboard
+- notifications
+- workspaces
+- persistence
+- safety controls
 
-**Commit:** `docs: add ralphex compatibility roadmap`.
+**Commit:** `docs: add autonomous workflow milestone`

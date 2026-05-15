@@ -2,7 +2,7 @@
 name = "ralphterm"
 version = "0.1.0"
 edition = "2021"
-description = "PTY-backed Claude/Codex multiplexor API for ralphex-style autonomous workflows"
+description = "Terminal-native orchestration API for interactive Claude/Codex agent workflows"
 license = "MIT"
 
 [dependencies]
