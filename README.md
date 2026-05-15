@@ -1,4 +1,4 @@
-# ralphex-mux
+# ralphterm
 
 PTY-backed agent multiplexor for ralphex-style workflows.
 
@@ -16,7 +16,7 @@ Goal: keep the automation surface compatible with tools that expect one-shot age
 ## Local API sketch
 
 ```bash
-ralphex-mux serve --bind 127.0.0.1:7878
+ralphterm serve --bind 127.0.0.1:7878
 ```
 
 ```http

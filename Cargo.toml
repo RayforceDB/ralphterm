@@ -1,5 +1,5 @@
 [package]
-name = "ralphex-mux"
+name = "ralphterm"
 version = "0.1.0"
 edition = "2021"
 description = "PTY-backed Claude/Codex multiplexor API for ralphex-style autonomous workflows"

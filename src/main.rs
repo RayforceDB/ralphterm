@@ -22,7 +22,7 @@ use pty_agent::{AgentKind, SessionConfig, SessionInput};
 use store::{SessionRecord, SessionStore};
 
 #[derive(Debug, Parser)]
-#[command(name = "ralphex-mux")]
+#[command(name = "ralphterm")]
 #[command(about = "PTY-backed Claude/Codex multiplexor API", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -121,7 +121,7 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .with_context(|| format!("bind {bind}"))?;
-    tracing::info!(%bind, "serving ralphex-mux");
+    tracing::info!(%bind, "serving ralphterm");
     axum::serve(listener, app).await.context("serve")
 }
 

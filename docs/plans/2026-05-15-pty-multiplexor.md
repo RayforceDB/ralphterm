@@ -4,7 +4,7 @@
 
 **Goal:** Build a Rust service that preserves ralphex-style autonomous planning/review workflows while replacing `claude -p`/one-shot CLI automation with real interactive PTY sessions for Claude Code and Codex.
 
-**Architecture:** `ralphex-mux` is a local daemon. It spawns one official CLI per session inside a real PTY, pastes prompts as user input, streams terminal output over WebSocket, and exposes REST controls for input, resize, cancel, transcript, and status. Ralphex can later call this daemon as an executor backend instead of invoking `claude --print` directly.
+**Architecture:** `ralphterm` is a local daemon. It spawns one official CLI per session inside a real PTY, pastes prompts as user input, streams terminal output over WebSocket, and exposes REST controls for input, resize, cancel, transcript, and status. Ralphex can later call this daemon as an executor backend instead of invoking `claude --print` directly.
 
 **Tech Stack:** Rust 2021, tokio, axum, portable-pty, serde, uuid, dashmap. Tests use unit tests first, then API integration tests using harmless shell commands before real Claude/Codex smoke tests.
 
@@ -97,8 +97,8 @@ Mirror the current ralphex executor contract:
 **Objective:** Let ralphex use this mux as a drop-in execution backend.
 
 **Files:**
-- Create: `adapters/ralphex-mux-exec/README.md`
-- Create: `adapters/ralphex-mux-exec/ralphex-mux-exec.sh`
+- Create: `adapters/ralphterm-exec/README.md`
+- Create: `adapters/ralphterm-exec/ralphterm-exec.sh`
 - Later modify upstream ralphex `pkg/executor` only after adapter works.
 
 **Steps:**
@@ -106,7 +106,7 @@ Mirror the current ralphex executor contract:
 2. Script creates a mux session.
 3. Script streams WebSocket output to stdout.
 4. Script exits non-zero if mux session exits failed/timed out.
-5. Configure ralphex with `claude_command = /path/to/ralphex-mux-exec.sh` and empty args.
+5. Configure ralphex with `claude_command = /path/to/ralphterm-exec.sh` and empty args.
 6. Commit: `feat: add ralphex executor adapter`.
 
 ## Task 6: Add approval policy hooks
