@@ -194,7 +194,7 @@ async fn get_transcript(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<String, ApiError> {
-    Ok(state.store.transcript(id).ok_or(ApiError::not_found())?)
+    state.store.transcript(id).ok_or(ApiError::not_found())
 }
 
 async fn ws_events(

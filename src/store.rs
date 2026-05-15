@@ -249,7 +249,7 @@ fn run_session_thread(
         .expect("child lock")
         .as_mut()
         .and_then(|child| child.wait().ok())
-        .and_then(|status| Some(status.exit_code() as i32));
+        .map(|status| status.exit_code() as i32);
 
     if let Ok(mut rec) = handle.record.lock() {
         rec.status = SessionStatus::Exited;
