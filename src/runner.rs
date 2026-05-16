@@ -136,6 +136,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         let final_review_transcript_display: String;
         let (_transcript, _validation_output) = loop {
             let attempt_progress = progress.attempt(attempt);
+            remove_stale_validation_output(&progress)?;
             if attempt > 1 {
                 append_progress(
                     &progress.log_path,
@@ -625,6 +626,19 @@ fn remove_stale_run_summary(plan_slug: &str) -> Result<()> {
         Err(err) => {
             Err(err).with_context(|| format!("remove stale run summary {}", summary_path.display()))
         }
+    }
+}
+
+fn remove_stale_validation_output(progress: &ProgressPaths) -> Result<()> {
+    match fs::remove_file(&progress.validation_output_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "remove stale validation output {}",
+                progress.validation_output_path.display()
+            )
+        }),
     }
 }
 
