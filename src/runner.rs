@@ -345,10 +345,12 @@ fn write_run_diff_patch(
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
     let diff_path = progress_dir.join(format!("{plan_slug}-diff.patch"));
-    let patch = if no_commit {
-        working_tree_diff_patch(baseline_paths).unwrap_or_default()
+    let patch = if !git_inside_work_tree() {
+        String::new()
+    } else if no_commit {
+        working_tree_diff_patch(baseline_paths).context("generate working tree diff patch")?
     } else if let Some(baseline_revision) = baseline_revision {
-        git_diff_patch(&[baseline_revision, "HEAD"]).unwrap_or_default()
+        git_diff_patch(&[baseline_revision, "HEAD"]).context("generate committed diff patch")?
     } else {
         String::new()
     };
@@ -358,17 +360,28 @@ fn write_run_diff_patch(
 
 fn working_tree_diff_patch(baseline_paths: &BTreeSet<String>) -> Result<String> {
     let mut patch = String::new();
-    for path in git_status_paths()? {
-        if baseline_paths.contains(&path) || is_ralphterm_artifact(&path) {
+    let untracked_files = git_untracked_files()?;
+    let paths = git_status_paths()?
+        .into_iter()
+        .chain(untracked_files.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    for path in paths {
+        if is_baseline_path(&path, baseline_paths) || is_ralphterm_artifact(&path) {
             continue;
         }
         patch.push_str(&git_cached_path_diff_patch(&path)?);
         patch.push_str(&git_worktree_path_diff_patch(&path)?);
-        if !git_path_is_tracked(&path)? {
+        if untracked_files.contains(&path) {
             patch.push_str(&git_no_index_new_file_patch(&path)?);
         }
     }
     Ok(patch)
+}
+
+fn is_baseline_path(path: &str, baseline_paths: &BTreeSet<String>) -> bool {
+    baseline_paths
+        .iter()
+        .any(|baseline| path == baseline || baseline.ends_with('/') && path.starts_with(baseline))
 }
 
 fn git_diff_patch(revisions: &[&str]) -> Result<String> {
@@ -396,12 +409,24 @@ fn git_worktree_path_diff_patch(path: &str) -> Result<String> {
     run_git_allow_exit_codes(&["diff", "--binary", "--", path], &[0])
 }
 
-fn git_path_is_tracked(path: &str) -> Result<bool> {
+fn git_untracked_files() -> Result<BTreeSet<String>> {
     let output = Command::new("git")
-        .args(["ls-files", "--error-unmatch", "--", path])
+        .args(["ls-files", "--others", "--exclude-standard", "-z"])
         .output()
         .context("run git")?;
-    Ok(output.status.success())
+    if !output.status.success() {
+        bail!(
+            "git command failed with {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 fn git_head_revision() -> Option<String> {
@@ -529,6 +554,16 @@ fn git_status_paths() -> Result<BTreeSet<String>> {
 
 fn is_ralphterm_artifact(path: &str) -> bool {
     path == ".ralphterm" || path.starts_with(".ralphterm/")
+}
+
+fn git_inside_work_tree() -> bool {
+    let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+    else {
+        return false;
+    };
+    output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
 }
 
 fn ensure_ralphterm_git_excluded() -> Result<()> {

@@ -312,6 +312,64 @@ fn run_command_no_commit_writes_working_tree_diff_patch() {
 }
 
 #[test]
+fn run_command_no_commit_diff_patch_includes_file_created_in_new_untracked_directory() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f nested/generated.txt`
+
+### Task 1: Create nested generated file
+- [ ] Write nested/generated.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        repo.path.join("nested/generated.txt").exists(),
+        "fake agent should create nested/generated.txt"
+    );
+
+    let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
+        .expect("read run diff patch");
+    assert!(
+        diff_patch.contains("diff --git a/nested/generated.txt b/nested/generated.txt"),
+        "{diff_patch}"
+    );
+    assert!(
+        diff_patch.contains("+nested content from fake agent"),
+        "{diff_patch}"
+    );
+}
+
+#[test]
 fn run_command_no_commit_diff_patch_excludes_preexisting_dirty_paths() {
     let repo = TempRepo::new();
     repo.init_git();
