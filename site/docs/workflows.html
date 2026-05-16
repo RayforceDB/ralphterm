@@ -57,8 +57,12 @@
       <h2>Run a plan with review</h2>
       <pre><code>ralphterm run docs/plans/example.md --agent claude \
   --require-review \
+  --review-agent codex
+
+ralphterm run docs/plans/example.md --agent claude \
+  --require-review \
   --review-command "codex exec review-task"</code></pre>
-      <p><code>--require-review</code> is a hard gate. If it is used without <code>--review-command</code>, RalphTerm fails before starting implementation. With both flags set, the implementation agent runs in one PTY and the reviewer runs later in a separate PTY.</p>
+      <p><code>--require-review</code> is a hard gate. If it is used without <code>--review-command</code> or <code>--review-agent</code>, RalphTerm fails before starting implementation. With review configured, the implementation agent runs in one PTY and the reviewer runs later in a separate PTY.</p>
 
       <h2>Validation before acceptance</h2>
       <p>Plan-level validation commands from the <code>## Validation Commands</code> section run after each implementation attempt. RalphTerm includes the validation output in the reviewer prompt. A task is not checked off until validation succeeds and review passes.</p>
@@ -67,7 +71,7 @@
       <p>The reviewer receives the task text, implementation transcript, validation output, current diff, and untracked file names. The decision must be explicit:</p>
       <ul>
         <li><code>REVIEW_PASS</code> accepts the task.</li>
-        <li><code>REVIEW_FAIL</code> blocks acceptance and triggers one REVIEW_FAIL retry by returning the reviewer feedback to the implementation agent.</li>
+        <li><code>REVIEW_FAIL</code> rejects the current attempt and triggers one REVIEW_FAIL retry by returning the reviewer feedback to the implementation agent.</li>
       </ul>
       <p>If the retry also fails review, RalphTerm leaves the task unchecked and exits failed instead of committing partial progress.</p>
 

@@ -25,15 +25,19 @@ Each phase is backed by one or more terminal sessions. Every phase gets a transc
 
 ## Review workflow
 
-Use `--require-review` with `--review-command <cmd>` when a task should not be executed or accepted unless an independent reviewer is configured.
+Use `--require-review` when a task should not be executed or accepted unless an independent reviewer is configured. You can use a built-in reviewer agent or a custom command.
 
 ```bash
+ralphterm run docs/plans/example.md --agent claude \
+  --require-review \
+  --review-agent codex
+
 ralphterm run docs/plans/example.md --agent claude \
   --require-review \
   --review-command "codex exec review-task"
 ```
 
-`--require-review` is a gate for plan runs. If it is set without `--review-command`, RalphTerm fails before starting the implementation agent. With both flags set, RalphTerm starts the reviewer in a fresh PTY after validation. The prompt includes:
+`--require-review` is a gate for plan runs. If it is set without `--review-command` or `--review-agent`, RalphTerm fails before starting the implementation agent. With review configured, RalphTerm starts the reviewer in a fresh PTY after validation. The prompt includes:
 
 - task text
 - implementation transcript
@@ -43,9 +47,9 @@ ralphterm run docs/plans/example.md --agent claude \
 The reviewer must print one exact decision line:
 
 - `REVIEW_PASS` accepts the task
-- `REVIEW_FAIL` blocks acceptance and triggers one REVIEW_FAIL retry with the reviewer feedback sent back to the implementation agent
+- `REVIEW_FAIL` rejects the current attempt and triggers one REVIEW_FAIL retry with the reviewer feedback sent back to the implementation agent
 
-If the retry also fails review, RalphTerm leaves the task unchecked and exits failed instead of committing partial progress. If no review command is configured and `--require-review` is not set, RalphTerm prints `Review: skipped`. That mode is useful for smoke tests only.
+If the retry also fails review, RalphTerm leaves the task unchecked and exits failed instead of committing partial progress. If no reviewer is configured and `--require-review` is not set, RalphTerm prints `Review: skipped`. That mode is useful for smoke tests only.
 
 ## Validation, resume, and artifacts
 

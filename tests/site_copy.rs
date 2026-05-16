@@ -122,3 +122,48 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
         "landing page should state that RalphTerm does not use Claude prompt mode"
     );
 }
+
+#[test]
+fn repo_docs_describe_review_retry_before_blocking() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let readme = std::fs::read_to_string(root.join("README.md")).expect("read README");
+    let product =
+        std::fs::read_to_string(root.join("docs/product.md")).expect("read product brief");
+
+    assert!(
+        readme.contains("REVIEW_FAIL` triggers one retry"),
+        "README should describe the first REVIEW_FAIL as retry feedback, not final rejection"
+    );
+    assert!(
+        readme.contains("--review-command") && readme.contains("--review-agent"),
+        "README should tell users either review configuration satisfies --require-review"
+    );
+    assert!(
+        readme.contains("second review failure leaves the task unchecked"),
+        "README should describe final blocking only after the retry fails review"
+    );
+    assert!(
+        product.contains("cross-review step is the product boundary"),
+        "product brief should center cross-review verification, not merely launching agents"
+    );
+}
+
+#[test]
+fn public_docs_mention_review_agent_as_supported_review_config() {
+    let site_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site");
+    let docs_index =
+        std::fs::read_to_string(site_root.join("docs/index.html")).expect("read docs index");
+    let workflows = std::fs::read_to_string(site_root.join("docs/workflows.html"))
+        .expect("read workflows page");
+
+    for (name, html) in [("docs index", docs_index), ("workflows page", workflows)] {
+        assert!(
+            html.contains("--review-command") && html.contains("--review-agent"),
+            "{name} should document both supported review configuration paths"
+        );
+        assert!(
+            !html.contains("unless <code>--review-command</code> is also supplied"),
+            "{name} should not imply --review-command is the only valid review configuration"
+        );
+    }
+}

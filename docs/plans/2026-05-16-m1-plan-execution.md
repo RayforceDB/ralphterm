@@ -4,7 +4,7 @@
 
 **Goal:** Given a markdown plan, RalphTerm executes tasks one by one through real terminal-backed AI CLI sessions, validates results, runs an independent cross-review gate, commits accepted progress locally, and produces an auditable transcript.
 
-**Current truth:** RalphTerm can parse a markdown plan, execute pending tasks through fresh PTY-backed agent sessions, run validation commands, run an independent review command after validation, retry implementation once with reviewer feedback, mark completed checkboxes, commit task progress, and write transcripts under `.ralphterm/progress/`. It is still not full ralphex parity: the review loop is bounded and local rather than a full workspace-isolated approval queue. The invariant is already in place for reviewed runs, though: a task is not accepted merely because the implementation agent prints `COMPLETED`; acceptance requires validation and any configured/required review must print `REVIEW_PASS` before `[x]` and checkpoint.
+**Current truth:** RalphTerm can parse a markdown plan, execute pending tasks through fresh PTY-backed agent sessions, run validation commands, run an independent reviewer after validation through `--review-agent` or `--review-command`, retry implementation once with reviewer feedback, mark completed checkboxes, commit task progress, and write transcripts under `.ralphterm/progress/`. It is still not full ralphex parity: the review loop is bounded and local rather than a full workspace-isolated approval queue. The invariant is already in place for reviewed runs, though: a task is not accepted merely because the implementation agent prints `COMPLETED`; acceptance requires validation and any configured/required review must print `REVIEW_PASS` before `[x]` and checkpoint.
 
 **Architecture:** Keep the PTY session layer as the foundation. Add a CLI subcommand and library modules for plan parsing, task execution, validation commands, git commits, and run logs. Build with strict TDD: parser first, then dry-run planner, then real task execution with a fake agent command, then Claude/Codex smoke tests.
 
@@ -19,7 +19,7 @@
 - Each task starts a fresh PTY-backed agent session.
 - RalphTerm sends task context to the agent as terminal input, not `claude -p`.
 - Validation commands run after each task.
-- An independent review command/session runs after validation and before task acceptance. **Shipped:** `--review-command <cmd>` starts a fresh PTY reviewer after validation. It receives the task, agent transcript, validation output, and git state. Exact `REVIEW_PASS` accepts; exact `REVIEW_FAIL` blocks acceptance.
+- An independent reviewer runs after validation and before task acceptance. **Shipped:** `--review-agent codex` uses a built-in reviewer CLI; `--review-command <cmd>` starts a custom PTY reviewer after validation. It receives the task, agent transcript, validation output, and git state. Exact `REVIEW_PASS` accepts. The first exact `REVIEW_FAIL` retries implementation with reviewer feedback; a second review failure blocks acceptance.
 - Completed tasks are marked `[x]` only after validation and review both pass.
 - A git commit is created after each accepted task, kept local until a coherent release slice is ready.
 - A progress log/transcript is written under `.ralphterm/progress/`.
@@ -173,8 +173,8 @@ cargo test --test run_plan_fake_agent
 - After agent completion and validation, run review command in a fresh PTY.
 - Review prompt includes plan task, implementation transcript, validation output, and current `git diff`.
 - `REVIEW_PASS` allows acceptance.
-- `REVIEW_FAIL` blocks `[x]`, commit, and returns non-zero.
-- If no review command is configured, print that review is skipped; do not claim ralphex parity.
+- `REVIEW_FAIL` rejects the current attempt; a second failed review blocks `[x]`, commit, and returns non-zero.
+- If no reviewer is configured, print that review is skipped; do not claim ralphex parity.
 
 **Tests:**
 - pass reviewer allows marking and commit
