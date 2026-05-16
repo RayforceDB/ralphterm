@@ -226,6 +226,9 @@ impl RunStore {
         let Some(mut record) = Self::get(base_dir.as_ref(), id)? else {
             return Ok(None);
         };
+        if matches!(record.status, RunStatus::Succeeded | RunStatus::Failed) {
+            return Ok(Some(record));
+        }
 
         let dir = run_dir(base_dir.as_ref(), id);
         let summary_path = dir.join("summary.md");
@@ -735,6 +738,64 @@ mod tests {
         assert_eq!(event["type"], "run_succeeded");
         assert_eq!(event["status"], "succeeded");
         assert!(!event["timestamp"].as_str().unwrap().is_empty());
+
+        remove_dir_all_if_exists(&temp);
+    }
+
+    #[test]
+    fn cancel_succeeded_run_preserves_terminal_status_and_artifacts() {
+        let temp = std::env::temp_dir().join(format!(
+            "ralphterm-run-cancel-succeeded-preserves-artifacts-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp).unwrap();
+
+        let record = RunStore::create(
+            &temp,
+            RunRecord {
+                phase: RunPhase::Executing,
+                status: RunStatus::Running,
+                plan_path: Some("plans/task.md".into()),
+                workspace_path: None,
+            },
+        )
+        .unwrap();
+        RunStore::write_result(
+            &temp,
+            record.id,
+            RunResultArtifacts {
+                summary_markdown: "# Summary\n\nSucceeded artifact.\n".into(),
+                diff_patch: "diff --git a/file b/file\n".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+        let updated = RunStore::cancel(&temp, record.id)
+            .unwrap()
+            .expect("existing terminal run should be returned");
+
+        assert_eq!(updated.phase, RunPhase::Complete);
+        assert_eq!(updated.status, RunStatus::Succeeded);
+        let run_dir = temp
+            .join(".ralphterm")
+            .join("runs")
+            .join(record.id.to_string());
+        assert_eq!(
+            fs::read_to_string(run_dir.join("summary.md")).unwrap(),
+            "# Summary\n\nSucceeded artifact.\n"
+        );
+        assert_eq!(
+            fs::read_to_string(run_dir.join("diff.patch")).unwrap(),
+            "diff --git a/file b/file\n"
+        );
+
+        let events = RunStore::events(&temp, record.id).unwrap().unwrap();
+        let event_types: Vec<_> = events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect();
+        assert_eq!(event_types, vec!["run_created", "run_succeeded"]);
 
         remove_dir_all_if_exists(&temp);
     }
