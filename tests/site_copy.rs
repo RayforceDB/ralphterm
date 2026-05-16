@@ -219,6 +219,10 @@ fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
             "{name} should document run event polling"
         );
         assert!(
+            text.contains("GET /v1/runs/:id/summary") && text.contains("GET /v1/runs/:id/diff"),
+            "{name} should document HTTP access to persisted run artifacts"
+        );
+        assert!(
             text.contains("review_command") && text.contains("require_review"),
             "{name} should show how API callers require independent review"
         );

@@ -68,11 +68,13 @@ Run endpoints:
 ```http
 GET  /v1/runs
 GET  /v1/runs/:id
+GET  /v1/runs/:id/summary
+GET  /v1/runs/:id/diff
 GET  /v1/runs/:id/events
 POST /v1/runs/:id/cancel
 ```
 
-`GET /v1/runs/:id/events` returns run lifecycle events such as `run_created`, `run_succeeded`, `run_failed`, and `run_cancelled`. A completed run writes `summary.md` and `diff.patch` under `.ralphterm/runs/<id>/`.
+`GET /v1/runs/:id/events` returns run lifecycle events such as `run_created`, `run_succeeded`, `run_failed`, and `run_cancelled`. A completed run writes `summary.md` and `diff.patch` under `.ralphterm/runs/<id>/`. `GET /v1/runs/:id/summary` returns `summary.md` as plain text; `GET /v1/runs/:id/diff` returns `diff.patch` as plain text. Runs that exist but do not have an artifact yet return 404 with an artifact-specific message.
 
 ## Create a raw session
 
