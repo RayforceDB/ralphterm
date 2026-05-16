@@ -34,8 +34,8 @@ Request:
 ```json
 {
   "plan_path": "docs/plans/example.md",
-  "agent_command": "claude",
-  "review_command": "codex exec review-task",
+  "agent": "claude",
+  "review_agent": "codex",
   "require_review": true,
   "max_review_retries": 1,
   "no_commit": false
@@ -45,9 +45,11 @@ Request:
 Fields:
 
 - `plan_path`: markdown plan path, relative to the daemon working directory or absolute
-- `agent_command`: optional implementation command; omit it to create a run record without starting work
-- `review_command`: optional independent reviewer command
-- `require_review`: rejects the request unless `review_command` is set
+- `agent`: optional built-in command shortcut resolved from `PATH`, either `claude` or `codex`; conflicts with `agent_command`
+- `agent_command`: optional raw implementation command; omit both `agent` and `agent_command` to create a run record without starting work
+- `review_agent`: optional built-in reviewer command shortcut resolved from `PATH`, either `claude` or `codex`; conflicts with `review_command`
+- `review_command`: optional raw independent reviewer command
+- `require_review`: rejects the request unless `review_agent` or `review_command` is set
 - `max_review_retries`: number of review failures allowed before the task blocks
 - `no_commit`: marks accepted tasks and writes artifacts without creating git commits
 
@@ -63,7 +65,7 @@ Response when execution starts:
 }
 ```
 
-`POST /v1/runs` returns as soon as the run has started. Poll `GET /v1/runs/:id` for `succeeded` or `failed`, or read `GET /v1/runs/:id/events` for lifecycle events. If `agent_command` is omitted, the daemon only creates the run record and returns `phase: "planning"`, `status: "created"`.
+`POST /v1/runs` returns as soon as the run has started. Poll `GET /v1/runs/:id` for `succeeded` or `failed`, or read `GET /v1/runs/:id/events` for lifecycle events. If both `agent` and `agent_command` are omitted, the daemon only creates the run record and returns `phase: "planning"`, `status: "created"`.
 
 Run endpoints:
 

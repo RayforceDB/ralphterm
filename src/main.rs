@@ -130,6 +130,15 @@ enum ApiAgentKind {
     Codex,
 }
 
+impl ApiAgentKind {
+    fn command(self) -> String {
+        match self {
+            ApiAgentKind::Claude => "claude".to_string(),
+            ApiAgentKind::Codex => "codex".to_string(),
+        }
+    }
+}
+
 impl From<ApiAgentKind> for AgentKind {
     fn from(value: ApiAgentKind) -> Self {
         match value {
@@ -160,7 +169,9 @@ struct CreateSessionResponse {
 struct CreateRunRequest {
     plan_path: Option<String>,
     workspace_id: Option<String>,
+    agent: Option<ApiAgentKind>,
     agent_command: Option<String>,
+    review_agent: Option<ApiAgentKind>,
     review_command: Option<String>,
     require_review: Option<bool>,
     max_review_retries: Option<usize>,
@@ -359,24 +370,40 @@ async fn create_run(
 ) -> Result<Json<CreatedRunRecord>, ApiError> {
     let plan_path = req.plan_path.clone();
     let base_dir = state.run_base_dir.as_ref().clone();
-    if req.agent_command.is_some() && plan_path.is_none() {
+    if req.agent.is_some() && req.agent_command.is_some() {
+        return Err(ApiError::bad_request("agent conflicts with agent_command"));
+    }
+    if req.review_agent.is_some() && req.review_command.is_some() {
         return Err(ApiError::bad_request(
-            "plan_path is required when agent_command is set",
+            "review_agent conflicts with review_command",
         ));
     }
-    if req.require_review.unwrap_or(false) && req.review_command.is_none() {
+    let agent_command = req
+        .agent_command
+        .clone()
+        .or_else(|| req.agent.map(ApiAgentKind::command));
+    let review_command = req
+        .review_command
+        .clone()
+        .or_else(|| req.review_agent.map(ApiAgentKind::command));
+    if agent_command.is_some() && plan_path.is_none() {
         return Err(ApiError::bad_request(
-            "review_command is required when require_review is true",
+            "plan_path is required when agent or agent_command is set",
+        ));
+    }
+    if req.require_review.unwrap_or(false) && review_command.is_none() {
+        return Err(ApiError::bad_request(
+            "review_command or review_agent is required when require_review is true",
         ));
     }
     if let (Some(agent_command), Some(review_command)) =
-        (req.agent_command.as_deref(), req.review_command.as_deref())
+        (agent_command.as_deref(), review_command.as_deref())
     {
         let commands_equivalent = agent_commands_equivalent(agent_command, review_command)
             .map_err(|err| ApiError::bad_request(err.to_string()))?;
         if commands_equivalent {
             return Err(ApiError::bad_request(
-                "agent_command and review_command must be different",
+                "implementation agent/command and review agent/command must be different",
             ));
         }
     }
@@ -404,7 +431,7 @@ async fn create_run(
         validate_workspace_plan_path(cwd_relative, &plan)
             .map_err(|err| ApiError::bad_request(err.to_string()))?;
 
-        if req.agent_command.is_some() {
+        if agent_command.is_some() {
             let candidate = manager
                 .workspace(workspace_id)
                 .map_err(|err| ApiError::bad_request(err.to_string()))?;
@@ -430,15 +457,14 @@ async fn create_run(
         },
     )?;
 
-    let Some(agent_command) = req.agent_command else {
+    let Some(agent_command) = agent_command else {
         return Ok(Json(record));
     };
 
-    let plan_path = plan_path
-        .map(PathBuf::from)
-        .ok_or_else(|| ApiError::bad_request("plan_path is required when agent_command is set"))?;
+    let plan_path = plan_path.map(PathBuf::from).ok_or_else(|| {
+        ApiError::bad_request("plan_path is required when agent or agent_command is set")
+    })?;
     let run_id = record.id;
-    let review_command = req.review_command;
     let require_review = req.require_review.unwrap_or(false);
     let max_review_retries = req.max_review_retries.unwrap_or(1);
     let no_commit = req.no_commit.unwrap_or(false);

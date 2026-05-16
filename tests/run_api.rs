@@ -358,6 +358,85 @@ fn cancelling_running_run_prevents_late_success_overwrite() {
 }
 
 #[test]
+fn run_api_executes_plan_with_agent_and_review_agent_shortcuts() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let bin_dir = repo.path.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create fake cli bin dir");
+    std::os::unix::fs::symlink(fixture_path("fake-agent.sh"), bin_dir.join("claude"))
+        .expect("link fake claude cli");
+    std::os::unix::fs::symlink(fixture_path("review-pass.sh"), bin_dir.join("codex"))
+        .expect("link fake codex cli");
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("PATH", path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent": "claude",
+        "review_agent": "codex",
+        "require_review": true,
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+    assert_eq!(created_json["phase"], "executing");
+    assert_eq!(created_json["status"], "running");
+
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+
+    let plan = std::fs::read_to_string(&plan_path).expect("read updated plan");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let summary_path = repo.path.join(format!(".ralphterm/runs/{id}/summary.md"));
+    let summary = std::fs::read_to_string(&summary_path).expect("read run summary artifact");
+    assert!(summary.contains("Result: passed"), "{summary}");
+    assert!(summary.contains("Review transcript:"), "{summary}");
+}
+
+#[test]
 fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
@@ -1148,6 +1227,109 @@ fn run_api_rejects_workspace_required_review_without_review_command_without_side
         .join("workspaces")
         .join("api-invalid-review")
         .exists());
+}
+
+#[test]
+fn run_api_rejects_agent_shortcut_conflicts_without_creating_run() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": "docs/plan.md",
+        "agent": "claude",
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert!(response.body.contains("agent conflicts with agent_command"));
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+}
+
+#[test]
+fn run_api_rejects_review_agent_shortcut_conflicts_without_creating_run() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": "docs/plan.md",
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "review_agent": "codex",
+        "review_command": fixture_path("review-pass.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert!(response
+        .body
+        .contains("review_agent conflicts with review_command"));
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+}
+
+#[test]
+fn run_api_rejects_same_agent_and_review_agent_shortcuts_without_creating_run() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": "docs/plan.md",
+        "agent": "claude",
+        "review_agent": "claude",
+        "require_review": true,
+        "no_commit": true
+    })
+    .to_string();
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert!(response.body.contains("must be different"));
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
 }
 
 #[test]
