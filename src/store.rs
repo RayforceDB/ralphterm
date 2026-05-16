@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     pty_agent::{default_args, default_command, AgentKind, SessionConfig, SessionInput},
-    signals::{detect_signal, AgentSignal},
+    signals::{detect_approval_request, detect_signal, AgentSignal},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +39,7 @@ pub enum SessionStatus {
 pub enum SessionEvent {
     Output { text: String },
     Signal { signal: AgentSignal },
+    ApprovalRequested { prompt: String },
     Exit { exit_code: Option<i32> },
     Error { message: String },
 }
@@ -49,6 +50,7 @@ struct SessionHandle {
     input_tx: mpsc::UnboundedSender<SessionInput>,
     resize_tx: mpsc::UnboundedSender<(u16, u16)>,
     event_tx: broadcast::Sender<SessionEvent>,
+    approval_requested: Mutex<bool>,
     child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
 }
 
@@ -76,6 +78,7 @@ impl SessionStore {
             input_tx,
             resize_tx,
             event_tx,
+            approval_requested: Mutex::new(false),
             child: Mutex::new(None),
         });
         self.sessions.insert(id, handle.clone());
@@ -272,9 +275,19 @@ fn run_session_thread(
 fn append_output(handle: &Arc<SessionHandle>, text: &str) {
     if let Ok(mut transcript) = handle.transcript.lock() {
         transcript.push_str(text);
+        if detect_approval_request(&transcript) {
+            if let Ok(mut approval_requested) = handle.approval_requested.lock() {
+                if !*approval_requested {
+                    *approval_requested = true;
+                    let _ = handle.event_tx.send(SessionEvent::ApprovalRequested {
+                        prompt: transcript_tail(&transcript, 500),
+                    });
+                }
+            }
+        }
         if let Some(signal) = detect_signal(&transcript) {
             if let Ok(mut rec) = handle.record.lock() {
-                if rec.signal.is_none() {
+                if rec.signal.as_ref() != Some(&signal) {
                     rec.signal = Some(signal.clone());
                     let _ = handle.event_tx.send(SessionEvent::Signal { signal });
                 }
@@ -284,4 +297,78 @@ fn append_output(handle: &Arc<SessionHandle>, text: &str) {
     let _ = handle.event_tx.send(SessionEvent::Output {
         text: text.to_string(),
     });
+}
+
+fn transcript_tail(transcript: &str, max_chars: usize) -> String {
+    transcript
+        .chars()
+        .rev()
+        .take(max_chars)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_output_emits_approval_requested_event_once() {
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let (input_tx, _) = mpsc::unbounded_channel::<SessionInput>();
+        let (resize_tx, _) = mpsc::unbounded_channel::<(u16, u16)>();
+        let handle = Arc::new(SessionHandle {
+            record: Mutex::new(SessionRecord {
+                id: Uuid::new_v4(),
+                agent: AgentKind::Codex,
+                status: SessionStatus::Running,
+                signal: None,
+                exit_code: None,
+            }),
+            transcript: Mutex::new(String::new()),
+            input_tx,
+            resize_tx,
+            event_tx,
+            approval_requested: Mutex::new(false),
+            child: Mutex::new(None),
+        });
+
+        append_output(&handle, "PLAN_READY");
+        append_output(
+            &handle,
+            "Need approval before running this command. Approve?",
+        );
+        append_output(&handle, "Approve?");
+        append_output(&handle, "COMPLETED");
+
+        let mut events = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            events.push(event);
+        }
+        let approval_events = events
+            .iter()
+            .filter(|event| matches!(event, SessionEvent::ApprovalRequested { .. }))
+            .count();
+        assert_eq!(approval_events, 1, "{events:?}");
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                SessionEvent::Signal {
+                    signal: AgentSignal::PlanReady
+                }
+            )),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                SessionEvent::Signal {
+                    signal: AgentSignal::Completed
+                }
+            )),
+            "{events:?}"
+        );
+    }
 }
