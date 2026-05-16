@@ -2,9 +2,9 @@
 
 > **For Hetoku:** This is the real product goal. RalphTerm must become a replacement-grade autonomous plan runner, not just a pretty PTY demo.
 
-**Goal:** Given a markdown plan, RalphTerm executes tasks one by one through real terminal-backed AI CLI sessions, validates results, commits progress, and produces an auditable transcript.
+**Goal:** Given a markdown plan, RalphTerm executes tasks one by one through real terminal-backed AI CLI sessions, validates results, runs an independent cross-review gate, commits accepted progress locally, and produces an auditable transcript.
 
-**Current truth:** RalphTerm now has the first replacement-grade plan loop: parse a markdown plan, execute pending tasks through fresh PTY-backed agent sessions, run validation commands, mark completed checkboxes, commit task progress, and write transcripts under `.ralphterm/progress/`. It is not equivalent yet because review phases, approval queues, stronger isolation, restart controls, and final summary artifacts are still missing.
+**Current truth:** RalphTerm has the first plan loop pieces: parse a markdown plan, execute pending tasks through fresh PTY-backed agent sessions, run validation commands, mark completed checkboxes, commit task progress, and write transcripts under `.ralphterm/progress/`. It is not ralphex-equivalent yet because the core cross-review verification loop is missing. A task must not be accepted merely because the implementation agent prints `COMPLETED`; it needs independent review/verification before `[x]` and checkpoint.
 
 **Architecture:** Keep the PTY session layer as the foundation. Add a CLI subcommand and library modules for plan parsing, task execution, validation commands, git commits, and run logs. Build with strict TDD: parser first, then dry-run planner, then real task execution with a fake agent command, then Claude/Codex smoke tests.
 
@@ -19,10 +19,11 @@
 - Each task starts a fresh PTY-backed agent session.
 - RalphTerm sends task context to the agent as terminal input, not `claude -p`.
 - Validation commands run after each task.
-- Completed tasks are marked `[x]` only after validation passes.
-- A git commit is created after each successful task.
+- An independent review command/session runs after validation and before task acceptance.
+- Completed tasks are marked `[x]` only after validation and review both pass.
+- A git commit is created after each accepted task, kept local until a coherent release slice is ready.
 - A progress log/transcript is written under `.ralphterm/progress/`.
-- A fake-agent integration test proves the whole loop without spending tokens.
+- A fake-agent + fake-reviewer integration test proves the whole loop without spending tokens.
 - A real Claude/Codex smoke test is documented and can be run manually when auth is present.
 
 ---
@@ -156,9 +157,34 @@ cargo test --test run_plan_fake_agent
 
 ---
 
-### Task 7: Mark tasks complete and commit
+### Task 7: Add independent cross-review gate
 
-**Objective:** Match the practical workflow: task done means checked and committed.
+**Objective:** Match the core ralphex value: task work is not accepted until an independent reviewer verifies it.
+
+**Files:**
+- Modify: `src/main.rs`
+- Modify: `src/runner.rs`
+- Modify: `tests/run_plan_fake_agent.rs`
+- Create: `tests/fixtures/review-pass.sh`
+- Create: `tests/fixtures/review-fail.sh`
+
+**Behavior:**
+- Add `--review-command <cmd>`.
+- After agent completion and validation, run review command in a fresh PTY.
+- Review prompt includes plan task, implementation transcript, validation output, and current `git diff`.
+- `REVIEW_PASS` allows acceptance.
+- `REVIEW_FAIL` blocks `[x]`, commit, and returns non-zero.
+- If no review command is configured, print that review is skipped; do not claim ralphex parity.
+
+**Tests:**
+- pass reviewer allows marking and commit
+- fail reviewer blocks marking and commit
+
+---
+
+### Task 8: Mark tasks complete and commit
+
+**Objective:** Match the practical workflow: task accepted means validated, reviewed, checked, and locally committed.
 
 **Files:**
 - Modify: `src/plan.rs`
@@ -166,14 +192,15 @@ cargo test --test run_plan_fake_agent
 - Modify: `tests/run_plan_fake_agent.rs`
 
 **Behavior:**
-- Change completed task checkboxes from `[ ]` to `[x]`.
+- Change completed task checkboxes from `[ ]` to `[x]` only after validation and review pass.
 - `git add` relevant changes.
-- `git commit -m "task: <task title>"`.
+- `git commit -m "task: <task title>"` locally.
+- Do not push per-task commits; batch pushes for release slices.
 - Skip commit only with explicit `--no-commit`.
 
 ---
 
-### Task 8: Progress logs and transcripts
+### Task 9: Progress logs and transcripts
 
 **Objective:** Make long runs observable and restartable later.
 
@@ -187,7 +214,7 @@ cargo test --test run_plan_fake_agent
 
 ---
 
-### Task 9: Real CLI smoke test documentation
+### Task 10: Real CLI smoke test documentation
 
 **Objective:** Document the manual smoke test for Claude/Codex without requiring tokens in CI.
 
@@ -202,7 +229,7 @@ cargo test --test run_plan_fake_agent
 
 ---
 
-### Task 10: Website reposition after implementation exists
+### Task 11: Website reposition after implementation exists
 
 **Objective:** Public site should lead with the real goal once M1 works.
 
