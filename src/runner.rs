@@ -39,6 +39,14 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     let mut output = format!("Executing {plan_name}\n");
     if pending.is_empty() {
         output.push_str("No pending tasks.\n");
+        if !options.dry_run {
+            write_run_diff_patch(
+                &plan_slug(&options.plan_path),
+                false,
+                None,
+                &BTreeSet::new(),
+            )?;
+        }
         return Ok(output);
     }
 
@@ -349,12 +357,16 @@ fn write_run_diff_patch(
 }
 
 fn working_tree_diff_patch(baseline_paths: &BTreeSet<String>) -> Result<String> {
-    let mut patch = git_diff_patch(&[])?;
-    for path in git_untracked_paths()? {
+    let mut patch = String::new();
+    for path in git_status_paths()? {
         if baseline_paths.contains(&path) || is_ralphterm_artifact(&path) {
             continue;
         }
-        patch.push_str(&git_no_index_new_file_patch(&path)?);
+        patch.push_str(&git_cached_path_diff_patch(&path)?);
+        patch.push_str(&git_worktree_path_diff_patch(&path)?);
+        if !git_path_is_tracked(&path)? {
+            patch.push_str(&git_no_index_new_file_patch(&path)?);
+        }
     }
     Ok(patch)
 }
@@ -376,13 +388,20 @@ fn git_no_index_new_file_patch(path: &str) -> Result<String> {
     )
 }
 
-fn git_untracked_paths() -> Result<Vec<String>> {
-    let output = run_git(&["ls-files", "--others", "--exclude-standard", "-z"])?;
-    Ok(output
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .map(ToString::to_string)
-        .collect())
+fn git_cached_path_diff_patch(path: &str) -> Result<String> {
+    run_git_allow_exit_codes(&["diff", "--binary", "--cached", "--", path], &[0])
+}
+
+fn git_worktree_path_diff_patch(path: &str) -> Result<String> {
+    run_git_allow_exit_codes(&["diff", "--binary", "--", path], &[0])
+}
+
+fn git_path_is_tracked(path: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .args(["ls-files", "--error-unmatch", "--", path])
+        .output()
+        .context("run git")?;
+    Ok(output.status.success())
 }
 
 fn git_head_revision() -> Option<String> {

@@ -312,6 +312,177 @@ fn run_command_no_commit_writes_working_tree_diff_patch() {
 }
 
 #[test]
+fn run_command_no_commit_diff_patch_excludes_preexisting_dirty_paths() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    fs::write(repo.path.join("unrelated.txt"), "original\n").expect("write unrelated file");
+    fs::write(repo.path.join("staged.txt"), "original\n").expect("write staged file");
+    fs::write(repo.path.join("untracked-before.txt"), "do not include\n")
+        .expect("write preexisting untracked file");
+    repo.git(["add", "plan.md", "unrelated.txt", "staged.txt"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    fs::write(repo.path.join("unrelated.txt"), "do not include\n").expect("dirty unrelated file");
+    fs::write(repo.path.join("staged.txt"), "do not include\n").expect("dirty staged file");
+    repo.git(["add", "staged.txt"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
+        .expect("read run diff patch");
+    assert!(
+        diff_patch.contains("diff --git a/first.txt b/first.txt"),
+        "{diff_patch}"
+    );
+    assert!(
+        diff_patch.contains("diff --git a/plan.md b/plan.md"),
+        "{diff_patch}"
+    );
+    assert!(
+        !diff_patch.contains("unrelated.txt"),
+        "preexisting dirty tracked file should not be included: {diff_patch}"
+    );
+    assert!(
+        !diff_patch.contains("staged.txt"),
+        "preexisting staged file should not be included: {diff_patch}"
+    );
+    assert!(
+        !diff_patch.contains("untracked-before.txt"),
+        "preexisting untracked file should not be included: {diff_patch}"
+    );
+}
+
+#[test]
+fn run_command_no_commit_diff_patch_includes_run_staged_changes() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `git diff --cached --name-only -- generated.txt | grep -q generated.txt`
+
+### Task 1: Stage generated file
+- [ ] Stage generated.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("staging-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
+        .expect("read run diff patch");
+    assert!(
+        diff_patch.contains("diff --git a/generated.txt b/generated.txt"),
+        "{diff_patch}"
+    );
+    assert!(diff_patch.contains("+staged by fake agent"), "{diff_patch}");
+    assert!(
+        diff_patch.contains("diff --git a/plan.md b/plan.md"),
+        "{diff_patch}"
+    );
+}
+
+#[test]
+fn run_command_with_no_pending_tasks_writes_empty_diff_patch() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+### Task 1: Already done
+- [x] Nothing pending
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add completed plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
+        .expect("read run diff patch");
+    assert_eq!(diff_patch, "");
+}
+
+#[test]
 fn run_command_prints_pending_tasks_in_order() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
