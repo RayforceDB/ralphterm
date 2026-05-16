@@ -110,11 +110,23 @@ impl WorkspaceManager {
     pub fn cleanup(&self, workspace: &Workspace) -> Result<()> {
         self.validate_workspace(workspace)?;
 
-        if !self.has_worktree(&workspace.path)? {
-            bail!(
+        let expected_ref = format!("refs/heads/{}", workspace.branch);
+        match self.worktree_branch(&workspace.path)? {
+            Some(branch) if branch == expected_ref => {}
+            Some(branch) => bail!(
+                "workspace worktree at {} has branch mismatch: expected {}, found {}",
+                workspace.path.display(),
+                expected_ref,
+                if branch.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    branch
+                }
+            ),
+            None => bail!(
                 "no managed workspace worktree found at {}",
                 workspace.path.display()
-            );
+            ),
         }
 
         self.git_checked([
@@ -194,14 +206,32 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    fn has_worktree(&self, path: &Path) -> Result<bool> {
+    fn worktree_branch(&self, path: &Path) -> Result<Option<String>> {
         let path = path
             .to_str()
             .with_context(|| format!("workspace path is not valid utf-8: {}", path.display()))?;
-        Ok(self
-            .git_output(["worktree", "list", "--porcelain"])?
-            .lines()
-            .any(|line| line.strip_prefix("worktree ") == Some(path)))
+        let output = self.git_output(["worktree", "list", "--porcelain"])?;
+        let mut record_path: Option<&str> = None;
+        let mut record_branch: Option<&str> = None;
+
+        for line in output.lines().chain(std::iter::once("")) {
+            if line.is_empty() {
+                if record_path == Some(path) {
+                    return Ok(Some(record_branch.unwrap_or_default().to_string()));
+                }
+                record_path = None;
+                record_branch = None;
+                continue;
+            }
+
+            if let Some(worktree_path) = line.strip_prefix("worktree ") {
+                record_path = Some(worktree_path);
+            } else if let Some(branch) = line.strip_prefix("branch ") {
+                record_branch = Some(branch);
+            }
+        }
+
+        Ok(None)
     }
 
     fn git_path(&self, path: &str) -> Result<PathBuf> {

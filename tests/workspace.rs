@@ -148,6 +148,49 @@ fn cli_cleanup_rejects_branch_without_managed_worktree() {
 }
 
 #[test]
+fn cli_cleanup_rejects_worktree_registered_at_expected_path_on_different_branch() {
+    let repo = TestRepo::new();
+    let workspace_path = repo
+        .path()
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("mismatch");
+    fs::create_dir_all(workspace_path.parent().unwrap()).unwrap();
+    git(repo.path(), ["branch", "ralphterm/mismatch"]);
+    git(
+        repo.path(),
+        [
+            "worktree",
+            "add",
+            "-b",
+            "ralphterm/different",
+            workspace_path.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+
+    let output = ralphterm_failure(repo.path(), ["workspace", "cleanup", "mismatch"]);
+
+    assert!(
+        output.contains("branch mismatch") || output.contains("not managed by expected branch"),
+        "{output}"
+    );
+    assert!(workspace_path.exists());
+    assert_eq!(
+        git(
+            repo.path(),
+            [
+                "branch",
+                "--list",
+                "ralphterm/mismatch",
+                "--format=%(refname:short)"
+            ]
+        ),
+        "ralphterm/mismatch"
+    );
+}
+
+#[test]
 fn cli_cleanup_rejects_dirty_workspace_without_forcing_removal() {
     let repo = TestRepo::new();
     ralphterm(repo.path(), ["workspace", "create", "dirty-workspace"]);
