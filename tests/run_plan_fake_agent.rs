@@ -370,6 +370,147 @@ fn run_command_no_commit_diff_patch_includes_file_created_in_new_untracked_direc
 }
 
 #[test]
+fn run_command_no_commit_diff_patch_includes_run_file_in_preexisting_untracked_directory() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f nested/generated.txt`
+
+### Task 1: Create nested generated file
+- [ ] Write nested/generated.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    fs::create_dir(repo.path.join("nested")).expect("create preexisting untracked dir");
+    fs::write(repo.path.join("nested/old.txt"), "preexisting\n")
+        .expect("write preexisting untracked file");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
+        .expect("read run diff patch");
+    assert!(
+        diff_patch.contains("diff --git a/nested/generated.txt b/nested/generated.txt"),
+        "run-created file in preexisting untracked dir should be included: {diff_patch}"
+    );
+    assert!(
+        diff_patch.contains("+nested content from fake agent"),
+        "{diff_patch}"
+    );
+    assert!(
+        !diff_patch.contains("nested/old.txt"),
+        "preexisting untracked file in same dir should not be included: {diff_patch}"
+    );
+}
+
+#[test]
+fn run_command_no_commit_propagates_git_status_baseline_errors_inside_worktree() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `true`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let fake_bin = repo.path.join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake bin");
+    let fake_git = fake_bin.join("git");
+    fs::write(
+        &fake_git,
+        "#!/usr/bin/env sh\nif [ \"$1 $2\" = \"rev-parse --is-inside-work-tree\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = status ]; then\n  printf 'injected status failure\\n' >&2\n  exit 42\nfi\nprintf 'unexpected fake git invocation: %s\\n' \"$*\" >&2\nexit 43\n",
+    )
+    .expect("write fake git");
+    let mut permissions = fs::metadata(&fake_git)
+        .expect("fake git metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_git, permissions).expect("chmod fake git");
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH set")
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("PATH", path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("snapshot run baseline git status"),
+        "{diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("injected status failure"),
+        "{diagnostics}"
+    );
+    assert!(
+        !repo.path.join("first.txt").exists(),
+        "agent should not run after baseline status failure"
+    );
+}
+
+#[test]
 fn run_command_no_commit_diff_patch_excludes_preexisting_dirty_paths() {
     let repo = TempRepo::new();
     repo.init_git();

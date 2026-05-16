@@ -72,7 +72,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         git_head_revision()
     };
     let run_baseline_paths = if options.no_commit {
-        git_status_paths().unwrap_or_default()
+        git_run_baseline_paths().context("snapshot run baseline git status")?
     } else {
         BTreeSet::new()
     };
@@ -541,11 +541,33 @@ fn commit_task(title: &str, baseline_paths: &BTreeSet<String>) -> Result<String>
     Ok(hash.trim().to_string())
 }
 
+fn git_run_baseline_paths() -> Result<BTreeSet<String>> {
+    if !git_inside_work_tree() {
+        return Ok(BTreeSet::new());
+    }
+
+    Ok(git_status_paths_excluding_untracked()?
+        .into_iter()
+        .chain(git_untracked_files()?)
+        .collect())
+}
+
 fn git_status_paths() -> Result<BTreeSet<String>> {
+    git_status_paths_from_porcelain(true)
+}
+
+fn git_status_paths_excluding_untracked() -> Result<BTreeSet<String>> {
+    git_status_paths_from_porcelain(false)
+}
+
+fn git_status_paths_from_porcelain(include_untracked: bool) -> Result<BTreeSet<String>> {
     let output = run_git(&["status", "--porcelain", "-z"])?;
     let mut paths = BTreeSet::new();
     for entry in output.split('\0').filter(|entry| !entry.is_empty()) {
         if entry.len() >= 4 {
+            if !include_untracked && entry.starts_with("?? ") {
+                continue;
+            }
             paths.insert(entry[3..].to_string());
         }
     }
