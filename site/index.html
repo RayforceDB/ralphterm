@@ -79,19 +79,21 @@ Smoke: claude
 COMPLETED
 Signal: COMPLETED
 
-$ ralphterm run docs/plans/example.md --dry-run
+$ ralphterm run docs/plans/example.md --dry-run \
+    --require-review \
+    --review-agent codex
 Dry run: example.md
-Review: skipped
+Review: codex
 Validation: test -f docs/plans/example-output.txt
 Task 1: Create smoke-test output
 
 $ ralphterm run docs/plans/example.md --agent claude \
     --require-review \
-    --review-command "codex exec review-task"
+    --review-agent codex
 [plan] loaded docs/plans/example.md
 [task 1] sent to Claude Code in a real PTY
 [validation] test -f docs/plans/example-output.txt passed
-[review] independent PTY reviewer printed REVIEW_PASS
+[review] independent Codex reviewer printed REVIEW_PASS
 [plan] marked task complete
 [git] committed task progress
 [transcript] saved under .ralphterm/progress/</code></pre>

@@ -115,6 +115,17 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
         "landing page should show the safe plan preview command"
     );
     assert!(
+        site_index.contains("ralphterm run docs/plans/example.md --dry-run \\")
+            && site_index.contains("--require-review \\")
+            && site_index.contains("--review-agent codex")
+            && site_index.contains("Review: codex"),
+        "landing hero should preview the reviewed plan path, not an unreviewed smoke path"
+    );
+    assert!(
+        !site_index.contains("Review: skipped"),
+        "landing hero should not lead with skipped review when review is the product boundary"
+    );
+    assert!(
         site_index.contains("ralphterm run docs/plans/example.md --agent claude"),
         "landing page should show the plan runner command"
     );
