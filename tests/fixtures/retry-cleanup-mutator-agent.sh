@@ -24,6 +24,9 @@ if [ "$count" -eq 1 ]; then
     chmod-directory)
       chmod 0755 restricted-dir
       ;;
+    chmod-non-traversable-directory)
+      chmod 000 restricted-dir
+      ;;
     file-to-dir)
       rm -f baseline-file
       mkdir baseline-file

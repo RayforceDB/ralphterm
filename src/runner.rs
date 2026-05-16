@@ -43,6 +43,8 @@ impl RetryCleanupSnapshot {
     }
 
     fn restore(&self, root: &Path) -> Result<()> {
+        self.restore_existing_baseline_dir_permissions_shallow_to_deep(root)?;
+
         let mut current = Vec::new();
         collect_retry_cleanup_paths(root, root, &mut current)?;
         current.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
@@ -125,6 +127,26 @@ impl RetryCleanupSnapshot {
         Ok((is_baseline_dir && file_type.is_dir())
             || (is_baseline_file && file_type.is_file())
             || (is_baseline_symlink && file_type.is_symlink()))
+    }
+
+    fn restore_existing_baseline_dir_permissions_shallow_to_deep(&self, root: &Path) -> Result<()> {
+        let mut dirs: Vec<_> = self.dirs.iter().collect();
+        dirs.sort_by_key(|(relative_dir, _)| relative_dir.components().count());
+        for (relative_dir, permissions) in dirs {
+            let path = root.join(relative_dir);
+            let Ok(metadata) = path.symlink_metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                fs::set_permissions(&path, permissions.clone()).with_context(|| {
+                    format!(
+                        "make baseline directory traversable before cleanup {}",
+                        path.display()
+                    )
+                })?;
+            }
+        }
+        Ok(())
     }
 }
 

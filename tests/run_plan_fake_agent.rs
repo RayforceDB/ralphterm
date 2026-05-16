@@ -4023,6 +4023,77 @@ fn review_retry_cleanup_restores_directory_permissions() {
 }
 
 #[test]
+fn review_retry_cleanup_restores_non_traversable_baseline_directory_before_retry() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let directory_path = repo.path.join("restricted-dir");
+    fs::create_dir(&directory_path).expect("create baseline directory");
+    fs::write(
+        directory_path.join("baseline-child.txt"),
+        "baseline child\n",
+    )
+    .expect("write baseline child");
+    fs::set_permissions(&directory_path, fs::Permissions::from_mode(0o755))
+        .expect("chmod baseline directory");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env(
+            "RALPHTERM_RETRY_CLEANUP_SCENARIO",
+            "chmod-non-traversable-directory",
+        )
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-cleanup-mutator-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-once.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run should restore non-traversable baseline directory before retry\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(directory_path.join("baseline-child.txt"))
+            .expect("read baseline child after retry cleanup"),
+        "baseline child\n"
+    );
+    assert_eq!(
+        fs::metadata(&directory_path)
+            .expect("stat restored directory")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "retry cleanup should restore directory permissions after making it traversable"
+    );
+}
+
+#[test]
 fn review_retry_cleanup_restores_baseline_file_replaced_by_directory() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
