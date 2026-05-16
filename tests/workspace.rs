@@ -1,6 +1,6 @@
 use std::{fs, path::Path, process::Command};
 
-use ralphterm::workspace::WorkspaceManager;
+use ralphterm::workspace::{Workspace, WorkspaceManager};
 use uuid::Uuid;
 
 #[test]
@@ -16,10 +16,11 @@ fn discovers_git_repository_from_nested_directory() {
 
 #[test]
 fn rejects_paths_outside_a_git_repository() {
-    let dir = temp_dir("ralphterm-not-git");
-    fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("ralphterm-not-git");
 
-    let error = WorkspaceManager::discover(&dir).unwrap_err().to_string();
+    let error = WorkspaceManager::discover(dir.path())
+        .unwrap_err()
+        .to_string();
 
     assert!(error.contains("not inside a git repository"), "{error}");
 }
@@ -48,6 +49,24 @@ fn creates_branch_and_worktree_under_ralphterm_workspaces() {
         workspace.branch
     );
     assert_eq!(git(repo.path(), ["branch", "--show-current"]), "main");
+}
+
+#[test]
+fn create_excludes_ralphterm_metadata_from_git_status() {
+    let repo = TestRepo::new();
+    let manager = WorkspaceManager::discover(repo.path()).unwrap();
+
+    let workspace = manager.create("status-clean").unwrap();
+
+    assert_eq!(git(repo.path(), ["status", "--short"]), "");
+    assert!(
+        fs::read_to_string(repo.path().join(".git").join("info").join("exclude"))
+            .unwrap()
+            .lines()
+            .any(|line| line == ".ralphterm/")
+    );
+
+    manager.cleanup(&workspace).unwrap();
 }
 
 #[test]
@@ -85,6 +104,94 @@ fn cleanup_is_explicit_and_removes_worktree_and_branch() {
         ),
         ""
     );
+}
+
+#[test]
+fn cleanup_removes_git_worktree_metadata_when_directory_was_deleted() {
+    let repo = TestRepo::new();
+    let manager = WorkspaceManager::discover(repo.path()).unwrap();
+    let workspace = manager.create("missing-dir-cleanup").unwrap();
+    fs::remove_dir_all(&workspace.path).unwrap();
+
+    manager.cleanup(&workspace).unwrap();
+
+    assert!(!workspace.path.exists());
+    assert!(!git(repo.path(), ["worktree", "list", "--porcelain"])
+        .contains(workspace.path.to_str().unwrap()));
+    assert_eq!(
+        git(
+            repo.path(),
+            [
+                "branch",
+                "--list",
+                &workspace.branch,
+                "--format=%(refname:short)"
+            ]
+        ),
+        ""
+    );
+}
+
+#[test]
+fn cleanup_rejects_workspace_values_that_do_not_match_manager_and_id() {
+    let repo = TestRepo::new();
+    let other_repo = TestRepo::new();
+    let manager = WorkspaceManager::discover(repo.path()).unwrap();
+    let workspace = manager.create("trusted-id").unwrap();
+
+    let wrong_repo = Workspace {
+        repo_root: other_repo.path().to_path_buf(),
+        ..workspace.clone()
+    };
+    assert!(manager
+        .cleanup(&wrong_repo)
+        .unwrap_err()
+        .to_string()
+        .contains("repo root"));
+
+    let wrong_path = Workspace {
+        path: repo.path().join("outside-trusted-id"),
+        ..workspace.clone()
+    };
+    assert!(manager
+        .cleanup(&wrong_path)
+        .unwrap_err()
+        .to_string()
+        .contains("workspace path"));
+
+    let wrong_branch = Workspace {
+        branch: "not-ralphterm/trusted-id".to_string(),
+        ..workspace.clone()
+    };
+    assert!(manager
+        .cleanup(&wrong_branch)
+        .unwrap_err()
+        .to_string()
+        .contains("workspace branch"));
+
+    manager.cleanup(&workspace).unwrap();
+}
+
+struct TestDir {
+    path: std::path::PathBuf,
+}
+
+impl TestDir {
+    fn new(prefix: &str) -> Self {
+        let path = temp_dir(prefix);
+        fs::create_dir_all(&path).unwrap();
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 struct TestRepo {
