@@ -59,6 +59,16 @@ curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
   -d '{"agent":"claude","prompt":"Say hello and end with COMPLETED"}'
 ```
 
+## Manual `ralphterm run` smoke test
+
+After the official Claude Code CLI is installed, authenticated, and works interactively as `claude` in your shell, run:
+
+```bash
+ralphterm run docs/plans/example.md --agent claude
+```
+
+RalphTerm launches the interactive CLI in a PTY and sends the task prompt as terminal input. It does not use `claude -p`, `--print`, or any one-shot prompt mode. Use `--agent codex` for an authenticated interactive Codex CLI, or `--agent-command <cmd>` for tests and custom wrappers.
+
 ## Development checks
 
 ```bash

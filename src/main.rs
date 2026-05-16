@@ -38,11 +38,28 @@ enum Command {
     },
     Run {
         plan: PathBuf,
+        #[arg(long, value_enum, conflicts_with = "agent_command")]
+        agent: Option<RunAgentKind>,
         #[arg(long)]
         agent_command: Option<String>,
         #[arg(long)]
         no_commit: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum RunAgentKind {
+    Claude,
+    Codex,
+}
+
+impl RunAgentKind {
+    fn command(self) -> String {
+        match self {
+            RunAgentKind::Claude => "claude".to_string(),
+            RunAgentKind::Codex => "codex".to_string(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -108,12 +125,13 @@ async fn main() -> anyhow::Result<()> {
         Command::Serve { bind } => serve(bind).await,
         Command::Run {
             plan,
+            agent,
             agent_command,
             no_commit,
         } => {
             let output = run_plan(RunOptions {
                 plan_path: plan,
-                agent_command,
+                agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
                 no_commit,
             })?;
             print!("{output}");

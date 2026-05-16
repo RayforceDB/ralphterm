@@ -1,5 +1,6 @@
 use std::{
     fs,
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
@@ -178,6 +179,85 @@ The agent should create first.txt.
         fs::read_to_string(repo.path.join("second.txt")).expect("second file created"),
         "created by fake agent\n"
     );
+}
+
+#[test]
+fn agent_shortcut_codex_uses_interactive_codex_from_path() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let bin_dir = repo.path.join("bin");
+    fs::create_dir(&bin_dir).expect("create bin dir");
+    let codex_path = bin_dir.join("codex");
+    fs::write(
+        &codex_path,
+        r#"#!/usr/bin/env sh
+set -eu
+printf '%s\n' "$#" > codex-argc.txt
+printf '%s\n' "$*" > codex-argv.txt
+prompt=$(cat)
+printf '%s\n' "$prompt" > codex-prompt.txt
+if printf '%s\n' "$prompt" | grep -q 'Write first.txt'; then
+  printf 'created by fake codex\n' > first.txt
+fi
+printf 'COMPLETED\n'
+"#,
+    )
+    .expect("write fake codex");
+    fs::set_permissions(&codex_path, fs::Permissions::from_mode(0o755)).expect("chmod fake codex");
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH is set")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("PATH", path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent",
+            "codex",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        fs::read_to_string(repo.path.join("codex-argc.txt")).expect("read argc"),
+        "0\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("codex-argv.txt")).expect("read argv"),
+        "\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("first.txt")).expect("first file created"),
+        "created by fake codex\n"
+    );
+    let prompt = fs::read_to_string(repo.path.join("codex-prompt.txt")).expect("read prompt");
+    assert!(prompt.contains("Task 1: Create first file"), "{prompt}");
 }
 
 #[test]
