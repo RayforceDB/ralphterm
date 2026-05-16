@@ -72,10 +72,12 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     let agent_command = options
         .agent_command
         .unwrap_or_else(|| "claude".to_string());
+    validate_interactive_agent_command(&agent_command)?;
     if options.require_review && review_command.is_none() {
         bail!("--require-review needs --review-command or --review-agent");
     }
     if let Some(review_command) = options.review_command.as_deref() {
+        validate_interactive_agent_command(review_command)?;
         if parse_agent_command(review_command)? == parse_agent_command(&agent_command)? {
             bail!("independent review command must differ from agent command");
         }
@@ -360,6 +362,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
 }
 
 pub fn run_smoke(agent_command: &str) -> Result<String> {
+    validate_interactive_agent_command(agent_command)?;
     let prompt = "RalphTerm PTY smoke check. Print COMPLETED and exit after a minimal response.";
     let agent_run = run_agent_command_with_timeout(agent_command, prompt, smoke_timeout())
         .context("run smoke agent")?;
@@ -1572,4 +1575,18 @@ fn parse_agent_command(agent_command: &str) -> Result<Vec<String>> {
     shlex::split(agent_command)
         .filter(|parts| !parts.is_empty())
         .ok_or_else(|| anyhow::anyhow!("invalid agent command"))
+}
+
+fn validate_interactive_agent_command(agent_command: &str) -> Result<()> {
+    let parts = parse_agent_command(agent_command)?;
+    if parts
+        .iter()
+        .skip(1)
+        .any(|arg| arg == "-p" || arg == "--print")
+    {
+        bail!(
+            "one-shot prompt mode is not supported; RalphTerm requires the official CLI in an interactive PTY"
+        );
+    }
+    Ok(())
 }

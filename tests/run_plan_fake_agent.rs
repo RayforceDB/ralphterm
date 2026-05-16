@@ -37,6 +37,41 @@ fn smoke_command_runs_fake_agent_and_reports_completed_signal() {
 }
 
 #[test]
+fn smoke_command_rejects_one_shot_print_mode() {
+    let repo = TempRepo::new();
+    let command = format!(
+        "{} --print",
+        fixture_path("fake-agent.sh")
+            .to_str()
+            .expect("utf8 fixture path")
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["smoke", "--agent-command", &command])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm smoke");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm smoke unexpectedly accepted one-shot mode\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("one-shot prompt mode"),
+        "{diagnostics}"
+    );
+    assert!(diagnostics.contains("interactive PTY"), "{diagnostics}");
+}
+
+#[test]
 fn smoke_command_missing_completed_reports_agent_transcript_for_diagnostics() {
     let repo = TempRepo::new();
 
