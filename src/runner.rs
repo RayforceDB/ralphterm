@@ -58,6 +58,16 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     }
     let plan_slug = plan_slug(&options.plan_path);
     remove_stale_run_summary(&plan_slug)?;
+    let run_baseline_revision = if options.no_commit {
+        None
+    } else {
+        git_head_revision()
+    };
+    let run_baseline_paths = if options.no_commit {
+        git_status_paths().unwrap_or_default()
+    } else {
+        BTreeSet::new()
+    };
     let mut executed_tasks = Vec::new();
 
     for task in pending {
@@ -173,6 +183,12 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     }
 
     write_run_summary(plan_name, &plan_slug, &executed_tasks)?;
+    write_run_diff_patch(
+        &plan_slug,
+        options.no_commit,
+        run_baseline_revision.as_deref(),
+        &run_baseline_paths,
+    )?;
 
     Ok(output)
 }
@@ -309,6 +325,75 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
     }
     fs::write(&summary_path, summary)
         .with_context(|| format!("write run summary {}", summary_path.display()))
+}
+
+fn write_run_diff_patch(
+    plan_slug: &str,
+    no_commit: bool,
+    baseline_revision: Option<&str>,
+    baseline_paths: &BTreeSet<String>,
+) -> Result<()> {
+    ensure_ralphterm_git_excluded()?;
+    let progress_dir = PathBuf::from(".ralphterm").join("progress");
+    fs::create_dir_all(&progress_dir).context("create progress directory")?;
+    let diff_path = progress_dir.join(format!("{plan_slug}-diff.patch"));
+    let patch = if no_commit {
+        working_tree_diff_patch(baseline_paths).unwrap_or_default()
+    } else if let Some(baseline_revision) = baseline_revision {
+        git_diff_patch(&[baseline_revision, "HEAD"]).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    fs::write(&diff_path, patch)
+        .with_context(|| format!("write run diff patch {}", diff_path.display()))
+}
+
+fn working_tree_diff_patch(baseline_paths: &BTreeSet<String>) -> Result<String> {
+    let mut patch = git_diff_patch(&[])?;
+    for path in git_untracked_paths()? {
+        if baseline_paths.contains(&path) || is_ralphterm_artifact(&path) {
+            continue;
+        }
+        patch.push_str(&git_no_index_new_file_patch(&path)?);
+    }
+    Ok(patch)
+}
+
+fn git_diff_patch(revisions: &[&str]) -> Result<String> {
+    let mut args = vec!["diff", "--binary", "--"];
+    if !revisions.is_empty() {
+        args = vec!["diff", "--binary"];
+        args.extend_from_slice(revisions);
+        args.push("--");
+    }
+    run_git_allow_exit_codes(&args, &[0])
+}
+
+fn git_no_index_new_file_patch(path: &str) -> Result<String> {
+    run_git_allow_exit_codes(
+        &["diff", "--binary", "--no-index", "--", "/dev/null", path],
+        &[0, 1],
+    )
+}
+
+fn git_untracked_paths() -> Result<Vec<String>> {
+    let output = run_git(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+    Ok(output
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(ToString::to_string)
+        .collect())
+}
+
+fn git_head_revision() -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn last_task_end_failed(path: &Path, task_number: usize) -> Result<bool> {
@@ -463,6 +548,20 @@ fn ensure_ralphterm_git_excluded() -> Result<()> {
 
 fn run_git(args: &[&str]) -> Result<String> {
     run_git_with_paths(args, &[])
+}
+
+fn run_git_allow_exit_codes(args: &[&str], allowed_exit_codes: &[i32]) -> Result<String> {
+    let result = Command::new("git").args(args).output().context("run git")?;
+    let exit_code = result.status.code().unwrap_or(-1);
+    if !allowed_exit_codes.contains(&exit_code) {
+        bail!(
+            "git command failed with {}\nstdout:\n{}\nstderr:\n{}",
+            result.status,
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&result.stdout).into_owned())
 }
 
 fn run_git_with_paths(args: &[&str], paths: &[&str]) -> Result<String> {
