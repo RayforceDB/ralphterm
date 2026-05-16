@@ -52,6 +52,77 @@ fn creates_branch_and_worktree_under_ralphterm_workspaces() {
 }
 
 #[test]
+fn cli_create_workspace_creates_worktree_and_prints_metadata() {
+    let repo = TestRepo::new();
+    let base_commit = git(repo.path(), ["rev-parse", "HEAD"]);
+
+    let output = ralphterm(repo.path(), ["workspace", "create", "cli-task"]);
+
+    let workspace_path = repo
+        .path()
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("cli-task");
+    assert!(output.contains("Workspace: cli-task"), "{output}");
+    assert!(
+        output.contains(&format!("Path: {}", workspace_path.display())),
+        "{output}"
+    );
+    assert!(output.contains("Branch: ralphterm/cli-task"), "{output}");
+    assert!(output.contains(&format!("Base: {base_commit}")), "{output}");
+    assert!(workspace_path.is_dir());
+    assert_eq!(git(&workspace_path, ["rev-parse", "HEAD"]), base_commit);
+    assert_eq!(
+        git(&workspace_path, ["branch", "--show-current"]),
+        "ralphterm/cli-task"
+    );
+}
+
+#[test]
+fn cli_cleanup_workspace_removes_worktree_and_branch() {
+    let repo = TestRepo::new();
+    ralphterm(repo.path(), ["workspace", "create", "cli-cleanup"]);
+    let workspace_path = repo
+        .path()
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("cli-cleanup");
+    assert!(workspace_path.exists());
+    assert_eq!(
+        git(
+            repo.path(),
+            [
+                "branch",
+                "--list",
+                "ralphterm/cli-cleanup",
+                "--format=%(refname:short)"
+            ]
+        ),
+        "ralphterm/cli-cleanup"
+    );
+
+    let output = ralphterm(repo.path(), ["workspace", "cleanup", "cli-cleanup"]);
+
+    assert!(
+        output.contains("Cleaned workspace: cli-cleanup"),
+        "{output}"
+    );
+    assert!(!workspace_path.exists());
+    assert_eq!(
+        git(
+            repo.path(),
+            [
+                "branch",
+                "--list",
+                "ralphterm/cli-cleanup",
+                "--format=%(refname:short)"
+            ]
+        ),
+        ""
+    );
+}
+
+#[test]
 fn create_excludes_ralphterm_metadata_from_git_status() {
     let repo = TestRepo::new();
     let manager = WorkspaceManager::discover(repo.path()).unwrap();
@@ -280,6 +351,26 @@ where
     assert!(
         output.status.success(),
         "git command failed in {}\nstdout:\n{}\nstderr:\n{}",
+        cwd.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn ralphterm<I, S>(cwd: &Path, args: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "ralphterm command failed in {}\nstdout:\n{}\nstderr:\n{}",
         cwd.display(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)

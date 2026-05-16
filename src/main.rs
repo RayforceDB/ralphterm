@@ -22,6 +22,7 @@ use pty_agent::{AgentKind, SessionConfig, SessionInput};
 use ralphterm::{
     runner::{run_plan, run_smoke, RunOptions},
     runs::{CreatedRunRecord, RunPhase, RunRecord, RunStatus, RunStore},
+    workspace::WorkspaceManager,
 };
 use store::{SessionRecord, SessionStore};
 
@@ -68,6 +69,16 @@ enum Command {
         #[arg(long)]
         agent_command: Option<String>,
     },
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum WorkspaceCommand {
+    Create { id: String },
+    Cleanup { id: String },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -185,7 +196,30 @@ async fn main() -> anyhow::Result<()> {
             print!("{output}");
             Ok(())
         }
+        Command::Workspace { command } => run_workspace_command(command),
     }
+}
+
+fn run_workspace_command(command: WorkspaceCommand) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir().context("read current directory")?;
+    let manager = WorkspaceManager::discover(cwd)?;
+
+    match command {
+        WorkspaceCommand::Create { id } => {
+            let workspace = manager.create(id)?;
+            println!("Workspace: {}", workspace.id);
+            println!("Path: {}", workspace.path.display());
+            println!("Branch: {}", workspace.branch);
+            println!("Base: {}", workspace.base_commit);
+        }
+        WorkspaceCommand::Cleanup { id } => {
+            let workspace = manager.workspace(&id)?;
+            manager.cleanup(&workspace)?;
+            println!("Cleaned workspace: {id}");
+        }
+    }
+
+    Ok(())
 }
 
 async fn serve(bind: SocketAddr) -> anyhow::Result<()> {

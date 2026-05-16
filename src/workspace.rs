@@ -53,12 +53,32 @@ impl WorkspaceManager {
         &self.repo_root
     }
 
-    pub fn create(&self, id: impl AsRef<str>) -> Result<Workspace> {
+    pub fn workspace(&self, id: impl AsRef<str>) -> Result<Workspace> {
         let id = sanitize_id(id.as_ref())?;
         let base_commit = self.git_output(["rev-parse", "HEAD"])?;
         let branch = format!("ralphterm/{id}");
+        let path = self
+            .repo_root
+            .join(".ralphterm")
+            .join("workspaces")
+            .join(&id);
+
+        Ok(Workspace {
+            id,
+            repo_root: self.repo_root.clone(),
+            path,
+            branch,
+            base_commit,
+        })
+    }
+
+    pub fn create(&self, id: impl AsRef<str>) -> Result<Workspace> {
+        let workspace = self.workspace(id)?;
+        let id = workspace.id.clone();
+        let base_commit = workspace.base_commit.clone();
+        let branch = workspace.branch.clone();
         let workspaces_dir = self.repo_root.join(".ralphterm").join("workspaces");
-        let path = workspaces_dir.join(&id);
+        let path = workspace.path.clone();
 
         self.exclude_ralphterm_metadata()?;
         fs::create_dir_all(&workspaces_dir)
