@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
@@ -103,9 +103,8 @@ impl RunStore {
         fs::create_dir_all(&run_dir)
             .with_context(|| format!("create run directory {}", run_dir.display()))?;
 
-        let run_json = serde_json::to_string_pretty(&record).context("serialize run record")?;
-        fs::write(run_dir.join("run.json"), format!("{run_json}\n"))
-            .with_context(|| format!("write {}", run_dir.join("run.json").display()))?;
+        let run_json_path = run_dir.join("run.json");
+        write_record_atomically(&run_json_path, &record)?;
 
         let event = RunEvent {
             event_type: "run_created".to_string(),
@@ -202,7 +201,6 @@ impl RunStore {
         };
         record.phase = RunPhase::Executing;
         record.status = RunStatus::Running;
-        write_record(base_dir.as_ref(), &record)?;
         append_event(
             base_dir.as_ref(),
             id,
@@ -217,6 +215,7 @@ impl RunStore {
                 message: None,
             },
         )?;
+        write_record(base_dir.as_ref(), &record)?;
         Ok(Some(record))
     }
 
@@ -229,7 +228,6 @@ impl RunStore {
         };
         record.phase = RunPhase::Complete;
         record.status = RunStatus::Failed;
-        write_record(base_dir.as_ref(), &record)?;
         append_event(
             base_dir.as_ref(),
             id,
@@ -244,6 +242,7 @@ impl RunStore {
                 message: None,
             },
         )?;
+        write_record(base_dir.as_ref(), &record)?;
         Ok(Some(record))
     }
 
@@ -272,7 +271,6 @@ impl RunStore {
 
         record.phase = RunPhase::Complete;
         record.status = RunStatus::Succeeded;
-        write_record(base_dir.as_ref(), &record)?;
         append_event(
             base_dir.as_ref(),
             id,
@@ -287,6 +285,7 @@ impl RunStore {
                 message: None,
             },
         )?;
+        write_record(base_dir.as_ref(), &record)?;
         Ok(Some(record))
     }
 
@@ -319,7 +318,6 @@ impl RunStore {
 
         record.phase = RunPhase::Complete;
         record.status = RunStatus::Failed;
-        write_record(base_dir.as_ref(), &record)?;
         append_event(
             base_dir.as_ref(),
             id,
@@ -334,6 +332,7 @@ impl RunStore {
                 message: None,
             },
         )?;
+        write_record(base_dir.as_ref(), &record)?;
         Ok(Some(record))
     }
 
@@ -388,8 +387,45 @@ fn read_record(path: &Path) -> Result<CreatedRunRecord> {
 
 fn write_record(base_dir: &Path, record: &CreatedRunRecord) -> Result<()> {
     let path = run_dir(base_dir, record.id).join("run.json");
+    write_record_atomically(&path, record)
+}
+
+fn write_record_atomically(path: &Path, record: &CreatedRunRecord) -> Result<()> {
     let run_json = serde_json::to_string_pretty(record).context("serialize run record")?;
-    fs::write(&path, format!("{run_json}\n")).with_context(|| format!("write {}", path.display()))
+    let content = format!("{run_json}\n");
+    let parent = path
+        .parent()
+        .with_context(|| format!("resolve parent directory for {}", path.display()))?;
+    let temp_path = parent.join(format!(
+        ".run.json.{}.{}.tmp",
+        std::process::id(),
+        Uuid::new_v4()
+    ));
+
+    let write_result = (|| -> Result<()> {
+        let mut temp_file = File::create(&temp_path)
+            .with_context(|| format!("create temporary run record {}", temp_path.display()))?;
+        temp_file
+            .write_all(content.as_bytes())
+            .with_context(|| format!("write temporary run record {}", temp_path.display()))?;
+        temp_file
+            .sync_all()
+            .with_context(|| format!("sync temporary run record {}", temp_path.display()))?;
+        drop(temp_file);
+
+        fs::rename(&temp_path, path)
+            .with_context(|| format!("rename {} to {}", temp_path.display(), path.display()))?;
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    write_result.with_context(|| format!("write {}", path.display()))
 }
 
 fn append_event(base_dir: &Path, id: Uuid, event: RunEvent) -> Result<()> {
@@ -418,11 +454,72 @@ fn timestamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{
+        fs,
+        path::Path,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        thread,
+    };
 
     use serde_json::Value;
 
-    use super::{RunPhase, RunRecord, RunResultArtifacts, RunStatus, RunStore};
+    use super::{
+        read_record, write_record, CreatedRunRecord, RunPhase, RunRecord, RunResultArtifacts,
+        RunStatus, RunStore,
+    };
+
+    #[test]
+    fn readers_never_observe_partial_run_json_during_updates() {
+        let temp = std::env::temp_dir().join(format!(
+            "ralphterm-run-atomic-record-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp).unwrap();
+
+        let record = RunStore::create(
+            &temp,
+            RunRecord {
+                phase: RunPhase::Executing,
+                status: RunStatus::Running,
+                plan_path: Some("plans/task.md".into()),
+                workspace_path: Some("initial".into()),
+            },
+        )
+        .unwrap();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader_stop = Arc::clone(&stop);
+        let run_json = temp
+            .join(".ralphterm")
+            .join("runs")
+            .join(record.id.to_string())
+            .join("run.json");
+        let reader = thread::spawn(move || {
+            while !reader_stop.load(Ordering::Acquire) {
+                read_record(&run_json).expect("reader must only observe complete run.json records");
+            }
+        });
+
+        let mut updated = CreatedRunRecord {
+            workspace_path: Some("x".repeat(4 * 1024 * 1024)),
+            ..record.clone()
+        };
+        for iteration in 0..80 {
+            updated.status = if iteration % 2 == 0 {
+                RunStatus::Running
+            } else {
+                RunStatus::Succeeded
+            };
+            write_record(&temp, &updated).unwrap();
+        }
+        stop.store(true, Ordering::Release);
+        reader.join().unwrap();
+
+        remove_dir_all_if_exists(&temp);
+    }
 
     #[test]
     fn create_writes_run_json_and_initial_event() {
