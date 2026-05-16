@@ -108,7 +108,7 @@ pub fn parse_plan(input: &str) -> Result<Plan> {
 pub fn mark_task_complete(input: &str, task_number: usize) -> Result<String> {
     let header_prefix = format!("### Task {task_number}:");
     let mut in_target = false;
-    let mut marked_any = false;
+    let mut marked_open_checkboxes = 0;
     let mut output = Vec::new();
 
     for line in input.lines() {
@@ -121,14 +121,14 @@ pub fn mark_task_complete(input: &str, task_number: usize) -> Result<String> {
         if in_target {
             if let Some(updated) = mark_open_checkbox(line) {
                 output.push(updated);
-                marked_any = true;
+                marked_open_checkboxes += 1;
                 continue;
             }
         }
         output.push(line.to_string());
     }
 
-    if !marked_any {
+    if marked_open_checkboxes == 0 {
         bail!("task {task_number} has no open checkbox to mark complete");
     }
 

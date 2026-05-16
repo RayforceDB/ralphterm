@@ -1,4 +1,4 @@
-use ralphterm::plan::{parse_plan, CheckboxState};
+use ralphterm::plan::{mark_task_complete, parse_plan, CheckboxState};
 
 const SAMPLE_PLAN: &str = r#"# Plan: Add auth
 
@@ -61,4 +61,15 @@ fn returns_pending_tasks_only() {
     assert_eq!(pending.len(), 2);
     assert_eq!(pending[0].title, "Add user model");
     assert_eq!(pending[1].title, "Wire login");
+}
+
+#[test]
+fn mark_task_complete_marks_all_open_checkboxes_in_target_task() {
+    let updated = mark_task_complete(SAMPLE_PLAN, 1).expect("mark task complete");
+
+    assert!(
+        updated.contains("### Task 1: Add user model\n- [x] Create user struct\n- [x] Add tests")
+    );
+    assert!(updated.contains("### Task 2: Wire login\n- [x] Add route\n- [ ] Add session cookie"));
+    assert!(updated.contains("### Notes\n- [ ] This checkbox is not a task."));
 }
