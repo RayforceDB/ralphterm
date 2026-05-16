@@ -155,6 +155,11 @@ struct InputRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApprovalRequest {
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct ResizeRequest {
     cols: u16,
     rows: u16,
@@ -163,6 +168,12 @@ struct ResizeRequest {
 #[derive(Debug, Serialize)]
 struct CreateSessionResponse {
     id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+struct ApprovalResponse {
+    id: Uuid,
+    approved: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -321,6 +332,7 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
         .route("/v1/sessions", post(create_session).get(list_sessions))
         .route("/v1/sessions/:id", get(get_session))
         .route("/v1/sessions/:id/input", post(send_input))
+        .route("/v1/sessions/:id/approval", post(approval_decision))
         .route("/v1/sessions/:id/resize", post(resize_session))
         .route("/v1/sessions/:id/cancel", post(cancel_session))
         .route("/v1/sessions/:id/transcript", get(get_transcript))
@@ -772,6 +784,21 @@ async fn send_input(
         )
         .await?;
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn approval_decision(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ApprovalRequest>,
+) -> Result<(StatusCode, Json<ApprovalResponse>), ApiError> {
+    state.store.approval_decision(id, req.approved).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ApprovalResponse {
+            id,
+            approved: req.approved,
+        }),
+    ))
 }
 
 async fn resize_session(

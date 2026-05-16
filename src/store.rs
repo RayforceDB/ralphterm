@@ -40,6 +40,7 @@ pub enum SessionEvent {
     Output { text: String },
     Signal { signal: AgentSignal },
     ApprovalRequested { prompt: String },
+    ApprovalDecision { approved: bool },
     Exit { exit_code: Option<i32> },
     Error { message: String },
 }
@@ -126,6 +127,24 @@ impl SessionStore {
             .input_tx
             .send(input)
             .context("send input")
+    }
+
+    pub async fn approval_decision(&self, id: Uuid, approved: bool) -> anyhow::Result<()> {
+        let session = self
+            .sessions
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("session not found"))?;
+        session
+            .input_tx
+            .send(SessionInput {
+                text: if approved { "y" } else { "n" }.to_string(),
+                enter: true,
+            })
+            .context("send approval decision")?;
+        let _ = session
+            .event_tx
+            .send(SessionEvent::ApprovalDecision { approved });
+        Ok(())
     }
 
     pub async fn resize(&self, id: Uuid, cols: u16, rows: u16) -> anyhow::Result<()> {

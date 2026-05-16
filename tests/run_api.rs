@@ -110,6 +110,67 @@ fn dashboard_lists_active_sessions_and_javascript_renders_them() {
 }
 
 #[test]
+fn session_approval_decision_posts_to_pty_and_emits_event() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "agent": "codex",
+        "prompt": "ignored initial prompt",
+        "command": "/bin/sh",
+        "args": ["-c", "read _ignored; printf 'Approve? '; read answer; printf 'ANSWER:%s\\n' \"$answer\"; sleep 1"]
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/sessions HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created session json");
+    let id = created_json["id"].as_str().expect("session id");
+
+    let mut events = connect_ws(port, &format!("/v1/sessions/{id}/events"));
+    wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("Approve?"),
+    );
+
+    let approval_body = serde_json::json!({"approved": true}).to_string();
+    let approved = request_json(
+        port,
+        &format!("POST /v1/sessions/{id}/approval HTTP/1.1"),
+        Some(&approval_body),
+    );
+    assert_eq!(approved.status, 202, "{}", approved.body);
+    let approved_json: serde_json::Value =
+        serde_json::from_str(&approved.body).expect("approval response json");
+    assert_eq!(approved_json["id"], id);
+    assert_eq!(approved_json["approved"], true);
+
+    let transcript = wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("ANSWER:y"),
+    );
+    assert!(transcript.contains("ANSWER:y"), "{transcript}");
+
+    let decision_event = read_ws_json_until(&mut events, |event| {
+        (event["type"] == "approval-decision").then(|| event.clone())
+    });
+    assert_eq!(decision_event["approved"], true, "{decision_event}");
+}
+
+#[test]
 fn run_api_creates_lists_reads_events_and_cancels_run_records() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
@@ -1764,6 +1825,86 @@ struct Response {
     status: u16,
     content_type: String,
     body: String,
+}
+
+fn connect_ws(port: u16, path: &str) -> TcpStream {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect websocket");
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    )
+    .expect("write websocket handshake");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set websocket read timeout");
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 1];
+    while !raw.ends_with(b"\r\n\r\n") {
+        stream
+            .read_exact(&mut buf)
+            .expect("read websocket handshake");
+        raw.push(buf[0]);
+    }
+    let headers = String::from_utf8(raw).expect("websocket handshake utf8");
+    assert!(
+        headers.starts_with("HTTP/1.1 101"),
+        "websocket upgrade failed: {headers}"
+    );
+    stream
+}
+
+fn read_ws_json_until(
+    stream: &mut TcpStream,
+    predicate: impl Fn(&serde_json::Value) -> Option<serde_json::Value>,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut last_event = String::new();
+    while Instant::now() < deadline {
+        if let Some(text) = read_ws_text_frame(stream) {
+            last_event = text;
+            let json: serde_json::Value =
+                serde_json::from_str(&last_event).expect("websocket json");
+            if let Some(value) = predicate(&json) {
+                return value;
+            }
+        }
+    }
+    panic!("timed out waiting for websocket event; last event: {last_event}");
+}
+
+fn read_ws_text_frame(stream: &mut TcpStream) -> Option<String> {
+    let mut header = [0u8; 2];
+    stream.read_exact(&mut header).ok()?;
+    let opcode = header[0] & 0x0f;
+    let masked = header[1] & 0x80 != 0;
+    let mut len = u64::from(header[1] & 0x7f);
+    if len == 126 {
+        let mut extended = [0u8; 2];
+        stream
+            .read_exact(&mut extended)
+            .expect("read websocket length");
+        len = u64::from(u16::from_be_bytes(extended));
+    } else if len == 127 {
+        let mut extended = [0u8; 8];
+        stream
+            .read_exact(&mut extended)
+            .expect("read websocket length");
+        len = u64::from_be_bytes(extended);
+    }
+    let mut mask = [0u8; 4];
+    if masked {
+        stream.read_exact(&mut mask).expect("read websocket mask");
+    }
+    let mut payload = vec![0u8; len as usize];
+    stream
+        .read_exact(&mut payload)
+        .expect("read websocket payload");
+    if masked {
+        for (index, byte) in payload.iter_mut().enumerate() {
+            *byte ^= mask[index % 4];
+        }
+    }
+    (opcode == 1).then(|| String::from_utf8(payload).expect("websocket text utf8"))
 }
 
 fn free_port() -> u16 {
