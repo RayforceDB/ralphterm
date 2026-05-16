@@ -51,7 +51,11 @@ enum Command {
         review_command: Option<String>,
         #[arg(long)]
         require_review: bool,
-        #[arg(long, default_value_t = 1)]
+        #[arg(
+            long,
+            default_value_t = 1,
+            help = "Maximum number of implementation retries after REVIEW_FAIL decisions"
+        )]
         max_review_retries: usize,
         #[arg(long)]
         no_commit: bool,

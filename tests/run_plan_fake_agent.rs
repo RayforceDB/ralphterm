@@ -2590,6 +2590,111 @@ fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
 }
 
 #[test]
+fn max_review_retries_two_allows_two_review_failures_before_acceptance() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-after-review-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-twice.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--max-review-retries",
+            "2",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run should allow two failed reviews with --max-review-retries 2 before acceptance\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        fs::read_to_string(repo.path.join("first.txt")).expect("read fixed file"),
+        "fixed after review\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("agent-count.txt")).expect("read agent count"),
+        "3\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("review-count.txt")).expect("read review count"),
+        "3\n"
+    );
+
+    for attempt in 1..=3 {
+        assert!(
+            repo.path
+                .join(format!(
+                    ".ralphterm/progress/plan-task-1-attempt-{attempt}.transcript"
+                ))
+                .exists(),
+            "expected implementation transcript for attempt {attempt}"
+        );
+        assert!(
+            repo.path
+                .join(format!(
+                    ".ralphterm/progress/plan-task-1-attempt-{attempt}-review.transcript"
+                ))
+                .exists(),
+            "expected review transcript for attempt {attempt}"
+        );
+    }
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert_eq!(
+        progress_log.matches("review result=failed").count(),
+        2,
+        "progress log should record exactly two failed reviews before the pass:\n{progress_log}"
+    );
+    assert_eq!(
+        progress_log.matches("agent_retry").count(),
+        2,
+        "progress log should record exactly two review-driven implementation retries:\n{progress_log}"
+    );
+    assert!(
+        progress_log.contains("review result=passed"),
+        "{progress_log}"
+    );
+
+    let second_retry_prompt =
+        fs::read_to_string(repo.path.join("agent-prompt-3.txt")).expect("read second retry prompt");
+    assert!(
+        second_retry_prompt.contains("Previous review failed"),
+        "second retry prompt should include review failure feedback:\n{second_retry_prompt}"
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+}
+
+#[test]
 fn failed_retry_summary_links_failing_attempt_artifacts() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");

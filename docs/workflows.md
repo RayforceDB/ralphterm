@@ -47,9 +47,9 @@ ralphterm run docs/plans/example.md --agent claude \
 The reviewer must print one exact decision line:
 
 - `REVIEW_PASS` accepts the task
-- `REVIEW_FAIL` rejects the current attempt and triggers one REVIEW_FAIL retry with the reviewer feedback sent back to the implementation agent
+- `REVIEW_FAIL` rejects the current attempt and, by default, triggers one REVIEW_FAIL retry with the reviewer feedback sent back to the implementation agent
 
-If the retry also fails review, RalphTerm leaves the task unchecked and exits failed instead of committing partial progress. If no reviewer is configured and `--require-review` is not set, RalphTerm prints `Review: skipped`. That mode is useful for smoke tests only.
+If the retry also fails review, RalphTerm leaves the task unchecked and exits failed instead of committing partial progress. Use `--max-review-retries N` to configure the review retry budget: higher values allow more failed reviews before blocking, and `--max-review-retries 0` blocks on the first failed review. If no reviewer is configured and `--require-review` is not set, RalphTerm prints `Review: skipped`. That mode is useful for smoke tests only.
 
 ## Validation, resume, and artifacts
 

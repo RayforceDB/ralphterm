@@ -93,7 +93,7 @@ ralphterm smoke --agent codex</code></pre>
 ralphterm run docs/plans/example.md --agent claude \
   --require-review \
   --review-command "codex exec review-task"</code></pre>
-      <p>The reviewer starts after validation and must print an exact <code>REVIEW_PASS</code> line. <code>REVIEW_FAIL</code> triggers one retry with reviewer feedback; if review still fails, the task stays unchecked and no commit is made.</p>
+      <p>The reviewer starts after validation and must print an exact <code>REVIEW_PASS</code> line. By default, <code>REVIEW_FAIL</code> triggers one retry with reviewer feedback; if review still fails, the task stays unchecked and no commit is made. Use <code>--max-review-retries N</code> to allow more review-driven retries, or <code>--max-review-retries 0</code> to block on the first failed review.</p>
       <h2>Real agent sessions</h2>
       <p>Install and authenticate the official CLI first. RalphTerm does not own provider credentials.</p>
       <pre><code>claude auth login

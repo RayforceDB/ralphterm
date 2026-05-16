@@ -114,8 +114,9 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
         "getting started copy should not imply the first REVIEW_FAIL immediately blocks without retry"
     );
     assert!(
-        docs_index.contains("REVIEW_FAIL</code> triggers one retry"),
-        "getting started copy should describe retry behavior before final failure"
+        docs_index.contains("<code>REVIEW_FAIL</code> triggers one retry")
+            && docs_index.contains("<code>--max-review-retries N</code>"),
+        "getting started copy should describe the default retry behavior and configurable retry budget"
     );
     assert!(
         site_index.contains("without <code>claude -p</code>"),
@@ -141,6 +142,10 @@ fn repo_docs_describe_review_retry_before_blocking() {
     assert!(
         readme.contains("second review failure leaves the task unchecked"),
         "README should describe final blocking only after the retry fails review"
+    );
+    assert!(
+        readme.contains("--max-review-retries N"),
+        "README should document the configurable review retry budget"
     );
     assert!(
         product.contains("cross-review step is the product boundary"),

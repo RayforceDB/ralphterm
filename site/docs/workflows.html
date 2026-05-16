@@ -71,9 +71,9 @@ ralphterm run docs/plans/example.md --agent claude \
       <p>The reviewer receives the task text, implementation transcript, validation output, current diff, and untracked file names. The decision must be explicit:</p>
       <ul>
         <li><code>REVIEW_PASS</code> accepts the task.</li>
-        <li><code>REVIEW_FAIL</code> rejects the current attempt and triggers one REVIEW_FAIL retry by returning the reviewer feedback to the implementation agent.</li>
+        <li><code>REVIEW_FAIL</code> rejects the current attempt and, by default, triggers one REVIEW_FAIL retry by returning the reviewer feedback to the implementation agent.</li>
       </ul>
-      <p>If the retry also fails review, RalphTerm leaves the task unchecked and exits failed instead of committing partial progress.</p>
+      <p>If the retry also fails review, RalphTerm leaves the task unchecked and exits failed instead of committing partial progress. Use <code>--max-review-retries N</code> to configure the review retry budget: higher values allow more failed reviews before blocking, and <code>--max-review-retries 0</code> blocks on the first failed review.</p>
 
       <h2>Resume after failure</h2>
       <p>You can resume after a failed run by invoking the same plan again. RalphTerm skips tasks already marked <code>[x]</code>, keeps failed context available to the next implementation prompt, and continues with pending tasks.</p>

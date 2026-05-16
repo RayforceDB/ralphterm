@@ -19,7 +19,7 @@
 - Each task starts a fresh PTY-backed agent session.
 - RalphTerm sends task context to the agent as terminal input, not `claude -p`.
 - Validation commands run after each task.
-- An independent reviewer runs after validation and before task acceptance. **Shipped:** `--review-agent codex` uses a built-in reviewer CLI; `--review-command <cmd>` starts a custom PTY reviewer after validation. It receives the task, agent transcript, validation output, and git state. Exact `REVIEW_PASS` accepts. The first exact `REVIEW_FAIL` retries implementation with reviewer feedback; a second review failure blocks acceptance.
+- An independent reviewer runs after validation and before task acceptance. **Shipped:** `--review-agent codex` uses a built-in reviewer CLI; `--review-command <cmd>` starts a custom PTY reviewer after validation. It receives the task, agent transcript, validation output, and git state. Exact `REVIEW_PASS` accepts. Exact `REVIEW_FAIL` retries implementation with reviewer feedback while the configured retry budget allows it; the default budget is one retry, and `--max-review-retries N` can raise, lower, or disable it.
 - Completed tasks are marked `[x]` only after validation and review both pass.
 - A git commit is created after each accepted task, kept local until a coherent release slice is ready.
 - A progress log/transcript is written under `.ralphterm/progress/`.

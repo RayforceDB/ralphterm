@@ -38,8 +38,8 @@ RalphTerm is not just an agent launcher. The ralphex replacement loop is task ex
 3. Run validation commands.
 4. Send the task, transcript, validation output, and git diff to an independent reviewer.
 5. Accept progress only after `REVIEW_PASS`.
-6. On the first `REVIEW_FAIL`, send reviewer feedback into one fresh implementation retry.
-7. If review still fails, leave the task unchecked and do not commit partial progress.
+6. On `REVIEW_FAIL`, send reviewer feedback into a fresh implementation retry while the configured review retry budget allows it. The default budget is one retry, and `--max-review-retries N` can raise, lower, or disable it.
+7. If review still fails after the retry budget is exhausted, leave the task unchecked and do not commit partial progress.
 
 That cross-review step is the product boundary. Launching agents is plumbing; verified plan progress is the job.
 
