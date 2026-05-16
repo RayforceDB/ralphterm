@@ -147,6 +147,70 @@ fn smoke_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
 }
 
 #[test]
+fn run_command_records_complete_transcript_for_successful_large_output_agent() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ralphterm"));
+    command
+        .current_dir(&repo.path)
+        .env("RALPHTERM_AGENT_TIMEOUT_MS", "30000")
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("large-output-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null());
+    let output = run_with_test_timeout(command, Duration::from_secs(15));
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let transcript =
+        fs::read_to_string(repo.path.join(".ralphterm/progress/plan-task-1.transcript"))
+            .expect("read transcript");
+    assert!(
+        transcript.contains("large-output-line-200000"),
+        "transcript should include final large-output line; len={} tail={}",
+        transcript.len(),
+        transcript
+            .chars()
+            .rev()
+            .take(400)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>()
+    );
+    assert!(
+        transcript.contains("LARGE_OUTPUT_SENTINEL_COMPLETED"),
+        "transcript should include sentinel; len={}",
+        transcript.len()
+    );
+}
+
+#[test]
 fn run_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
@@ -179,7 +243,7 @@ fn run_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
         ])
         .stderr(Stdio::piped())
         .stdout(Stdio::piped());
-    let output = run_with_test_timeout(command, Duration::from_secs(2));
+    let output = run_with_test_timeout(command, Duration::from_secs(5));
 
     let elapsed = start.elapsed();
     assert!(

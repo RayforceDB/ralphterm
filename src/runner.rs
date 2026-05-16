@@ -145,29 +145,29 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 review_feedback.as_deref(),
                 resume_context.as_ref(),
             );
-            let agent_run =
-                match run_agent_command_with_timeout(&agent_command, &prompt, agent_timeout())
-                    .with_context(|| format!("run agent for task {}", task.number))
-                {
-                    Ok(agent_run) => agent_run,
-                    Err(err) => {
-                        append_progress(
-                            &progress.log_path,
-                            &format!("task_end number={} result=failed", task.number),
-                        )?;
-                        let summary_result = write_failed_run_summary(
-                            plan_name,
-                            &plan_slug,
-                            &executed_tasks,
-                            task,
-                            "agent execution",
-                            &format!("{err:#}"),
-                            &progress,
-                            Some(&attempt_progress),
-                        );
-                        return Err(failed_run_error(err, summary_result));
-                    }
-                };
+            let timeout = agent_timeout();
+            let agent_run = match run_agent_command_with_timeout(&agent_command, &prompt, timeout)
+                .with_context(|| format!("run agent for task {}", task.number))
+            {
+                Ok(agent_run) => agent_run,
+                Err(err) => {
+                    append_progress(
+                        &progress.log_path,
+                        &format!("task_end number={} result=failed", task.number),
+                    )?;
+                    let summary_result = write_failed_run_summary(
+                        plan_name,
+                        &plan_slug,
+                        &executed_tasks,
+                        task,
+                        "agent execution",
+                        &format!("{err:#}"),
+                        &progress,
+                        Some(&attempt_progress),
+                    );
+                    return Err(failed_run_error(err, summary_result));
+                }
+            };
             let transcript = agent_run.transcript;
             fs::write(&attempt_progress.transcript_path, &transcript).with_context(|| {
                 format!(
@@ -202,11 +202,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &progress.log_path,
                     &format!("task_end number={} result=failed", task.number),
                 )?;
-                let detail = format!(
-                    "agent command timed out after {:?}\n{}",
-                    agent_timeout(),
-                    transcript
-                );
+                let detail = format!("agent command timed out after {timeout:?}\n{transcript}");
                 let summary_result = write_failed_run_summary(
                     plan_name,
                     &plan_slug,
@@ -219,7 +215,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 );
                 let err = anyhow::anyhow!(
                     "agent command timed out after {:?} for task {}\n{}",
-                    agent_timeout(),
+                    timeout,
                     task.number,
                     transcript
                 );
@@ -376,7 +372,8 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
 pub fn run_smoke(agent_command: &str) -> Result<String> {
     validate_interactive_agent_command(agent_command)?;
     let prompt = "RalphTerm PTY smoke check. Print COMPLETED and exit after a minimal response.";
-    let agent_run = run_agent_command_with_timeout(agent_command, prompt, smoke_timeout())
+    let timeout = smoke_timeout();
+    let agent_run = run_agent_command_with_timeout(agent_command, prompt, timeout)
         .context("run smoke agent")?;
     let mut output = format!("Smoke: {agent_command}\n");
     output.push_str(&agent_run.transcript);
@@ -386,7 +383,7 @@ pub fn run_smoke(agent_command: &str) -> Result<String> {
     let signal = completion_signal(&agent_run.transcript, prompt);
     output.push_str(&format!("Signal: {signal}\n"));
     if agent_run.timed_out {
-        bail!("smoke timed out after {:?}\n{output}", smoke_timeout());
+        bail!("smoke timed out after {timeout:?}\n{output}");
     }
     if agent_run.exit_code != 0 {
         bail!(
@@ -1513,24 +1510,38 @@ fn run_agent_command_with_timeout(
 
         if Instant::now() >= deadline {
             timed_out = true;
-            agent.child.kill().context("kill timed out smoke agent")?;
-            break agent.child.wait().context("wait for killed smoke agent")?;
+            agent.child.kill().context("kill timed out agent")?;
+            break agent.child.wait().context("wait for killed agent")?;
         }
 
         thread::sleep(Duration::from_millis(10));
     };
 
-    let drain_deadline = Instant::now() + Duration::from_millis(200);
-    while !reader_done && Instant::now() < drain_deadline {
-        match rx.recv_timeout(Duration::from_millis(10)) {
-            Ok(ReaderEvent::Chunk(chunk)) => transcript.push_str(&chunk),
-            Ok(ReaderEvent::Error(err)) => {
-                read_error = Some(err);
-                reader_done = true;
+    if timed_out {
+        let drain_deadline = Instant::now() + Duration::from_millis(200);
+        while !reader_done && Instant::now() < drain_deadline {
+            match rx.recv_timeout(Duration::from_millis(10)) {
+                Ok(ReaderEvent::Chunk(chunk)) => transcript.push_str(&chunk),
+                Ok(ReaderEvent::Error(err)) => {
+                    read_error = Some(err);
+                    reader_done = true;
+                }
+                Ok(ReaderEvent::Done) => reader_done = true,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
-            Ok(ReaderEvent::Done) => reader_done = true,
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    } else {
+        while !reader_done {
+            match rx.recv() {
+                Ok(ReaderEvent::Chunk(chunk)) => transcript.push_str(&chunk),
+                Ok(ReaderEvent::Error(err)) => {
+                    read_error = Some(err);
+                    reader_done = true;
+                }
+                Ok(ReaderEvent::Done) => reader_done = true,
+                Err(_) => break,
+            }
         }
     }
 
