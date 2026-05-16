@@ -360,7 +360,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                             &progress,
                             Some(&attempt_progress),
                             true,
-                            true,
+                            err.transcript_written(),
                         );
                         return Err(failed_run_error(err.into(), summary_result));
                     }
@@ -527,18 +527,24 @@ struct AgentRun {
 struct ReviewCommandError {
     message: String,
     explicit_fail: bool,
+    transcript_written: bool,
 }
 
 impl ReviewCommandError {
-    fn new(message: String, explicit_fail: bool) -> Self {
+    fn new(message: String, explicit_fail: bool, transcript_written: bool) -> Self {
         Self {
             message,
             explicit_fail,
+            transcript_written,
         }
     }
 
     fn explicit_fail(&self) -> bool {
         self.explicit_fail
+    }
+
+    fn transcript_written(&self) -> bool {
+        self.transcript_written
     }
 }
 
@@ -552,13 +558,13 @@ impl std::error::Error for ReviewCommandError {}
 
 impl From<anyhow::Error> for ReviewCommandError {
     fn from(error: anyhow::Error) -> Self {
-        Self::new(error.to_string(), false)
+        Self::new(error.to_string(), false, false)
     }
 }
 
 impl From<std::io::Error> for ReviewCommandError {
     fn from(error: std::io::Error) -> Self {
-        Self::new(error.to_string(), false)
+        Self::new(error.to_string(), false, false)
     }
 }
 
@@ -1363,6 +1369,7 @@ fn run_review_command(
                 timeout, task.number, output
             ),
             false,
+            true,
         ));
     }
     if review_run.exit_code != 0 {
@@ -1372,6 +1379,7 @@ fn run_review_command(
                 review_run.exit_code, task.number, output
             ),
             false,
+            true,
         ));
     }
     match review_output_decision(&output, &prompt) {
@@ -1382,6 +1390,7 @@ fn run_review_command(
         Some(false) => Err(ReviewCommandError::new(
             format!("review failed for task {}\n{}", task.number, output),
             true,
+            true,
         )),
         None => Err(ReviewCommandError::new(
             format!(
@@ -1389,6 +1398,7 @@ fn run_review_command(
                 task.number, output
             ),
             false,
+            true,
         )),
     }
 }

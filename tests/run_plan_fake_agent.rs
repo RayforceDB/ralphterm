@@ -691,6 +691,89 @@ fn run_command_missing_completed_does_not_link_stale_review_transcript() {
 }
 
 #[test]
+fn run_command_review_spawn_failure_does_not_link_stale_review_transcript() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let progress_dir = repo.path.join(".ralphterm/progress");
+    fs::create_dir_all(&progress_dir).expect("create progress dir");
+    let review_path = ".ralphterm/progress/plan-task-1-review.transcript";
+    fs::write(repo.path.join(review_path), "stale review transcript\n")
+        .expect("write stale review transcript");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            "ralphterm-review-command-does-not-exist-for-test",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded with missing review command\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostics.contains("review"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("run review for task 1"),
+        "{diagnostics}"
+    );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Phase: review"), "{summary}");
+    assert!(
+        !summary.contains("Review transcript:"),
+        "failed summary must not link stale review transcript when current review did not write one:\n{summary}"
+    );
+    assert!(
+        !summary.contains(review_path),
+        "failed summary must not present stale review transcript path as current review:\n{summary}"
+    );
+    assert!(
+        repo.path.join(review_path).exists(),
+        "stale review transcript should be preserved for resume diagnostics"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join(review_path)).expect("read stale review transcript"),
+        "stale review transcript\n",
+        "spawn failure must not overwrite stale review transcript"
+    );
+}
+
+#[test]
 fn run_command_validation_failure_overwrites_artifact_and_links_failed_summary() {
     let repo = TempRepo::new();
     repo.init_git();
