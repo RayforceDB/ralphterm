@@ -4,6 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-00d992.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.95%2B-f2f2f2?logo=rust)](Cargo.toml)
 [![Website](https://img.shields.io/badge/website-ralphterm.rayforcedb.com-00d992)](https://ralphterm.rayforcedb.com)
+[![Social Preview](https://img.shields.io/badge/social-preview-818cf8)](https://ralphterm.rayforcedb.com/assets/social-preview.png)
 
 **Terminal-native orchestration for AI coding agents.**
 
@@ -15,6 +16,7 @@ No brittle one-shot prompt modes. No private provider APIs. No credential copyin
 
 - Website: [ralphterm.rayforcedb.com](https://ralphterm.rayforcedb.com)
 - Documentation: [ralphterm.rayforcedb.com/docs/](https://ralphterm.rayforcedb.com/docs/)
+- Social preview: [assets/social-preview.png](https://ralphterm.rayforcedb.com/assets/social-preview.png)
 - Milestone 1: [`docs/milestones/m1-autonomous-engineering.md`](docs/milestones/m1-autonomous-engineering.md)
 - Security model: [`docs/security.md`](docs/security.md)
 

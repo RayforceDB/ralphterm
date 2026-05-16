@@ -5,56 +5,80 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RalphTerm — Terminal-native AI agent orchestration</title>
   <meta name="description" content="RalphTerm turns Claude Code, Codex, and future AI CLIs into observable API-controlled terminal agents running inside real PTYs." />
+  <meta name="application-name" content="RalphTerm" />
+  <meta name="author" content="RayforceDB" />
+  <meta name="keywords" content="RalphTerm, AI agents, Claude Code, Codex, PTY, terminal automation, Rust, axum, portable-pty, developer tools" />
+  <meta name="robots" content="index,follow,max-image-preview:large" />
   <meta name="theme-color" content="#050507" />
+  <meta property="og:site_name" content="RalphTerm" />
   <meta property="og:title" content="RalphTerm — Real AI CLIs. Real PTYs. One clean API." />
-  <meta property="og:description" content="A local-first control plane for terminal-native coding agents." />
+  <meta property="og:description" content="A local-first control plane for terminal-native coding agents. Drive official AI CLIs through real PTYs with sessions, streams, transcripts, signals, and approvals." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://ralphterm.rayforcedb.com/" />
+  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
+  <meta property="og:image:alt" content="RalphTerm: Real AI CLIs. Real PTYs. One clean API." />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
   <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="RalphTerm — Real AI CLIs. Real PTYs. One clean API." />
+  <meta name="twitter:description" content="Terminal-native orchestration for Claude Code, Codex, and future AI coding agents." />
+  <meta name="twitter:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
   <link rel="canonical" href="https://ralphterm.rayforcedb.com/" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/styles.css" />
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"RalphTerm","description":"Terminal-native orchestration for AI coding agents using real PTYs.","url":"https://ralphterm.rayforcedb.com/","codeRepository":"https://github.com/RayforceDB/ralphterm","programmingLanguage":"Rust","license":"https://github.com/RayforceDB/ralphterm/blob/main/LICENSE","creator":{"@type":"Organization","name":"RayforceDB"}}</script>
 </head>
 <body>
 
   <nav class="nav">
     <div class="container nav-inner">
-      <a class="brand" href="/">
+      <a class="brand" href="/" aria-label="RalphTerm home">
         <span class="brand-mark">↯</span>
         <span>RalphTerm</span>
       </a>
-      <div class="nav-links">
+      <div class="nav-links" aria-label="Primary navigation">
         <a href="/#why">Why</a>
-        <a href="/#product">Product</a>
-        <a href="/#workflow">Workflow</a>
+        <a href="/#product">Platform</a>
+        <a href="/#workflow">M1</a>
         <a href="/docs/">Docs</a>
       </div>
       <div class="nav-cta">
-        <a class="btn ghost" href="/docs/">Read docs</a>
-        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+        <a class="btn ghost" href="/docs/">Get started</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub ↗</a>
       </div>
     </div>
   </nav>
 
   <main>
     <header class="hero container">
-      <div class="eyebrow"><span class="dot"></span> terminal-native agent orchestration</div>
-      <h1>Real AI CLIs.<br><span class="accent">Real PTYs.</span><br>One clean API.</h1>
-      <p class="lead">RalphTerm turns Claude Code, Codex, and future terminal agents into durable workers with REST controls, WebSocket streams, transcripts, signals, and human-safe approvals.</p>
+      <div class="eyebrow"><span class="dot"></span> open source · terminal-native · local-first</div>
+      <h1>Real AI CLIs.<br><span class="gradient-text">Real PTYs.</span><br>One clean API.</h1>
+      <p class="lead">RalphTerm is the control plane for coding agents that live in terminals. Run Claude Code, Codex, and future CLIs exactly as shipped, then orchestrate them with sessions, streams, transcripts, signals, and approvals.</p>
       <div class="hero-actions">
         <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">Star on GitHub</a>
-        <a class="btn" href="/docs/">Start building</a>
+        <a class="btn" href="/docs/">Read the docs</a>
+        <a class="btn ghost" href="/docs/milestone-one.html">Milestone 1</a>
       </div>
       <div class="hero-strip">
         <span class="pill">no private APIs</span>
         <span class="pill">no credential copying</span>
         <span class="pill">localhost by default</span>
         <span class="pill">Rust · axum · portable-pty</span>
+        <span class="pill">early OSS release: session API live</span>
+      </div>
+      <div class="signal-grid" aria-label="RalphTerm capabilities">
+        <div class="signal-tile"><b>PTY Sessions</b><span>Spawn real terminals for real CLIs.</span></div>
+        <div class="signal-tile"><b>Live Streams</b><span>WebSocket output and lifecycle events.</span></div>
+        <div class="signal-tile"><b>Signals</b><span>Detect completion, questions, failures, reviews.</span></div>
+        <div class="signal-tile"><b>Approvals</b><span>Human-safe automation policy by default.</span></div>
       </div>
       <div class="terminal-card">
-        <div class="terminal-top"><span class="light green"></span><span class="light"></span><span class="light"></span><span>ralphterm.rayforcedb.com</span></div>
+        <div class="terminal-top"><span class="light green"></span><span class="light"></span><span class="light"></span><span>ralphterm.local</span><span class="code-label">session api</span></div>
         <pre><span class="comment"># start the local control plane</span>
 <span class="cmd">cargo</span> run -- serve --bind 127.0.0.1:7878
 
@@ -63,8 +87,11 @@ curl -X POST http://127.0.0.1:7878/v1/sessions \
   -H <span class="purple">'content-type: application/json'</span> \
   -d <span class="purple">'{"agent":"claude","prompt":"Implement this task and end with COMPLETED"}'</span>
 
-<span class="comment"># watch structured events while the real CLI runs in a real PTY</span>
+<span class="comment"># stream structured events while the official CLI runs in a real PTY</span>
 websocat ws://127.0.0.1:7878/v1/sessions/&lt;id&gt;/events</pre>
+      </div>
+      <div class="logo-row" aria-label="Platform notes">
+        <span>built for</span><span class="logo-chip">Claude Code</span><span class="logo-chip">Codex</span><span class="logo-chip">local agents</span><span class="logo-chip">CI runners</span><span class="logo-chip">human approvals</span>
       </div>
     </header>
 
@@ -72,11 +99,11 @@ websocat ws://127.0.0.1:7878/v1/sessions/&lt;id&gt;/events</pre>
       <div class="section-head">
         <div class="section-kicker">Why RalphTerm</div>
         <h2>The terminal is the stable contract.</h2>
-        <p class="section-copy">AI coding tools are becoming interactive terminal products. RalphTerm embraces that interface and builds the missing control plane around it.</p>
+        <p class="section-copy">AI coding products move fast. Their terminal interface remains the one surface users trust. RalphTerm turns that surface into infrastructure without pretending to be the provider.</p>
       </div>
       <div class="grid">
-        <div class="card highlight"><span class="tag">CORE PRINCIPLE</span><h3>No prompt-mode dependency</h3><p>Drive the official CLI through a PTY. The same interface humans use becomes the automation surface.</p></div>
-        <div class="card"><span class="tag">SAFETY</span><h3>Vendor auth stays vendor-owned</h3><p>The CLI owns login, identity, rate limits, account policy, and safety prompts. RalphTerm hosts the terminal.</p></div>
+        <div class="card highlight protocol-card"><span class="tag">CORE PRINCIPLE</span><h3>No prompt-mode dependency</h3><p>Drive the official CLI through a PTY. The same interface humans use becomes the automation surface.</p></div>
+        <div class="card"><span class="tag">SAFETY</span><h3>Vendor auth stays vendor-owned</h3><p>The CLI owns login, identity, rate limits, account policy, and safety prompts. RalphTerm hosts the terminal and records the run.</p></div>
         <div class="card"><span class="tag">CONTROL</span><h3>Built for long runs</h3><p>Create, input, resize, cancel, stream, transcript, and detect workflow signals through a small local API.</p></div>
       </div>
     </section>
@@ -85,13 +112,34 @@ websocat ws://127.0.0.1:7878/v1/sessions/&lt;id&gt;/events</pre>
       <div class="section-head">
         <div class="section-kicker">Product surface</div>
         <h2>From terminal session to engineering run.</h2>
-        <p class="section-copy">The PTY core is only the start. Milestone 1 turns it into a full autonomous engineering loop.</p>
+        <p class="section-copy">The PTY core is only the beginning. Milestone 1 turns RalphTerm into an autonomous engineering loop with planning, implementation, review, approvals, and final artifacts.</p>
       </div>
-      <div class="grid two">
-        <div class="card"><h3>Session API</h3><p>One endpoint starts an agent. Others drive input, resize the terminal, cancel work, fetch status, stream events, and pull transcripts.</p></div>
-        <div class="card"><h3>Workflow signals</h3><p>RalphTerm detects `COMPLETED`, `FAILED`, `QUESTION`, `PLAN_READY`, and `REVIEW_DONE`, then exposes them as structured events.</p></div>
-        <div class="card"><h3>Approval queue</h3><p>Human approval is the default. Policy-based auto-approval is explicit, auditable, and never a hidden bypass.</p></div>
-        <div class="card"><h3>Dashboard-ready</h3><p>Every run has phase status, live terminal output, final artifacts, transcripts, and event history.</p></div>
+      <div class="command-grid">
+        <div class="grid two">
+          <div class="card"><h3>Session API</h3><p>One endpoint starts an agent. Others drive input, resize the terminal, cancel work, fetch status, stream events, and pull transcripts.</p></div>
+          <div class="card"><h3>Workflow signals</h3><p>RalphTerm detects <code>COMPLETED</code>, <code>FAILED</code>, <code>QUESTION</code>, <code>PLAN_READY</code>, and <code>REVIEW_DONE</code>, then exposes them as structured events.</p></div>
+          <div class="card"><h3>Approval queue</h3><p>Human approval is the default. Policy-based auto-approval is explicit, auditable, and never a hidden bypass.</p></div>
+          <div class="card"><h3>Dashboard-ready</h3><p>Every run has phase status, live terminal output, final artifacts, transcripts, and event history.</p></div>
+        </div>
+        <div class="mini-terminal">
+          <div class="terminal-top"><span class="light green"></span><span class="light"></span><span class="light"></span><span>event stream</span></div>
+          <pre><span class="cmd">event</span> session.started
+<span class="purple">agent</span> claude
+<span class="purple">pty</span> 120x40
+
+<span class="cmd">signal</span> PLAN_READY
+<span class="cmd">event</span> approval.requested
+<span class="amber">status</span> waiting_for_human
+
+<span class="cmd">signal</span> COMPLETED
+<span class="purple">artifact</span> final.patch
+<span class="purple">artifact</span> transcript.txt</pre>
+        </div>
+      </div>
+      <div class="metric-row">
+        <div class="metric"><strong>8</strong><span>local API endpoints</span></div>
+        <div class="metric"><strong>2</strong><span>agent families first</span></div>
+        <div class="metric"><strong>0</strong><span>private provider APIs</span></div>
       </div>
     </section>
 
@@ -102,6 +150,7 @@ websocat ws://127.0.0.1:7878/v1/sessions/&lt;id&gt;/events</pre>
           <h2>A complete autonomous engineering loop.</h2>
           <p class="section-copy">Task intake, isolated workspaces, planning, implementation, self-review, external review, approvals, notifications, final patch, and replayable audit trail.</p>
           <div class="hero-actions" style="justify-content:flex-start"><a class="btn primary" href="/docs/milestone-one.html">Read M1 plan</a><a class="btn" href="https://github.com/RayforceDB/ralphterm">Follow development</a></div>
+          <p class="launch-note">The skeleton is live now. Next comes real interactive Claude/Codex drivers, persistence, and the dashboard.</p>
         </div>
         <div class="workflow">
           <div class="step"><div class="num">1</div><div><strong>Intake</strong><span>Submit a task through API, CLI, or dashboard.</span></div></div>
@@ -117,8 +166,9 @@ websocat ws://127.0.0.1:7878/v1/sessions/&lt;id&gt;/events</pre>
       <div class="callout">
         <div class="section-kicker">Open source launch</div>
         <h2>Help build the PTY-native agent layer.</h2>
-        <p class="section-copy">RalphTerm is early. The skeleton is live, tests pass, and the roadmap is public. The next push is real Claude/Codex interactive drivers, session persistence, and the dashboard.</p>
+        <p class="section-copy">RalphTerm is early, focused, and deliberately boring where it matters: official CLIs, real terminals, local controls, auditable runs.</p>
         <div class="actions"><a class="btn primary" href="https://github.com/RayforceDB/ralphterm">Star the repo</a><a class="btn" href="/docs/architecture.html">Architecture</a><a class="btn" href="/docs/api.html">API docs</a></div>
+        <div class="status-line">public repo · MIT license · CI green</div>
       </div>
     </section>
 
@@ -139,7 +189,7 @@ websocat ws://127.0.0.1:7878/v1/sessions/&lt;id&gt;/events</pre>
   <footer class="footer">
     <div class="container">
       <span>RalphTerm by RayforceDB</span>
-      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first PTY orchestration</span>
     </div>
   </footer>
 
