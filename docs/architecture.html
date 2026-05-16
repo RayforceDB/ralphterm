@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Architecture — RalphTerm Docs</title>
+  <meta name="description" content="RalphTerm architecture and runtime model." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#why">Why</a>
+        <a href="/#product">Product</a>
+        <a href="/#workflow">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> docs</div>
+      <h1>Architecture</h1>
+      <p>RalphTerm is a control plane around real terminal sessions.</p>
+      <h2>Components</h2>
+      <div class="grid two">
+        <div class="card"><h3>API server</h3><p>Rust + axum exposes REST and WebSocket endpoints.</p></div>
+        <div class="card"><h3>PTY runtime</h3><p>portable-pty launches each agent inside a real terminal.</p></div>
+        <div class="card"><h3>Session store</h3><p>Tracks lifecycle, transcript, output events, and final status.</p></div>
+        <div class="card"><h3>Signal detector</h3><p>Converts terminal text into workflow-level state.</p></div>
+      </div>
+      <h2>Runtime flow</h2>
+      <pre><code>client -> POST /v1/sessions
+       -> RalphTerm spawns PTY
+       -> official CLI runs inside PTY
+       -> prompt is sent as terminal input
+       -> output is streamed and stored
+       -> signals update run status
+       -> transcript and final artifacts are available</code></pre>
+      <h2>Design constraints</h2>
+      <ul>
+        <li>No private provider APIs.</li>
+        <li>No credential copying.</li>
+        <li>No hidden approval bypass.</li>
+        <li>Localhost bind by default.</li>
+        <li>Raw transcript preserved before any normalization.</li>
+      </ul>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>

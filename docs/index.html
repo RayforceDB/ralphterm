@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Getting started — RalphTerm Docs</title>
+  <meta name="description" content="Build and run RalphTerm locally." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#why">Why</a>
+        <a href="/#product">Product</a>
+        <a href="/#workflow">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> docs</div>
+      <h1>Getting started</h1>
+      <p>RalphTerm is a local Rust daemon that launches official AI CLIs inside real PTYs and exposes an API for orchestration.</p>
+      <h2>Install from source</h2>
+      <pre><code>git clone git@github.com:RayforceDB/ralphterm.git
+cd ralphterm
+cargo build --release</code></pre>
+      <h2>Start the daemon</h2>
+      <pre><code>cargo run -- serve --bind 127.0.0.1:7878</code></pre>
+      <h2>Health check</h2>
+      <pre><code>curl http://127.0.0.1:7878/health
+# {"ok":true}</code></pre>
+      <h2>Deterministic smoke test</h2>
+      <p>Use a shell command override before testing real agents.</p>
+      <pre><code>cat > /tmp/ralphterm-smoke.json <<'JSON'
+{
+  "agent": "claude",
+  "command": "/bin/sh",
+  "args": ["-lc", "read line; printf '%s\n' "$line"; echo COMPLETED"],
+  "prompt": "hello from ralphterm"
+}
+JSON
+
+ID=$(curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
+  -H 'content-type: application/json' \
+  --data-binary @/tmp/ralphterm-smoke.json \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+
+curl http://127.0.0.1:7878/v1/sessions/$ID
+curl http://127.0.0.1:7878/v1/sessions/$ID/transcript</code></pre>
+      <h2>Real agent sessions</h2>
+      <p>Install and authenticate the official CLI first. RalphTerm does not own provider credentials.</p>
+      <pre><code>claude auth login
+codex login
+
+curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
+  -H 'content-type: application/json' \
+  -d '{"agent":"claude","prompt":"Say hello and end with COMPLETED"}'</code></pre>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>
