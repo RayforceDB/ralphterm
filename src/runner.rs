@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
     io::{Read, Write},
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
@@ -24,7 +25,14 @@ struct NoCommitBaseline {
 #[derive(Debug, Default)]
 struct RetryCleanupSnapshot {
     dirs: BTreeSet<PathBuf>,
-    files: BTreeMap<PathBuf, Vec<u8>>,
+    files: BTreeMap<PathBuf, RetryCleanupFileSnapshot>,
+    symlinks: BTreeMap<PathBuf, PathBuf>,
+}
+
+#[derive(Debug)]
+struct RetryCleanupFileSnapshot {
+    contents: Vec<u8>,
+    permissions: fs::Permissions,
 }
 
 impl RetryCleanupSnapshot {
@@ -39,14 +47,18 @@ impl RetryCleanupSnapshot {
         collect_retry_cleanup_paths(root, root, &mut current)?;
         current.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
         for relative_path in current {
-            if self.files.contains_key(&relative_path) || self.dirs.contains(&relative_path) {
+            let path = root.join(&relative_path);
+            if self.path_matches_baseline_kind(root, &relative_path)? {
                 continue;
             }
-            let path = root.join(&relative_path);
-            if path.is_dir() {
+            if path
+                .symlink_metadata()
+                .map(|metadata| metadata.is_dir())
+                .unwrap_or(false)
+            {
                 fs::remove_dir_all(&path)
                     .with_context(|| format!("remove rejected directory {}", path.display()))?;
-            } else if path.exists() || path.symlink_metadata().is_ok() {
+            } else if path.symlink_metadata().is_ok() {
                 fs::remove_file(&path)
                     .with_context(|| format!("remove rejected file {}", path.display()))?;
             }
@@ -56,16 +68,55 @@ impl RetryCleanupSnapshot {
             fs::create_dir_all(&path)
                 .with_context(|| format!("restore baseline directory {}", path.display()))?;
         }
-        for (relative_file, contents) in &self.files {
+        for (relative_file, file_snapshot) in &self.files {
             let path = root.join(relative_file);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("restore parent directory {}", parent.display()))?;
             }
-            fs::write(&path, contents)
+            if path
+                .symlink_metadata()
+                .map(|metadata| !metadata.is_file())
+                .unwrap_or(false)
+            {
+                remove_path_for_restore(&path)?;
+            }
+            fs::write(&path, &file_snapshot.contents)
                 .with_context(|| format!("restore baseline file {}", path.display()))?;
+            fs::set_permissions(&path, file_snapshot.permissions.clone())
+                .with_context(|| format!("restore baseline file permissions {}", path.display()))?;
+        }
+        for (relative_link, target) in &self.symlinks {
+            let path = root.join(relative_link);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("restore symlink parent directory {}", parent.display())
+                })?;
+            }
+            if path.symlink_metadata().is_ok() {
+                remove_path_for_restore(&path)?;
+            }
+            symlink(target, &path)
+                .with_context(|| format!("restore baseline symlink {}", path.display()))?;
         }
         Ok(())
+    }
+
+    fn path_matches_baseline_kind(&self, root: &Path, relative_path: &Path) -> Result<bool> {
+        let is_baseline_dir = self.dirs.contains(relative_path);
+        let is_baseline_file = self.files.contains_key(relative_path);
+        let is_baseline_symlink = self.symlinks.contains_key(relative_path);
+        if !is_baseline_dir && !is_baseline_file && !is_baseline_symlink {
+            return Ok(false);
+        }
+        let path = root.join(relative_path);
+        let metadata = path
+            .symlink_metadata()
+            .with_context(|| format!("stat cleanup path {}", path.display()))?;
+        let file_type = metadata.file_type();
+        Ok((is_baseline_dir && file_type.is_dir())
+            || (is_baseline_file && file_type.is_file())
+            || (is_baseline_symlink && file_type.is_symlink()))
     }
 }
 
@@ -178,8 +229,15 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         } else {
             git_status_paths().context("snapshot git status before task")?
         };
-        let review_retry_cleanup_baseline = RetryCleanupSnapshot::capture(Path::new("."))
-            .context("snapshot task baseline before review retryable implementation")?;
+        let review_retry_cleanup_baseline =
+            if options.review_command.is_some() && options.max_review_retries > 0 {
+                Some(
+                    RetryCleanupSnapshot::capture(Path::new("."))
+                        .context("snapshot task baseline before review retryable implementation")?,
+                )
+            } else {
+                None
+            };
         output.push_str(&format!("Task {}: {}\n", task.number, task.title));
         let mut review_feedback = None;
         let mut attempt = 1;
@@ -400,11 +458,41 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                             output.push_str(&format!(
                                 "Review failed on attempt {attempt}; retrying implementation.\n"
                             ));
-                            review_retry_cleanup_baseline
-                                .restore(Path::new("."))
-                                .context(
-                                    "clean up rejected implementation attempt before review retry",
-                                )?;
+                            if let Some(review_retry_cleanup_baseline) =
+                                &review_retry_cleanup_baseline
+                            {
+                                if let Err(cleanup_err) = review_retry_cleanup_baseline
+                                    .restore(Path::new("."))
+                                    .context(
+                                        "clean up rejected implementation attempt before review retry",
+                                    )
+                                {
+                                    let cleanup_message = format!("{cleanup_err:#}");
+                                    let _ = append_progress(
+                                        &progress.log_path,
+                                        &format!(
+                                            "review_retry_cleanup result=failed reason=review_failed error={cleanup_message}"
+                                        ),
+                                    );
+                                    let _ = append_progress(
+                                        &progress.log_path,
+                                        &format!("task_end number={} result=failed", task.number),
+                                    );
+                                    let summary_result = write_failed_run_summary(
+                                        plan_name,
+                                        &plan_slug,
+                                        &executed_tasks,
+                                        task,
+                                        "review retry cleanup",
+                                        &cleanup_message,
+                                        &progress,
+                                        Some(&attempt_progress),
+                                        true,
+                                        err.transcript_written(),
+                                    );
+                                    return Err(failed_run_error(cleanup_err, summary_result));
+                                }
+                            }
                             append_progress(
                                 &progress.log_path,
                                 "review_retry_cleanup result=passed reason=review_failed",
@@ -1244,14 +1332,39 @@ fn collect_retry_cleanup_snapshot(
             snapshot.dirs.insert(relative_path.clone());
             collect_retry_cleanup_snapshot(root, &entry_path, snapshot)?;
         } else if file_type.is_file() {
+            let metadata = entry_path
+                .symlink_metadata()
+                .with_context(|| format!("snapshot file metadata {}", entry_path.display()))?;
             snapshot.files.insert(
                 relative_path,
-                fs::read(&entry_path)
-                    .with_context(|| format!("snapshot file {}", entry_path.display()))?,
+                RetryCleanupFileSnapshot {
+                    contents: fs::read(&entry_path)
+                        .with_context(|| format!("snapshot file {}", entry_path.display()))?,
+                    permissions: metadata.permissions(),
+                },
+            );
+        } else if file_type.is_symlink() {
+            snapshot.symlinks.insert(
+                relative_path,
+                fs::read_link(&entry_path)
+                    .with_context(|| format!("snapshot symlink {}", entry_path.display()))?,
             );
         }
     }
     Ok(())
+}
+
+fn remove_path_for_restore(path: &Path) -> Result<()> {
+    let metadata = path
+        .symlink_metadata()
+        .with_context(|| format!("stat path before restore {}", path.display()))?;
+    if metadata.is_dir() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("remove directory before restore {}", path.display()))
+    } else {
+        fs::remove_file(path)
+            .with_context(|| format!("remove file before restore {}", path.display()))
+    }
 }
 
 fn collect_retry_cleanup_paths(root: &Path, path: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{symlink, PermissionsExt},
     path::PathBuf,
     process::{Command, Output, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -3838,6 +3838,225 @@ fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
             "Review transcript: .ralphterm/progress/plan-task-1-attempt-2-review.transcript"
         ),
         "summary should expose final accepted review transcript path:\n{summary}"
+    );
+}
+
+#[test]
+fn review_retry_cleanup_preserves_preexisting_symlink() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    fs::write(repo.path.join("link-target.txt"), "baseline target\n").expect("write link target");
+    symlink("link-target.txt", repo.path.join("kept-link")).expect("create baseline symlink");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("RALPHTERM_RETRY_CLEANUP_SCENARIO", "symlink-survives")
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-cleanup-mutator-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-once.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run should retry successfully without deleting baseline symlink\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let link_metadata = fs::symlink_metadata(repo.path.join("kept-link"))
+        .expect("baseline symlink should survive retry cleanup");
+    assert!(
+        link_metadata.file_type().is_symlink(),
+        "kept-link should still be a symlink"
+    );
+    assert_eq!(
+        fs::read_link(repo.path.join("kept-link")).expect("read symlink target"),
+        PathBuf::from("link-target.txt")
+    );
+}
+
+#[test]
+fn review_retry_cleanup_restores_executable_permissions() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let executable_path = repo.path.join("executable.sh");
+    fs::write(
+        &executable_path,
+        "#!/usr/bin/env sh\nprintf 'baseline executable\\n'\n",
+    )
+    .expect("write baseline executable");
+    fs::set_permissions(&executable_path, fs::Permissions::from_mode(0o755))
+        .expect("chmod baseline executable");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("RALPHTERM_RETRY_CLEANUP_SCENARIO", "chmod-executable")
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-cleanup-mutator-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-once.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run should retry successfully and restore executable mode\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&executable_path).expect("read restored executable"),
+        "#!/usr/bin/env sh\nprintf 'baseline executable\\n'\n"
+    );
+    assert_eq!(
+        fs::metadata(&executable_path)
+            .expect("stat restored executable")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "retry cleanup should restore the executable bit"
+    );
+}
+
+#[test]
+fn review_retry_cleanup_restores_baseline_file_replaced_by_directory() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    fs::write(repo.path.join("baseline-file"), "baseline file\n").expect("write baseline file");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("RALPHTERM_RETRY_CLEANUP_SCENARIO", "file-to-dir")
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-cleanup-mutator-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-once.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run should clean a rejected file-to-directory type change before retry\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("baseline-file")).expect("read restored baseline file"),
+        "baseline file\n"
+    );
+}
+
+#[test]
+fn run_without_review_retry_budget_does_not_capture_retry_cleanup_snapshot() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let unreadable_dir = repo.path.join("unreadable-baseline-dir");
+    fs::create_dir(&unreadable_dir).expect("create unreadable dir");
+    fs::set_permissions(&unreadable_dir, fs::Permissions::from_mode(0o000))
+        .expect("make dir unreadable");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+    fs::set_permissions(&unreadable_dir, fs::Permissions::from_mode(0o755))
+        .expect("restore dir permissions for temp cleanup");
+
+    assert!(
+        output.status.success(),
+        "run without review retries should not traverse the whole worktree for retry cleanup\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
