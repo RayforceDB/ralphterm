@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RalphTerm Dashboard</title>
+    <link rel="stylesheet" href="/dashboard/styles.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <p class="eyebrow">RalphTerm</p>
+      <h1>RalphTerm Dashboard</h1>
+      <p class="lede">Monitor orchestration runs and interactive sessions.</p>
+    </header>
+
+    <main class="dashboard-grid">
+      <section class="panel" aria-labelledby="runs-title">
+        <div class="panel-heading">
+          <h2 id="runs-title">Runs</h2>
+          <span id="runs-status" class="status">Loading…</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">ID</th>
+                <th scope="col">Phase</th>
+                <th scope="col">Status</th>
+                <th scope="col">Plan</th>
+              </tr>
+            </thead>
+            <tbody id="runs-body">
+              <tr><td colspan="4">Loading runs…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="sessions-title">
+        <h2 id="sessions-title">Sessions</h2>
+        <p>Interactive session activity will appear here as the dashboard grows.</p>
+      </section>
+    </main>
+
+    <script src="/dashboard/app.js"></script>
+  </body>
+</html>

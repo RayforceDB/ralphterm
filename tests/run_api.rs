@@ -9,6 +9,40 @@ use std::{
 };
 
 #[test]
+fn dashboard_shell_serves_html_css_and_runs_javascript() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let html = request_json(port, "GET /dashboard HTTP/1.1", None);
+    assert_eq!(html.status, 200, "{}", html.body);
+    assert!(html.body.contains("RalphTerm Dashboard"), "{}", html.body);
+    assert!(html.body.contains("Runs"), "{}", html.body);
+    assert!(html.body.contains("Sessions"), "{}", html.body);
+    assert!(html.body.contains("/dashboard/styles.css"), "{}", html.body);
+    assert!(html.body.contains("/dashboard/app.js"), "{}", html.body);
+
+    let css = request_json(port, "GET /dashboard/styles.css HTTP/1.1", None);
+    assert_eq!(css.status, 200, "{}", css.body);
+    assert!(css.body.contains("RalphTerm Dashboard"), "{}", css.body);
+
+    let js = request_json(port, "GET /dashboard/app.js HTTP/1.1", None);
+    assert_eq!(js.status, 200, "{}", js.body);
+    assert!(js.body.contains("fetch('/v1/runs')"), "{}", js.body);
+    assert!(js.body.contains("renderRunRows"), "{}", js.body);
+}
+
+#[test]
 fn run_api_creates_lists_reads_events_and_cancels_run_records() {
     let _guard = server_test_lock();
     let repo = TempDir::new();

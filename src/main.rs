@@ -8,8 +8,8 @@ use std::{
 use anyhow::{bail, Context};
 use axum::{
     extract::{Path, State, WebSocketUpgrade},
-    http::StatusCode,
-    response::{IntoResponse, Json},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
 };
@@ -291,6 +291,9 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
     };
     let app = Router::new()
         .route("/health", get(health))
+        .route("/dashboard", get(dashboard_index))
+        .route("/dashboard/app.js", get(dashboard_app_js))
+        .route("/dashboard/styles.css", get(dashboard_styles_css))
         .route("/v1/runs", post(create_run).get(list_runs))
         .route("/v1/runs/:id", get(get_run))
         .route("/v1/runs/:id/summary", get(get_run_summary))
@@ -317,6 +320,27 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
 
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true}))
+}
+
+async fn dashboard_index() -> Html<&'static str> {
+    Html(include_str!("../dashboard/index.html"))
+}
+
+async fn dashboard_app_js() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        include_str!("../dashboard/app.js"),
+    )
+}
+
+async fn dashboard_styles_css() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        include_str!("../dashboard/styles.css"),
+    )
 }
 
 async fn create_run(
