@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <meta property="og:site_name" content="RalphTerm" />
+  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Workflows — RalphTerm Docs</title>
+  <meta name="description" content="Reviewed plan runs, validation, retry, resume, and artifacts in RalphTerm." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#how">Why</a>
+        <a href="/#what">Product</a>
+        <a href="/#api">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/workflows.html">Workflows</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> workflow</div>
+      <h1>Reviewed plan runs</h1>
+      <p>RalphTerm can execute checked-list plans through a terminal agent, validate the result, require an independent review, and record the artifacts needed to audit what happened.</p>
+
+      <h2>Run a plan with review</h2>
+      <pre><code>ralphterm run docs/plans/example.md --agent claude \
+  --require-review \
+  --review-command "codex exec review-task"</code></pre>
+      <p><code>--require-review</code> is a hard gate. If it is used without <code>--review-command</code>, RalphTerm fails before starting implementation. With both flags set, the implementation agent runs in one PTY and the reviewer runs later in a separate PTY.</p>
+
+      <h2>Validation before acceptance</h2>
+      <p>Plan-level validation commands from the <code>## Validation Commands</code> section run after each implementation attempt. RalphTerm includes the validation output in the reviewer prompt. A task is not checked off until validation succeeds and review passes.</p>
+
+      <h2>Review decisions</h2>
+      <p>The reviewer receives the task text, implementation transcript, validation output, current diff, and untracked file names. The decision must be explicit:</p>
+      <ul>
+        <li><code>REVIEW_PASS</code> accepts the task.</li>
+        <li><code>REVIEW_FAIL</code> blocks acceptance and triggers one REVIEW_FAIL retry by returning the reviewer feedback to the implementation agent.</li>
+      </ul>
+      <p>If the retry also fails review, RalphTerm leaves the task unchecked and exits failed instead of committing partial progress.</p>
+
+      <h2>Resume after failure</h2>
+      <p>You can resume after a failed run by invoking the same plan again. RalphTerm skips tasks already marked <code>[x]</code>, keeps failed context available to the next implementation prompt, and continues with pending tasks.</p>
+
+      <h2>Artifacts and audit trail</h2>
+      <p>Plan runs preserve transcripts for each implementation and review attempt. They also write progress logs, a run summary, and diff artifacts so another tool or human can inspect the exact terminal output and code changes.</p>
+
+      <h2>Commit progress</h2>
+      <p>After validation and <code>REVIEW_PASS</code>, RalphTerm marks the task checkbox, writes the run artifacts, and commits task progress. This commit progress step only happens after the review gate passes. Failed validation or review leaves the task uncommitted for follow-up.</p>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>

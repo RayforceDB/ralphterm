@@ -43,6 +43,7 @@
         <a href="/docs/api.html">API</a>
         <a href="/docs/architecture.html">Architecture</a>
         <a href="/docs/security.html">Security</a>
+        <a href="/docs/workflows.html">Workflows</a>
         <a href="/docs/milestone-one.html">Milestone 1</a>
         <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
       </aside>
@@ -88,7 +89,7 @@ ralphterm smoke --agent codex</code></pre>
       <pre><code>ralphterm run docs/plans/example.md --agent claude \
   --require-review \
   --review-command "codex exec review-task"</code></pre>
-      <p>The reviewer starts after validation and must print an exact <code>REVIEW_PASS</code> line. <code>REVIEW_FAIL</code> leaves the task unchecked and prevents the commit.</p>
+      <p>The reviewer starts after validation and must print an exact <code>REVIEW_PASS</code> line. <code>REVIEW_FAIL</code> triggers one retry with reviewer feedback; if review still fails, the task stays unchecked and no commit is made.</p>
       <h2>Real agent sessions</h2>
       <p>Install and authenticate the official CLI first. RalphTerm does not own provider credentials.</p>
       <pre><code>claude auth login
