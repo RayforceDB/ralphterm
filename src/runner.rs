@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -13,6 +13,12 @@ use anyhow::{bail, Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 use crate::plan::{parse_plan, Task};
+
+#[derive(Debug, Default)]
+struct NoCommitBaseline {
+    paths: BTreeSet<String>,
+    tracked_file_contents: BTreeMap<String, Vec<u8>>,
+}
 
 #[derive(Debug, Clone)]
 pub struct RunOptions {
@@ -44,7 +50,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 &plan_slug(&options.plan_path),
                 false,
                 None,
-                &BTreeSet::new(),
+                &NoCommitBaseline::default(),
             )?;
         }
         return Ok(output);
@@ -72,9 +78,9 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         git_head_revision()
     };
     let run_baseline_paths = if options.no_commit {
-        git_run_baseline_paths().context("snapshot run baseline git status")?
+        git_run_baseline().context("snapshot run baseline git status")?
     } else {
-        BTreeSet::new()
+        NoCommitBaseline::default()
     };
     let mut executed_tasks = Vec::new();
 
@@ -339,7 +345,7 @@ fn write_run_diff_patch(
     plan_slug: &str,
     no_commit: bool,
     baseline_revision: Option<&str>,
-    baseline_paths: &BTreeSet<String>,
+    baseline: &NoCommitBaseline,
 ) -> Result<()> {
     ensure_ralphterm_git_excluded()?;
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
@@ -348,7 +354,7 @@ fn write_run_diff_patch(
     let patch = if !git_inside_work_tree() {
         String::new()
     } else if no_commit {
-        working_tree_diff_patch(baseline_paths).context("generate working tree diff patch")?
+        working_tree_diff_patch(baseline).context("generate working tree diff patch")?
     } else if let Some(baseline_revision) = baseline_revision {
         git_diff_patch(&[baseline_revision, "HEAD"]).context("generate committed diff patch")?
     } else {
@@ -358,7 +364,7 @@ fn write_run_diff_patch(
         .with_context(|| format!("write run diff patch {}", diff_path.display()))
 }
 
-fn working_tree_diff_patch(baseline_paths: &BTreeSet<String>) -> Result<String> {
+fn working_tree_diff_patch(baseline: &NoCommitBaseline) -> Result<String> {
     let mut patch = String::new();
     let untracked_files = git_untracked_files()?;
     let paths = git_status_paths()?
@@ -366,7 +372,13 @@ fn working_tree_diff_patch(baseline_paths: &BTreeSet<String>) -> Result<String> 
         .chain(untracked_files.iter().cloned())
         .collect::<BTreeSet<_>>();
     for path in paths {
-        if is_baseline_path(&path, baseline_paths) || is_ralphterm_artifact(&path) {
+        if is_ralphterm_artifact(&path) {
+            continue;
+        }
+        if is_baseline_path(&path, &baseline.paths) {
+            if let Some(contents) = baseline.tracked_file_contents.get(&path) {
+                patch.push_str(&git_no_index_file_patch_from_contents(&path, contents)?);
+            }
             continue;
         }
         patch.push_str(&git_cached_path_diff_patch(&path)?);
@@ -399,6 +411,40 @@ fn git_no_index_new_file_patch(path: &str) -> Result<String> {
         &["diff", "--binary", "--no-index", "--", "/dev/null", path],
         &[0, 1],
     )
+}
+
+fn git_no_index_file_patch_from_contents(path: &str, contents: &[u8]) -> Result<String> {
+    let temp_path = PathBuf::from(".ralphterm")
+        .join("progress")
+        .join(format!(".baseline-{}", timestamp()));
+    fs::write(&temp_path, contents)
+        .with_context(|| format!("write baseline snapshot {}", temp_path.display()))?;
+    let temp_path_string = temp_path.to_string_lossy().into_owned();
+    let result = run_git_allow_exit_codes(
+        &[
+            "diff",
+            "--binary",
+            "--no-index",
+            "--",
+            &temp_path_string,
+            path,
+        ],
+        &[0, 1],
+    )
+    .map(|patch| rewrite_no_index_snapshot_paths(&patch, &temp_path_string, path));
+    let remove_result = fs::remove_file(&temp_path)
+        .with_context(|| format!("remove baseline snapshot {}", temp_path.display()));
+    match (result, remove_result) {
+        (Ok(patch), Ok(())) => Ok(patch),
+        (Err(err), _) => Err(err),
+        (Ok(_), Err(err)) => Err(err),
+    }
+}
+
+fn rewrite_no_index_snapshot_paths(patch: &str, temp_path: &str, path: &str) -> String {
+    patch
+        .replace(&format!("a/{temp_path}"), &format!("a/{path}"))
+        .replace(temp_path, path)
 }
 
 fn git_cached_path_diff_patch(path: &str) -> Result<String> {
@@ -541,15 +587,32 @@ fn commit_task(title: &str, baseline_paths: &BTreeSet<String>) -> Result<String>
     Ok(hash.trim().to_string())
 }
 
-fn git_run_baseline_paths() -> Result<BTreeSet<String>> {
+fn git_run_baseline() -> Result<NoCommitBaseline> {
     if !git_inside_work_tree() {
-        return Ok(BTreeSet::new());
+        return Ok(NoCommitBaseline::default());
     }
 
-    Ok(git_status_paths_excluding_untracked()?
-        .into_iter()
+    let tracked_paths = git_status_paths_excluding_untracked()?;
+    let paths = tracked_paths
+        .iter()
+        .cloned()
         .chain(git_untracked_files()?)
-        .collect())
+        .collect();
+    let mut tracked_file_contents = BTreeMap::new();
+    for path in tracked_paths {
+        let file_path = PathBuf::from(&path);
+        if file_path.is_file() {
+            tracked_file_contents.insert(
+                path,
+                fs::read(&file_path)
+                    .with_context(|| format!("read baseline file {}", file_path.display()))?,
+            );
+        }
+    }
+    Ok(NoCommitBaseline {
+        paths,
+        tracked_file_contents,
+    })
 }
 
 fn git_status_paths() -> Result<BTreeSet<String>> {
