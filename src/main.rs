@@ -241,6 +241,8 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/v1/runs", post(create_run).get(list_runs))
         .route("/v1/runs/:id", get(get_run))
+        .route("/v1/runs/:id/summary", get(get_run_summary))
+        .route("/v1/runs/:id/diff", get(get_run_diff))
         .route("/v1/runs/:id/events", get(get_run_events))
         .route("/v1/runs/:id/cancel", post(cancel_run))
         .route("/v1/sessions", post(create_session))
@@ -388,6 +390,20 @@ async fn get_run(
     Ok(Json(
         RunStore::get(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?,
     ))
+}
+
+async fn get_run_summary(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<String, ApiError> {
+    RunStore::summary(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())
+}
+
+async fn get_run_diff(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<String, ApiError> {
+    RunStore::diff(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())
 }
 
 async fn get_run_events(

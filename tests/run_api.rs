@@ -55,6 +55,17 @@ fn run_api_creates_lists_reads_events_and_cancels_run_records() {
     assert_eq!(events_json.as_array().expect("event list").len(), 1);
     assert_eq!(events_json[0]["type"], "run_created");
 
+    let missing_summary = request_json(port, &format!("GET /v1/runs/{id}/summary HTTP/1.1"), None);
+    assert_eq!(missing_summary.status, 404, "{}", missing_summary.body);
+    let missing_diff = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
+    assert_eq!(missing_diff.status, 404, "{}", missing_diff.body);
+    let unknown_summary = request_json(
+        port,
+        "GET /v1/runs/00000000-0000-0000-0000-000000000000/summary HTTP/1.1",
+        None,
+    );
+    assert_eq!(unknown_summary.status, 404, "{}", unknown_summary.body);
+
     let cancelled = request_json(
         port,
         &format!("POST /v1/runs/{id}/cancel HTTP/1.1"),
@@ -141,6 +152,14 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
     );
     assert!(diff.contains("+created by fake agent"), "{diff}");
     assert!(diff.contains("diff --git a/plan.md b/plan.md"), "{diff}");
+
+    let summary_response = request_json(port, &format!("GET /v1/runs/{id}/summary HTTP/1.1"), None);
+    assert_eq!(summary_response.status, 200, "{}", summary_response.body);
+    assert_eq!(summary_response.body, summary);
+
+    let diff_response = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
+    assert_eq!(diff_response.status, 200, "{}", diff_response.body);
+    assert_eq!(diff_response.body, diff);
 
     let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
     assert_eq!(events.status, 200, "{}", events.body);
