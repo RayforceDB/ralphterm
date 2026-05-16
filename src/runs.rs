@@ -51,6 +51,12 @@ pub struct RunEvent {
     pub timestamp: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunResultArtifacts {
+    pub summary_markdown: String,
+    pub diff_patch: String,
+}
+
 pub struct RunStore;
 
 impl RunStore {
@@ -158,6 +164,38 @@ impl RunStore {
         )?;
         Ok(Some(record))
     }
+
+    pub fn write_result(
+        base_dir: impl AsRef<Path>,
+        id: Uuid,
+        artifacts: RunResultArtifacts,
+    ) -> Result<Option<CreatedRunRecord>> {
+        let Some(mut record) = Self::get(base_dir.as_ref(), id)? else {
+            return Ok(None);
+        };
+
+        let dir = run_dir(base_dir.as_ref(), id);
+        let summary_path = dir.join("summary.md");
+        fs::write(&summary_path, artifacts.summary_markdown)
+            .with_context(|| format!("write {}", summary_path.display()))?;
+        let diff_path = dir.join("diff.patch");
+        fs::write(&diff_path, artifacts.diff_patch)
+            .with_context(|| format!("write {}", diff_path.display()))?;
+
+        record.phase = RunPhase::Complete;
+        record.status = RunStatus::Succeeded;
+        write_record(base_dir.as_ref(), &record)?;
+        append_event(
+            base_dir.as_ref(),
+            id,
+            RunEvent {
+                event_type: "run_succeeded".to_string(),
+                status: record.status.clone(),
+                timestamp: timestamp(),
+            },
+        )?;
+        Ok(Some(record))
+    }
 }
 
 fn run_dir(base_dir: &Path, id: Uuid) -> std::path::PathBuf {
@@ -203,7 +241,7 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::{RunPhase, RunRecord, RunStatus, RunStore};
+    use super::{RunPhase, RunRecord, RunResultArtifacts, RunStatus, RunStore};
 
     #[test]
     fn create_writes_run_json_and_initial_event() {
@@ -247,6 +285,99 @@ mod tests {
             missing_events.is_empty(),
             "missing event log for an existing run should return an empty event list"
         );
+
+        remove_dir_all_if_exists(&temp);
+    }
+
+    #[test]
+    fn write_result_writes_artifacts_marks_succeeded_and_appends_event() {
+        let temp = std::env::temp_dir().join(format!(
+            "ralphterm-run-result-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp).unwrap();
+
+        let record = RunStore::create(
+            &temp,
+            RunRecord {
+                phase: RunPhase::Executing,
+                status: RunStatus::Running,
+                plan_path: Some("plans/task.md".into()),
+            },
+        )
+        .unwrap();
+
+        let updated = RunStore::write_result(
+            &temp,
+            record.id,
+            RunResultArtifacts {
+                summary_markdown: "# Summary\n\nDone.\n".into(),
+                diff_patch: "diff --git a/file b/file\n".into(),
+            },
+        )
+        .unwrap()
+        .expect("existing run should be updated");
+
+        assert_eq!(updated.id, record.id);
+        assert_eq!(updated.created_at, record.created_at);
+        assert_eq!(updated.plan_path, record.plan_path);
+        assert_eq!(updated.phase, RunPhase::Complete);
+        assert_eq!(updated.status, RunStatus::Succeeded);
+
+        let run_dir = temp
+            .join(".ralphterm")
+            .join("runs")
+            .join(record.id.to_string());
+        assert_eq!(
+            fs::read_to_string(run_dir.join("summary.md")).unwrap(),
+            "# Summary\n\nDone.\n"
+        );
+        assert_eq!(
+            fs::read_to_string(run_dir.join("diff.patch")).unwrap(),
+            "diff --git a/file b/file\n"
+        );
+
+        let run_json = fs::read_to_string(run_dir.join("run.json")).unwrap();
+        let persisted: Value = serde_json::from_str(&run_json).unwrap();
+        assert_eq!(persisted["phase"], "complete");
+        assert_eq!(persisted["status"], "succeeded");
+
+        let events = fs::read_to_string(run_dir.join("events.jsonl")).unwrap();
+        let lines: Vec<_> = events.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let event: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(event["type"], "run_succeeded");
+        assert_eq!(event["status"], "succeeded");
+        assert!(!event["timestamp"].as_str().unwrap().is_empty());
+
+        remove_dir_all_if_exists(&temp);
+    }
+
+    #[test]
+    fn write_result_for_missing_run_returns_none_and_does_not_create_directory() {
+        let temp = std::env::temp_dir().join(format!(
+            "ralphterm-missing-result-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp).unwrap();
+        let missing_id = uuid::Uuid::new_v4();
+
+        let result = RunStore::write_result(
+            &temp,
+            missing_id,
+            RunResultArtifacts {
+                summary_markdown: "# Summary\n".into(),
+                diff_patch: "diff --git a/missing b/missing\n".into(),
+            },
+        )
+        .unwrap();
+
+        assert!(result.is_none());
+        assert!(!temp
+            .join(".ralphterm")
+            .join("runs")
+            .join(missing_id.to_string())
+            .exists());
 
         remove_dir_all_if_exists(&temp);
     }
