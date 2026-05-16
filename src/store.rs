@@ -103,6 +103,7 @@ impl SessionStore {
                     if let Ok(mut rec) = handle.record.lock() {
                         rec.status = SessionStatus::Failed;
                     }
+                    clear_pending_approval(&handle);
                 }
             })
             .context("spawn session thread")?;
@@ -147,6 +148,14 @@ impl SessionStore {
             .sessions
             .get(&id)
             .ok_or(ApprovalDecisionError::NotFound)?;
+        {
+            let record = session.record.lock().expect("session record lock");
+            if !matches!(record.status, SessionStatus::Running) {
+                drop(record);
+                clear_pending_approval(&session);
+                return Err(ApprovalDecisionError::NoPending);
+            }
+        }
         {
             let transcript = session.transcript.lock().expect("transcript lock");
             let mut scan_offset = session
@@ -197,6 +206,7 @@ impl SessionStore {
         if let Ok(mut rec) = session.record.lock() {
             rec.status = SessionStatus::Cancelled;
         }
+        clear_pending_approval(&session);
         Ok(())
     }
 
@@ -314,11 +324,25 @@ fn run_session_thread(
         .map(|status| status.exit_code() as i32);
 
     if let Ok(mut rec) = handle.record.lock() {
-        rec.status = SessionStatus::Exited;
+        if !matches!(rec.status, SessionStatus::Cancelled) {
+            rec.status = SessionStatus::Exited;
+        }
         rec.exit_code = exit_code;
     }
+    clear_pending_approval(&handle);
     let _ = handle.event_tx.send(SessionEvent::Exit { exit_code });
     Ok(())
+}
+
+fn clear_pending_approval(handle: &SessionHandle) {
+    if let Ok(transcript) = handle.transcript.lock() {
+        if let Ok(mut scan_offset) = handle.approval_scan_offset.lock() {
+            *scan_offset = transcript.len();
+        }
+    }
+    if let Ok(mut approval_requested) = handle.approval_requested.lock() {
+        *approval_requested = false;
+    }
 }
 
 fn append_output(handle: &Arc<SessionHandle>, text: &str) {

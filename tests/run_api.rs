@@ -248,6 +248,132 @@ fn session_approval_decision_rejects_stale_prompt_after_approval_output() {
 }
 
 #[test]
+fn session_approval_decision_rejects_prompt_after_session_exits() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "agent": "codex",
+        "prompt": "ignored initial prompt",
+        "command": "/bin/sh",
+        "args": ["-c", "read _ignored; printf 'Approve? '; exit 0"]
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/sessions HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created session json");
+    let id = created_json["id"].as_str().expect("session id");
+
+    let mut events = connect_ws(port, &format!("/v1/sessions/{id}/events"));
+    wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("Approve?"),
+    );
+    read_ws_json_until(&mut events, |event| {
+        (event["type"] == "approval-requested").then(|| event.clone())
+    });
+    wait_for_json(port, &format!("GET /v1/sessions/{id} HTTP/1.1"), |json| {
+        (json["status"] == "exited").then(|| json.clone())
+    });
+
+    let approval_body = serde_json::json!({"approved": true}).to_string();
+    let approved = request_json(
+        port,
+        &format!("POST /v1/sessions/{id}/approval HTTP/1.1"),
+        Some(&approval_body),
+    );
+    assert_eq!(approved.status, 409, "{}", approved.body);
+    let approved_json: serde_json::Value =
+        serde_json::from_str(&approved.body).expect("approval error json");
+    assert_eq!(approved_json["error"], "no approval pending");
+    assert_no_approval_decision_event(&mut events);
+}
+
+#[test]
+fn session_approval_decision_rejects_prompt_after_session_cancel() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "agent": "codex",
+        "prompt": "ignored initial prompt",
+        "command": "/bin/sh",
+        "args": ["-c", "read _ignored; printf 'Approve? '; read answer; printf 'ANSWER:%s\\n' \"$answer\"; sleep 30"]
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/sessions HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created session json");
+    let id = created_json["id"].as_str().expect("session id");
+
+    let mut events = connect_ws(port, &format!("/v1/sessions/{id}/events"));
+    wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("Approve?"),
+    );
+    read_ws_json_until(&mut events, |event| {
+        (event["type"] == "approval-requested").then(|| event.clone())
+    });
+
+    let cancelled = request_json(
+        port,
+        &format!("POST /v1/sessions/{id}/cancel HTTP/1.1"),
+        Some("{}"),
+    );
+    assert_eq!(cancelled.status, 202, "{}", cancelled.body);
+    wait_for_json(port, &format!("GET /v1/sessions/{id} HTTP/1.1"), |json| {
+        (json["status"] == "cancelled").then(|| json.clone())
+    });
+
+    let approval_body = serde_json::json!({"approved": true}).to_string();
+    let approved = request_json(
+        port,
+        &format!("POST /v1/sessions/{id}/approval HTTP/1.1"),
+        Some(&approval_body),
+    );
+    assert_eq!(approved.status, 409, "{}", approved.body);
+    let approved_json: serde_json::Value =
+        serde_json::from_str(&approved.body).expect("approval error json");
+    assert_eq!(approved_json["error"], "no approval pending");
+    assert_no_approval_decision_event(&mut events);
+
+    thread::sleep(Duration::from_millis(200));
+    let transcript = request_json(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(transcript.status, 200, "{}", transcript.body);
+    assert!(!transcript.body.contains("ANSWER:y"), "{}", transcript.body);
+}
+
+#[test]
 fn session_approval_decision_rejects_unknown_session_with_404() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
@@ -2090,6 +2216,23 @@ fn read_ws_json_until(
         }
     }
     panic!("timed out waiting for websocket event; last event: {last_event}");
+}
+
+fn assert_no_approval_decision_event(stream: &mut TcpStream) {
+    let previous_timeout = stream.read_timeout().expect("read websocket timeout");
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("set websocket read timeout");
+        if let Some(text) = read_ws_text_frame(stream) {
+            let json: serde_json::Value = serde_json::from_str(&text).expect("websocket json");
+            assert_ne!(json["type"], "approval-decision", "{json}");
+        }
+    }
+    stream
+        .set_read_timeout(previous_timeout)
+        .expect("restore websocket read timeout");
 }
 
 fn read_ws_text_frame(stream: &mut TcpStream) -> Option<String> {
