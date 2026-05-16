@@ -44,6 +44,12 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
 
     for task in pending {
         let progress = ProgressPaths::new(&plan_slug, task.number)?;
+        if has_failed_task_end(&progress.log_path, task.number)? {
+            append_progress(
+                &progress.log_path,
+                &format!("resume number={} previous_result=failed", task.number),
+            )?;
+        }
         append_progress(
             &progress.log_path,
             &format!("task_start number={} title={}", task.number, task.title),
@@ -134,6 +140,17 @@ fn append_progress(path: &Path, event: &str) -> Result<()> {
         .open(path)
         .with_context(|| format!("open progress log {}", path.display()))?;
     writeln!(file, "timestamp={} {event}", timestamp()).context("write progress log")
+}
+
+fn has_failed_task_end(path: &Path, task_number: usize) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let log = fs::read_to_string(path)
+        .with_context(|| format!("read progress log {}", path.display()))?;
+    let failed_task_end = format!("task_end number={task_number} result=failed");
+    Ok(log.lines().any(|line| line.contains(&failed_task_end)))
 }
 
 fn timestamp() -> String {

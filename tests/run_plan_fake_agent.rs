@@ -406,6 +406,103 @@ fn validation_failure_is_logged_and_does_not_complete_task() {
     assert!(progress_log.contains("result=failed"), "{progress_log}");
 }
 
+#[test]
+fn failed_task_resume_is_logged_before_retry_start_and_completes_task() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f missing.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !first_output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan after failed run");
+    fs::write(
+        &plan_path,
+        plan.replace("test -f missing.txt", "test -f first.txt"),
+    )
+    .expect("fix validation command");
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("rerun ralphterm");
+
+    assert!(
+        second_output.status.success(),
+        "ralphterm retry failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read completed plan");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    let first_task_start = progress_log
+        .find("task_start number=1 title=Create first file")
+        .expect("first task_start logged");
+    let resume = progress_log
+        .find("resume number=1 previous_result=failed")
+        .expect("resume logged");
+    let second_task_start = progress_log[resume..]
+        .find("task_start number=1 title=Create first file")
+        .map(|index| index + resume)
+        .expect("second task_start logged after resume");
+    assert!(
+        first_task_start < resume && resume < second_task_start,
+        "resume should be between failed run and retry task_start:\n{progress_log}"
+    );
+    assert!(
+        progress_log.contains("validation result=passed"),
+        "{progress_log}"
+    );
+    assert!(
+        progress_log.contains("commit no_commit=true"),
+        "{progress_log}"
+    );
+}
+
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
