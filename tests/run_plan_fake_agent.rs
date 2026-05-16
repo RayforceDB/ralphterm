@@ -2376,6 +2376,77 @@ fn review_prompt_echo_without_explicit_decision_does_not_trigger_retry() {
 }
 
 #[test]
+fn max_review_retries_zero_blocks_after_first_review_fail() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-after-review-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--max-review-retries",
+            "0",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "review failure should block immediately when review retry budget is zero\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+    assert_eq!(
+        fs::read_to_string(repo.path.join("agent-count.txt")).expect("read agent count"),
+        "1\n"
+    );
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("review result=failed"),
+        "{progress_log}"
+    );
+    assert!(
+        !progress_log.contains("agent_retry"),
+        "zero review retry budget must not start a second implementation attempt:\n{progress_log}"
+    );
+    assert!(
+        !repo
+            .path
+            .join(".ralphterm/progress/plan-task-1-attempt-2.transcript")
+            .exists(),
+        "attempt 2 transcript should not exist when review retry budget is zero"
+    );
+}
+
+#[test]
 fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");

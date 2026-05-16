@@ -14,8 +14,6 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 use crate::plan::{parse_plan, Task};
 
-const MAX_REVIEW_ATTEMPTS: usize = 2;
-
 #[derive(Debug, Default)]
 struct NoCommitBaseline {
     paths: BTreeSet<String>,
@@ -29,6 +27,7 @@ pub struct RunOptions {
     pub agent_command: Option<String>,
     pub review_command: Option<String>,
     pub require_review: bool,
+    pub max_review_retries: usize,
     pub no_commit: bool,
     pub dry_run: bool,
 }
@@ -270,25 +269,9 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     }
                     Err(err) => {
                         append_progress(&progress.log_path, "review result=failed")?;
-                        if attempt < MAX_REVIEW_ATTEMPTS {
-                            let feedback = err.to_string();
-                            if !err.explicit_fail() {
-                                append_progress(
-                                    &progress.log_path,
-                                    &format!("task_end number={} result=failed", task.number),
-                                )?;
-                                let summary_result = write_failed_run_summary(
-                                    plan_name,
-                                    &plan_slug,
-                                    &executed_tasks,
-                                    task,
-                                    "review",
-                                    &feedback,
-                                    &progress,
-                                    Some(&attempt_progress),
-                                );
-                                return Err(failed_run_error(err.into(), summary_result));
-                            }
+                        let feedback = err.to_string();
+                        let review_retries_used = attempt - 1;
+                        if err.explicit_fail() && review_retries_used < options.max_review_retries {
                             output.push_str(&format!(
                                 "Review failed on attempt {attempt}; retrying implementation.\n"
                             ));

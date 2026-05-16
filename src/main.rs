@@ -51,6 +51,8 @@ enum Command {
         review_command: Option<String>,
         #[arg(long)]
         require_review: bool,
+        #[arg(long, default_value_t = 1)]
+        max_review_retries: usize,
         #[arg(long)]
         no_commit: bool,
         #[arg(long)]
@@ -153,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
             review_agent,
             review_command,
             require_review,
+            max_review_retries,
             no_commit,
             dry_run,
         } => {
@@ -161,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
                 agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
                 review_command: review_command.or_else(|| review_agent.map(RunAgentKind::command)),
                 require_review,
+                max_review_retries,
                 no_commit,
                 dry_run,
             })?;
