@@ -59,6 +59,7 @@ struct SessionHandle {
     resize_tx: mpsc::UnboundedSender<(u16, u16)>,
     event_tx: broadcast::Sender<SessionEvent>,
     approval_requested: Mutex<bool>,
+    approval_scan_offset: Mutex<usize>,
     child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
 }
 
@@ -87,6 +88,7 @@ impl SessionStore {
             resize_tx,
             event_tx,
             approval_requested: Mutex::new(false),
+            approval_scan_offset: Mutex::new(0),
             child: Mutex::new(None),
         });
         self.sessions.insert(id, handle.clone());
@@ -146,6 +148,11 @@ impl SessionStore {
             .get(&id)
             .ok_or(ApprovalDecisionError::NotFound)?;
         {
+            let transcript = session.transcript.lock().expect("transcript lock");
+            let mut scan_offset = session
+                .approval_scan_offset
+                .lock()
+                .expect("approval scan offset lock");
             let mut approval_requested = session
                 .approval_requested
                 .lock()
@@ -154,6 +161,7 @@ impl SessionStore {
                 return Err(ApprovalDecisionError::NoPending);
             }
             *approval_requested = false;
+            *scan_offset = transcript.len();
         }
         session
             .input_tx
@@ -316,7 +324,22 @@ fn run_session_thread(
 fn append_output(handle: &Arc<SessionHandle>, text: &str) {
     if let Ok(mut transcript) = handle.transcript.lock() {
         transcript.push_str(text);
-        if detect_approval_request(&transcript) {
+        let approval_scan = if let Ok(mut scan_offset) = handle.approval_scan_offset.lock() {
+            let scan_from = floor_char_boundary(&transcript, (*scan_offset).min(transcript.len()));
+            let scan = transcript[scan_from..].to_string();
+            *scan_offset = if detect_approval_request(&scan) {
+                transcript.len()
+            } else {
+                scan_from.max(floor_char_boundary(
+                    &transcript,
+                    transcript.len().saturating_sub(256),
+                ))
+            };
+            scan
+        } else {
+            text.to_string()
+        };
+        if detect_approval_request(&approval_scan) {
             if let Ok(mut approval_requested) = handle.approval_requested.lock() {
                 if !*approval_requested {
                     *approval_requested = true;
@@ -338,6 +361,13 @@ fn append_output(handle: &Arc<SessionHandle>, text: &str) {
     let _ = handle.event_tx.send(SessionEvent::Output {
         text: text.to_string(),
     });
+}
+
+fn floor_char_boundary(text: &str, mut index: usize) -> usize {
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 fn transcript_tail(transcript: &str, max_chars: usize) -> String {
@@ -373,6 +403,7 @@ mod tests {
             resize_tx,
             event_tx,
             approval_requested: Mutex::new(false),
+            approval_scan_offset: Mutex::new(0),
             child: Mutex::new(None),
         });
 

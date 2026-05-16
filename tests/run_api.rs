@@ -174,6 +174,80 @@ fn session_approval_decision_posts_to_pty_and_emits_event() {
 }
 
 #[test]
+fn session_approval_decision_rejects_stale_prompt_after_approval_output() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "agent": "codex",
+        "prompt": "ignored initial prompt",
+        "command": "/bin/sh",
+        "args": ["-c", "read _ignored; printf 'Approve? '; read answer; printf 'ANSWER:%s\\nPOST_APPROVAL\\n' \"$answer\"; read second; printf 'SECOND:%s\\n' \"$second\"; sleep 1"]
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/sessions HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created session json");
+    let id = created_json["id"].as_str().expect("session id");
+
+    let mut events = connect_ws(port, &format!("/v1/sessions/{id}/events"));
+    wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("Approve?"),
+    );
+    read_ws_json_until(&mut events, |event| {
+        (event["type"] == "approval-requested").then(|| event.clone())
+    });
+
+    let approval_body = serde_json::json!({"approved": true}).to_string();
+    let approved = request_json(
+        port,
+        &format!("POST /v1/sessions/{id}/approval HTTP/1.1"),
+        Some(&approval_body),
+    );
+    assert_eq!(approved.status, 202, "{}", approved.body);
+
+    let transcript = wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("POST_APPROVAL"),
+    );
+    assert!(transcript.contains("ANSWER:y"), "{transcript}");
+
+    let duplicate = request_json(
+        port,
+        &format!("POST /v1/sessions/{id}/approval HTTP/1.1"),
+        Some(&approval_body),
+    );
+    assert_eq!(duplicate.status, 409, "{}", duplicate.body);
+    let duplicate_json: serde_json::Value =
+        serde_json::from_str(&duplicate.body).expect("approval error json");
+    assert_eq!(duplicate_json["error"], "no approval pending");
+
+    thread::sleep(Duration::from_millis(200));
+    let transcript = request_json(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(transcript.status, 200, "{}", transcript.body);
+    assert!(!transcript.body.contains("SECOND:"), "{}", transcript.body);
+}
+
+#[test]
 fn session_approval_decision_rejects_unknown_session_with_404() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
