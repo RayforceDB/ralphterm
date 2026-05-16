@@ -1,7 +1,6 @@
 # RalphTerm
 
 [![CI](https://github.com/RayforceDB/ralphterm/actions/workflows/ci.yml/badge.svg)](https://github.com/RayforceDB/ralphterm/actions/workflows/ci.yml)
-[![Pages](https://github.com/RayforceDB/ralphterm/actions/workflows/pages.yml/badge.svg)](https://github.com/RayforceDB/ralphterm/actions/workflows/pages.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-00d992.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.95%2B-f2f2f2?logo=rust)](Cargo.toml)
 [![Website](https://img.shields.io/badge/website-ralphterm.rayforcedb.com-00d992)](https://ralphterm.rayforcedb.com)
