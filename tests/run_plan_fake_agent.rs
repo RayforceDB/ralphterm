@@ -1878,6 +1878,109 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
 }
 
 #[test]
+fn review_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    let start = Instant::now();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ralphterm"));
+    command
+        .current_dir(&repo.path)
+        .env("RALPHTERM_AGENT_TIMEOUT_MS", "250")
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("hanging-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--require-review",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped());
+    let output = run_with_test_timeout(command, Duration::from_secs(5));
+
+    let elapsed = start.elapsed();
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "review timeout was not bounded: elapsed={elapsed:?}\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let diagnostics = format!("{stdout}\n{stderr}");
+    assert!(
+        diagnostics.contains("review command timed out"),
+        "{diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("still waiting for external input"),
+        "{diagnostics}"
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("review result=failed"),
+        "{progress_log}"
+    );
+    assert!(
+        progress_log.contains("task_end number=1 result=failed"),
+        "{progress_log}"
+    );
+    let review_transcript_path = ".ralphterm/progress/plan-task-1-review.transcript";
+    assert!(
+        progress_log.contains(&format!("review transcript path={review_transcript_path}")),
+        "{progress_log}"
+    );
+    let review_transcript =
+        fs::read_to_string(repo.path.join(review_transcript_path)).expect("read review transcript");
+    assert!(
+        review_transcript.contains("still waiting for external input"),
+        "{review_transcript}"
+    );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Task 1: Create first file"), "{summary}");
+    assert!(summary.contains("Phase: review"), "{summary}");
+    assert!(summary.contains("review command timed out"), "{summary}");
+    assert!(summary.contains(review_transcript_path), "{summary}");
+}
+
+#[test]
 fn require_review_rejects_same_implementation_and_review_command_before_agent_runs() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");

@@ -278,6 +278,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     task,
                     &transcript,
                     &validation_output,
+                    timeout,
                     &progress,
                     &attempt_progress,
                 ) {
@@ -1240,12 +1241,14 @@ fn run_validation_commands(commands: &[String], output_path: &Path) -> Result<St
     Ok(output)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_review_command(
     review_command: &str,
     plan_name: &str,
     task: &Task,
     agent_transcript: &str,
     validation_output: &str,
+    timeout: Duration,
     progress: &ProgressPaths,
     attempt_progress: &AttemptProgressPaths,
 ) -> std::result::Result<String, ReviewCommandError> {
@@ -1256,7 +1259,7 @@ fn run_review_command(
         validation_output,
         &git_state_for_review(),
     );
-    let review_run = run_agent_command(review_command, &prompt)
+    let review_run = run_agent_command_with_timeout(review_command, &prompt, timeout)
         .with_context(|| format!("run review for task {}", task.number))?;
     fs::write(
         &attempt_progress.review_transcript_path,
@@ -1289,6 +1292,15 @@ fn run_review_command(
     let mut output = review_run.transcript;
     if !output.ends_with('\n') {
         output.push('\n');
+    }
+    if review_run.timed_out {
+        return Err(ReviewCommandError::new(
+            format!(
+                "review command timed out after {:?} for task {}\n{}",
+                timeout, task.number, output
+            ),
+            false,
+        ));
     }
     if review_run.exit_code != 0 {
         return Err(ReviewCommandError::new(
@@ -1423,30 +1435,6 @@ fn append_git_output(state: &mut String, label: &str, args: &[&str]) {
             state.push_str(&format!("{label} unavailable: {err}\n"));
         }
     }
-}
-
-fn run_agent_command(agent_command: &str, prompt: &str) -> Result<AgentRun> {
-    let mut child = spawn_agent_command(agent_command, prompt)?;
-    let mut reader = child
-        .master
-        .try_clone_reader()
-        .context("clone pty reader")?;
-    let mut transcript = String::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => transcript.push_str(&String::from_utf8_lossy(&buf[..n])),
-            Err(err) => bail!("read pty: {err}"),
-        }
-    }
-
-    let status = child.child.wait().context("wait for agent command")?;
-    Ok(AgentRun {
-        transcript,
-        exit_code: status.exit_code(),
-        timed_out: false,
-    })
 }
 
 fn run_agent_command_with_timeout(
