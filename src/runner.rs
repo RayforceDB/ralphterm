@@ -44,7 +44,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
 
     for task in pending {
         let progress = ProgressPaths::new(&plan_slug, task.number)?;
-        if has_failed_task_end(&progress.log_path, task.number)? {
+        if last_task_end_failed(&progress.log_path, task.number)? {
             append_progress(
                 &progress.log_path,
                 &format!("resume number={} previous_result=failed", task.number),
@@ -142,15 +142,36 @@ fn append_progress(path: &Path, event: &str) -> Result<()> {
     writeln!(file, "timestamp={} {event}", timestamp()).context("write progress log")
 }
 
-fn has_failed_task_end(path: &Path, task_number: usize) -> Result<bool> {
+fn last_task_end_failed(path: &Path, task_number: usize) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
     }
 
     let log = fs::read_to_string(path)
         .with_context(|| format!("read progress log {}", path.display()))?;
-    let failed_task_end = format!("task_end number={task_number} result=failed");
-    Ok(log.lines().any(|line| line.contains(&failed_task_end)))
+    let task_end_prefix = format!("task_end number={task_number}");
+    let mut last_failed = None;
+    for line in log.lines() {
+        let Some(event) = progress_event(line) else {
+            continue;
+        };
+        if event_starts_with_token(event, &task_end_prefix) {
+            last_failed = Some(event.contains("result=failed"));
+        }
+    }
+    Ok(last_failed.unwrap_or(false))
+}
+
+fn progress_event(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("timestamp=")?;
+    rest.split_once(' ').map(|(_, event)| event)
+}
+
+fn event_starts_with_token(event: &str, token: &str) -> bool {
+    let Some(rest) = event.strip_prefix(token) else {
+        return false;
+    };
+    rest.is_empty() || rest.starts_with(' ')
 }
 
 fn timestamp() -> String {

@@ -407,6 +407,120 @@ fn validation_failure_is_logged_and_does_not_complete_task() {
 }
 
 #[test]
+fn resume_is_not_logged_when_marker_only_appears_in_task_title() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file with task_end number=1 result=failed in the title
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let progress_dir = repo.path.join(".ralphterm/progress");
+    fs::create_dir_all(&progress_dir).expect("create progress dir");
+    fs::write(
+        progress_dir.join("plan.log"),
+        "timestamp=0 task_start number=1 title=Create first file with task_end number=1 result=failed in the title\n",
+    )
+    .expect("seed progress log");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let progress_log =
+        fs::read_to_string(progress_dir.join("plan.log")).expect("read progress log");
+    assert!(
+        !progress_log.contains("resume number=1 previous_result=failed"),
+        "resume should not be logged for marker text in a task title:\n{progress_log}"
+    );
+}
+
+#[test]
+fn resume_is_not_logged_when_latest_task_end_is_successful() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let progress_dir = repo.path.join(".ralphterm/progress");
+    fs::create_dir_all(&progress_dir).expect("create progress dir");
+    fs::write(
+        progress_dir.join("plan.log"),
+        concat!(
+            "timestamp=0 task_end number=1 result=failed\n",
+            "timestamp=1 task_start number=1 title=Create first file\n",
+            "timestamp=2 task_end number=1\n",
+        ),
+    )
+    .expect("seed progress log");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let progress_log =
+        fs::read_to_string(progress_dir.join("plan.log")).expect("read progress log");
+    assert!(
+        !progress_log.contains("resume number=1 previous_result=failed"),
+        "resume should not be logged when the latest task_end succeeded:\n{progress_log}"
+    );
+}
+
+#[test]
 fn failed_task_resume_is_logged_before_retry_start_and_completes_task() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
