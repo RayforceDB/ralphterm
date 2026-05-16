@@ -148,12 +148,16 @@ impl WorkspaceManager {
     }
 
     fn exclude_ralphterm_metadata(&self) -> Result<()> {
-        let exclude_path = self.repo_root.join(".git").join("info").join("exclude");
+        let exclude_path = self.git_path("info/exclude")?;
         let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
         if existing.lines().any(|line| line == ".ralphterm/") {
             return Ok(());
         }
 
+        if let Some(parent) = exclude_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create git exclude directory {}", parent.display()))?;
+        }
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -174,6 +178,16 @@ impl WorkspaceManager {
             .git_output(["worktree", "list", "--porcelain"])?
             .lines()
             .any(|line| line.strip_prefix("worktree ") == Some(path)))
+    }
+
+    fn git_path(&self, path: &str) -> Result<PathBuf> {
+        let output = self.git_output(["rev-parse", "--git-path", path])?;
+        let path = PathBuf::from(output);
+        if path.is_absolute() {
+            Ok(path)
+        } else {
+            Ok(self.repo_root.join(path))
+        }
     }
 
     fn git_output<I, S>(&self, args: I) -> Result<String>

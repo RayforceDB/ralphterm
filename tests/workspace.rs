@@ -70,6 +70,47 @@ fn create_excludes_ralphterm_metadata_from_git_status() {
 }
 
 #[test]
+fn creates_workspace_from_linked_worktree_and_excludes_metadata_there() {
+    let repo = TestRepo::new();
+    let linked = TestDir::new("ralphterm-linked-worktree");
+    git(
+        repo.path(),
+        [
+            "worktree",
+            "add",
+            "-b",
+            "linked-start",
+            linked.path().to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    assert!(linked.path().join(".git").is_file());
+
+    let manager = WorkspaceManager::discover(linked.path()).unwrap();
+    let workspace = manager.create("linked-status-clean").unwrap();
+
+    assert_eq!(manager.repo_root(), linked.path());
+    assert!(workspace.path.is_dir());
+    assert_eq!(git(linked.path(), ["status", "--short"]), "");
+    let exclude_path = git(linked.path(), ["rev-parse", "--git-path", "info/exclude"]);
+    assert!(fs::read_to_string(linked.path().join(exclude_path))
+        .unwrap()
+        .lines()
+        .any(|line| line == ".ralphterm/"));
+
+    manager.cleanup(&workspace).unwrap();
+    git(
+        repo.path(),
+        [
+            "worktree",
+            "remove",
+            "--force",
+            linked.path().to_str().unwrap(),
+        ],
+    );
+}
+
+#[test]
 fn cleanup_is_explicit_and_removes_worktree_and_branch() {
     let repo = TestRepo::new();
     let manager = WorkspaceManager::discover(repo.path()).unwrap();
