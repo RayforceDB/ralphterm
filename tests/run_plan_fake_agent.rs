@@ -643,6 +643,59 @@ fn run_command_no_commit_diff_patch_includes_run_delta_for_preexisting_dirty_tra
 }
 
 #[test]
+fn run_command_no_commit_diff_patch_includes_recreated_dirty_tracked_deletion() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `grep -q run-change tracked.txt`
+
+### Task 1: Change tracked file
+- [ ] Change tracked.txt
+"#,
+    )
+    .expect("write plan");
+    fs::write(repo.path.join("tracked.txt"), "base\n").expect("write tracked file");
+    repo.git(["add", "plan.md", "tracked.txt"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    fs::remove_file(repo.path.join("tracked.txt")).expect("delete tracked file before run");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
+        .expect("read run diff patch");
+    assert!(
+        diff_patch.contains("diff --git a/tracked.txt b/tracked.txt"),
+        "{diff_patch}"
+    );
+    assert!(diff_patch.contains("+run-change"), "{diff_patch}");
+}
+
+#[test]
 fn run_command_no_commit_diff_patch_includes_run_staged_changes() {
     let repo = TempRepo::new();
     repo.init_git();

@@ -18,6 +18,7 @@ use crate::plan::{parse_plan, Task};
 struct NoCommitBaseline {
     paths: BTreeSet<String>,
     tracked_file_contents: BTreeMap<String, Vec<u8>>,
+    tracked_non_file_paths: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -378,6 +379,12 @@ fn working_tree_diff_patch(baseline: &NoCommitBaseline) -> Result<String> {
         if is_baseline_path(&path, &baseline.paths) {
             if let Some(contents) = baseline.tracked_file_contents.get(&path) {
                 patch.push_str(&git_no_index_file_patch_from_contents(&path, contents)?);
+            } else {
+                let recreated_baseline_non_file =
+                    baseline.tracked_non_file_paths.contains(&path) && Path::new(&path).is_file();
+                if recreated_baseline_non_file {
+                    patch.push_str(&git_no_index_new_file_patch(&path)?);
+                }
             }
             continue;
         }
@@ -599,6 +606,7 @@ fn git_run_baseline() -> Result<NoCommitBaseline> {
         .chain(git_untracked_files()?)
         .collect();
     let mut tracked_file_contents = BTreeMap::new();
+    let mut tracked_non_file_paths = BTreeSet::new();
     for path in tracked_paths {
         let file_path = PathBuf::from(&path);
         if file_path.is_file() {
@@ -607,11 +615,14 @@ fn git_run_baseline() -> Result<NoCommitBaseline> {
                 fs::read(&file_path)
                     .with_context(|| format!("read baseline file {}", file_path.display()))?,
             );
+        } else {
+            tracked_non_file_paths.insert(path);
         }
     }
     Ok(NoCommitBaseline {
         paths,
         tracked_file_contents,
+        tracked_non_file_paths,
     })
 }
 
