@@ -19,6 +19,7 @@ pub struct RunOptions {
     pub plan_path: PathBuf,
     pub agent_command: Option<String>,
     pub review_command: Option<String>,
+    pub require_review: bool,
     pub no_commit: bool,
     pub dry_run: bool,
 }
@@ -52,6 +53,9 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     let agent_command = options
         .agent_command
         .unwrap_or_else(|| "claude".to_string());
+    if options.require_review && options.review_command.is_none() {
+        bail!("--require-review needs --review-command");
+    }
     let plan_slug = plan_slug(&options.plan_path);
     remove_stale_run_summary(&plan_slug)?;
     let mut executed_tasks = Vec::new();

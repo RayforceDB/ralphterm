@@ -45,6 +45,8 @@ enum Command {
         #[arg(long)]
         review_command: Option<String>,
         #[arg(long)]
+        require_review: bool,
+        #[arg(long)]
         no_commit: bool,
         #[arg(long)]
         dry_run: bool,
@@ -138,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
             agent,
             agent_command,
             review_command,
+            require_review,
             no_commit,
             dry_run,
         } => {
@@ -145,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
                 plan_path: plan,
                 agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
                 review_command,
+                require_review,
                 no_commit,
                 dry_run,
             })?;
