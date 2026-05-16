@@ -73,10 +73,11 @@ After the official Claude Code CLI is installed, authenticated, and works intera
 
 ```bash
 ralphterm run docs/plans/example.md --agent claude \
+  --require-review \
   --review-command "codex exec review-task"
 ```
 
-`--review-command` is optional but is the safer path for real plan runs. RalphTerm starts it in a fresh PTY after validation, passes the task, agent transcript, validation output, and git state, and accepts only an exact `REVIEW_PASS` line. `REVIEW_FAIL` leaves the task unchecked and prevents the commit.
+Use `--require-review` for real plan runs that must have an independent reviewer. When this gate is set, RalphTerm exits before starting the implementation agent unless `--review-command` is also supplied. The reviewer runs in a fresh PTY after validation, receives the task, agent transcript, validation output, and git state, and must print an exact `REVIEW_PASS` line. `REVIEW_FAIL` leaves the task unchecked and prevents the commit.
 
 RalphTerm launches the interactive CLI in a PTY and sends the task prompt as terminal input. It does not use `claude -p`, `--print`, or any one-shot prompt mode. Use `--agent codex` for an authenticated interactive Codex CLI, or `--agent-command <cmd>` for tests and custom wrappers.
 

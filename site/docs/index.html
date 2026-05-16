@@ -84,10 +84,11 @@ curl http://127.0.0.1:7878/v1/sessions/$ID/transcript</code></pre>
       <pre><code>ralphterm smoke --agent claude
 ralphterm smoke --agent codex</code></pre>
       <h2>Plan run with review</h2>
-      <p>Use a reviewer command for real plan runs. RalphTerm starts it after validation and accepts only an exact <code>REVIEW_PASS</code> line.</p>
+      <p>Use <code>--require-review</code> for real plan runs that must have an independent reviewer. RalphTerm fails before agent execution unless <code>--review-command</code> is also supplied.</p>
       <pre><code>ralphterm run docs/plans/example.md --agent claude \
+  --require-review \
   --review-command "codex exec review-task"</code></pre>
-      <p><code>REVIEW_FAIL</code> leaves the task unchecked and prevents the commit.</p>
+      <p>The reviewer starts after validation and must print an exact <code>REVIEW_PASS</code> line. <code>REVIEW_FAIL</code> leaves the task unchecked and prevents the commit.</p>
       <h2>Real agent sessions</h2>
       <p>Install and authenticate the official CLI first. RalphTerm does not own provider credentials.</p>
       <pre><code>claude auth login

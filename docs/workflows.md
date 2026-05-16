@@ -25,14 +25,15 @@ Each phase is backed by one or more terminal sessions. Every phase gets a transc
 
 ## Review workflow
 
-Use `--review-command <cmd>` when a task should not be accepted just because the implementation agent printed `COMPLETED`.
+Use `--require-review` with `--review-command <cmd>` when a task should not be executed or accepted unless an independent reviewer is configured.
 
 ```bash
 ralphterm run docs/plans/example.md --agent claude \
+  --require-review \
   --review-command "codex exec review-task"
 ```
 
-RalphTerm starts the reviewer in a fresh PTY after validation. The prompt includes:
+`--require-review` is a gate for plan runs. If it is set without `--review-command`, RalphTerm fails before starting the implementation agent. With both flags set, RalphTerm starts the reviewer in a fresh PTY after validation. The prompt includes:
 
 - task text
 - implementation transcript
@@ -44,7 +45,7 @@ The reviewer must print one exact decision line:
 - `REVIEW_PASS` accepts the task
 - `REVIEW_FAIL` blocks `[x]`, commit, and run summary
 
-If no review command is configured, RalphTerm prints `Review: skipped`. That mode is useful for smoke tests, but it is not replacement-grade autonomy yet.
+If no review command is configured and `--require-review` is not set, RalphTerm prints `Review: skipped`. That mode is useful for smoke tests only.
 
 ## Approval workflow
 
