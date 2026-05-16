@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use axum::{
@@ -19,6 +19,7 @@ mod signals;
 mod store;
 
 use pty_agent::{AgentKind, SessionConfig, SessionInput};
+use ralphterm::runner::{run_plan, RunOptions};
 use store::{SessionRecord, SessionStore};
 
 #[derive(Debug, Parser)]
@@ -34,6 +35,11 @@ enum Command {
     Serve {
         #[arg(long, default_value = "127.0.0.1:7878")]
         bind: SocketAddr,
+    },
+    Run {
+        plan: PathBuf,
+        #[arg(long)]
+        agent_command: Option<String>,
     },
 }
 
@@ -98,6 +104,17 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Serve { bind } => serve(bind).await,
+        Command::Run {
+            plan,
+            agent_command,
+        } => {
+            let output = run_plan(RunOptions {
+                plan_path: plan,
+                agent_command,
+            })?;
+            print!("{output}");
+            Ok(())
+        }
     }
 }
 
