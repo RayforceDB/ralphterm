@@ -241,6 +241,81 @@ fn docs_explain_workspace_isolated_plan_runs() {
 }
 
 #[test]
+fn docs_describe_run_api_as_asynchronous_and_expose_artifacts() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let readme = std::fs::read_to_string(root.join("README.md")).expect("read README");
+    let api_markdown =
+        std::fs::read_to_string(root.join("docs/api.md")).expect("read API markdown");
+    let api_html =
+        std::fs::read_to_string(root.join("site/docs/api.html")).expect("read public API docs");
+
+    for endpoint in [
+        "POST /v1/runs",
+        "GET  /v1/runs",
+        "GET  /v1/runs/:id",
+        "GET  /v1/runs/:id/events",
+        "GET  /v1/runs/:id/summary",
+        "GET  /v1/runs/:id/diff",
+        "POST /v1/runs/:id/cancel",
+    ] {
+        assert!(
+            readme.contains(endpoint),
+            "README current API list should expose run endpoint {endpoint}"
+        );
+        assert!(
+            api_html.contains(endpoint),
+            "public API docs should expose run endpoint {endpoint}"
+        );
+    }
+
+    for (name, text) in [
+        ("API markdown", api_markdown),
+        ("public API docs", api_html),
+    ] {
+        assert!(
+            text.contains("returns as soon as the run has started"),
+            "{name} should state POST /v1/runs is asynchronous"
+        );
+        assert!(
+            text.contains("\"phase\": \"executing\"") && text.contains("\"status\": \"running\""),
+            "{name} should show the immediate running response, not a completed response"
+        );
+        assert!(
+            text.contains("poll <code>GET /v1/runs/:id</code>")
+                || text.contains("Poll <code>GET /v1/runs/:id</code>")
+                || text.contains("poll `GET /v1/runs/:id`")
+                || text.contains("Poll `GET /v1/runs/:id`"),
+            "{name} should tell API users how to observe completion"
+        );
+        assert!(
+            text.contains("\"phase\": \"planning\"")
+                || text.contains("phase: \"planning\"")
+                || text.contains("phase: &quot;planning&quot;"),
+            "{name} should document planning phase when agent_command is omitted"
+        );
+        assert!(
+            text.contains("\"status\": \"created\"")
+                || text.contains("status: \"created\"")
+                || text.contains("status: &quot;created&quot;"),
+            "{name} should document created status when agent_command is omitted"
+        );
+    }
+}
+
+#[test]
+fn public_api_endpoint_list_includes_list_sessions() {
+    let api_html = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/docs/api.html"),
+    )
+    .expect("read public API docs");
+
+    assert!(
+        api_html.contains("GET  /v1/sessions\n"),
+        "public API endpoint list should include the session list endpoint as its own line"
+    );
+}
+
+#[test]
 fn getting_started_shows_minimal_plan_file_shape() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let docs_markdown =

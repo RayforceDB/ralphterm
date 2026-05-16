@@ -22,7 +22,7 @@ Response:
 
 ## Run a reviewed plan
 
-Use the run API when RalphTerm owns the plan loop, not just the terminal session. The daemon creates a run record under `.ralphterm/runs/<id>/`, executes the markdown plan, stores events, and writes result artifacts.
+Use the run API when RalphTerm owns the plan loop, not just the terminal session. The daemon creates a run record under `.ralphterm/runs/<id>/`, starts execution in the background, stores events, and writes result artifacts when the run finishes.
 
 ```http
 POST /v1/runs
@@ -51,17 +51,19 @@ Fields:
 - `max_review_retries`: number of review failures allowed before the task blocks
 - `no_commit`: marks accepted tasks and writes artifacts without creating git commits
 
-Response:
+Response when execution starts:
 
 ```json
 {
   "id": "00000000-0000-0000-0000-000000000000",
   "created_at": "unix-ms:1778954400000",
-  "phase": "complete",
-  "status": "succeeded",
+  "phase": "executing",
+  "status": "running",
   "plan_path": "docs/plans/example.md"
 }
 ```
+
+`POST /v1/runs` returns as soon as the run has started. Poll `GET /v1/runs/:id` for `succeeded` or `failed`, or read `GET /v1/runs/:id/events` for lifecycle events. If `agent_command` is omitted, the daemon only creates the run record and returns `phase: "planning"`, `status: "created"`.
 
 Run endpoints:
 

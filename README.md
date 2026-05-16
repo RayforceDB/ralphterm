@@ -60,6 +60,13 @@ Expected:
 
 ```http
 GET  /health
+POST /v1/runs
+GET  /v1/runs
+GET  /v1/runs/:id
+GET  /v1/runs/:id/events
+GET  /v1/runs/:id/summary
+GET  /v1/runs/:id/diff
+POST /v1/runs/:id/cancel
 POST /v1/sessions
 GET  /v1/sessions
 GET  /v1/sessions/:id

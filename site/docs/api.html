@@ -59,8 +59,11 @@ POST /v1/runs
 GET  /v1/runs
 GET  /v1/runs/:id
 GET  /v1/runs/:id/events
+GET  /v1/runs/:id/summary
+GET  /v1/runs/:id/diff
 POST /v1/runs/:id/cancel
 POST /v1/sessions
+GET  /v1/sessions
 GET  /v1/sessions/:id
 POST /v1/sessions/:id/input
 POST /v1/sessions/:id/resize
@@ -68,7 +71,7 @@ POST /v1/sessions/:id/cancel
 GET  /v1/sessions/:id/transcript
 GET  /v1/sessions/:id/events</code></pre>
       <h2>Run a reviewed plan</h2>
-      <p>Use the run API when RalphTerm owns the plan loop. The daemon executes the markdown plan, stores lifecycle events, and writes result artifacts under <code>.ralphterm/runs/&lt;id&gt;/</code>.</p>
+      <p>Use the run API when RalphTerm owns the plan loop. The daemon creates a run record, starts the markdown plan in the background, stores lifecycle events, and writes result artifacts under <code>.ralphterm/runs/&lt;id&gt;/</code> when the run finishes.</p>
       <pre><code>POST /v1/runs
 content-type: application/json
 
@@ -81,6 +84,15 @@ content-type: application/json
   "no_commit": false
 }</code></pre>
       <p><code>review_command</code> starts an independent reviewer after validation. <code>require_review</code> rejects the request if that reviewer is missing.</p>
+      <p><code>POST /v1/runs</code> returns as soon as the run has started:</p>
+      <pre><code>{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "created_at": "unix-ms:1778954400000",
+  "phase": "executing",
+  "status": "running",
+  "plan_path": "docs/plans/example.md"
+}</code></pre>
+      <p>Poll <code>GET /v1/runs/:id</code> for <code>succeeded</code> or <code>failed</code>, or read <code>GET /v1/runs/:id/events</code> for lifecycle events. If <code>agent_command</code> is omitted, the daemon only creates the record and returns <code>phase: "planning"</code>, <code>status: "created"</code>.</p>
       <pre><code>GET  /v1/runs
 GET  /v1/runs/:id
 GET  /v1/runs/:id/summary
