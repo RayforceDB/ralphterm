@@ -450,6 +450,165 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
 }
 
 #[test]
+fn run_api_rejects_workspace_plan_paths_that_escape_source_repo_without_creating_run() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+    std::fs::write(repo.path.join("plan.md"), "# Plan\n").expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let absolute_body = serde_json::json!({
+        "workspace_id": "api-escape-absolute",
+        "plan_path": repo.path.join("plan.md").to_string_lossy(),
+    })
+    .to_string();
+    let absolute = request_json(port, "POST /v1/runs HTTP/1.1", Some(&absolute_body));
+    assert_eq!(absolute.status, 400, "{}", absolute.body);
+
+    let parent_body = serde_json::json!({
+        "workspace_id": "api-escape-parent",
+        "plan_path": "../plan.md",
+    })
+    .to_string();
+    let parent = request_json(port, "POST /v1/runs HTTP/1.1", Some(&parent_body));
+    assert_eq!(parent.status, 400, "{}", parent.body);
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+    assert!(!repo
+        .path
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("api-escape-absolute")
+        .exists());
+    assert!(!repo
+        .path
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("api-escape-parent")
+        .exists());
+}
+
+#[test]
+fn run_api_workspace_id_executes_plan_in_isolated_workspace_and_persists_result_artifacts() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let workspace_path = repo
+        .path
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("api-task");
+    let body = serde_json::json!({
+        "workspace_id": "api-task",
+        "plan_path": "plan.md",
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+    assert_eq!(created_json["phase"], "executing");
+    assert_eq!(created_json["status"], "running");
+    assert_eq!(created_json["plan_path"], "plan.md");
+    assert_eq!(
+        created_json["workspace_path"],
+        workspace_path.to_string_lossy().as_ref()
+    );
+
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+
+    let source_plan = std::fs::read_to_string(&plan_path).expect("read source plan");
+    assert!(
+        source_plan.contains("- [ ] Write first.txt"),
+        "{source_plan}"
+    );
+    assert!(!repo.path.join("first.txt").exists());
+
+    let workspace_plan =
+        std::fs::read_to_string(workspace_path.join("plan.md")).expect("read workspace plan");
+    assert!(
+        workspace_plan.contains("- [x] Write first.txt"),
+        "{workspace_plan}"
+    );
+    assert!(workspace_path.join("first.txt").exists());
+
+    let summary_path = repo.path.join(format!(".ralphterm/runs/{id}/summary.md"));
+    let summary = std::fs::read_to_string(&summary_path).expect("read run summary artifact");
+    assert!(summary.contains("Result: passed"), "{summary}");
+
+    let diff_path = repo.path.join(format!(".ralphterm/runs/{id}/diff.patch"));
+    let diff = std::fs::read_to_string(&diff_path).expect("read run diff artifact");
+    assert!(
+        diff.contains("diff --git a/first.txt b/first.txt"),
+        "{diff}"
+    );
+    assert!(diff.contains("diff --git a/plan.md b/plan.md"), "{diff}");
+
+    let summary_response = request_json(port, &format!("GET /v1/runs/{id}/summary HTTP/1.1"), None);
+    assert_eq!(summary_response.status, 200, "{}", summary_response.body);
+    assert_eq!(summary_response.body, summary);
+
+    let diff_response = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
+    assert_eq!(diff_response.status, 200, "{}", diff_response.body);
+    assert_eq!(diff_response.body, diff);
+}
+
+#[test]
 fn run_api_executes_plan_with_review_command_and_persists_review_transcript() {
     let _guard = server_test_lock();
     let repo = TempDir::new();

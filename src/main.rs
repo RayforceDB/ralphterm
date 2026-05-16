@@ -156,6 +156,7 @@ struct CreateSessionResponse {
 #[derive(Debug, Deserialize)]
 struct CreateRunRequest {
     plan_path: Option<String>,
+    workspace_id: Option<String>,
     agent_command: Option<String>,
     review_command: Option<String>,
     require_review: Option<bool>,
@@ -348,10 +349,52 @@ async fn create_run(
     Json(req): Json<CreateRunRequest>,
 ) -> Result<Json<CreatedRunRecord>, ApiError> {
     let plan_path = req.plan_path.clone();
+    let base_dir = state.run_base_dir.as_ref().clone();
     if req.agent_command.is_some() && plan_path.is_none() {
         return Err(ApiError::bad_request(
             "plan_path is required when agent_command is set",
         ));
+    }
+    let mut workspace_path = None;
+    let mut workspace_execution_dir = None;
+    if let Some(workspace_id) = req.workspace_id.as_deref() {
+        let plan_path = plan_path.as_deref().ok_or_else(|| {
+            ApiError::bad_request("plan_path is required when workspace_id is set")
+        })?;
+        let plan = PathBuf::from(plan_path);
+        if plan.is_absolute() {
+            return Err(ApiError::bad_request(
+                "workspace_id requires a relative plan_path",
+            ));
+        }
+
+        let manager = WorkspaceManager::discover(&base_dir)?;
+        let cwd_relative = base_dir.strip_prefix(manager.repo_root()).map_err(|_| {
+            ApiError::bad_request(format!(
+                "current directory {} is not inside repository {}",
+                base_dir.display(),
+                manager.repo_root().display()
+            ))
+        })?;
+        validate_workspace_plan_path(cwd_relative, &plan)
+            .map_err(|err| ApiError::bad_request(err.to_string()))?;
+
+        let workspace = if req.agent_command.is_some() {
+            let candidate = manager
+                .workspace(workspace_id)
+                .map_err(|err| ApiError::bad_request(err.to_string()))?;
+            if candidate.path.exists() {
+                candidate
+            } else {
+                manager.create(workspace_id)?
+            }
+        } else {
+            manager
+                .workspace(workspace_id)
+                .map_err(|err| ApiError::bad_request(err.to_string()))?
+        };
+        workspace_execution_dir = Some(workspace.path.join(cwd_relative));
+        workspace_path = Some(workspace.path.to_string_lossy().to_string());
     }
     if req.require_review.unwrap_or(false) && req.review_command.is_none() {
         return Err(ApiError::bad_request(
@@ -375,6 +418,7 @@ async fn create_run(
             phase: RunPhase::Planning,
             status: RunStatus::Created,
             plan_path: plan_path.clone(),
+            workspace_path: workspace_path.clone(),
         },
     )?;
 
@@ -385,7 +429,6 @@ async fn create_run(
     let plan_path = plan_path
         .map(PathBuf::from)
         .ok_or_else(|| ApiError::bad_request("plan_path is required when agent_command is set"))?;
-    let base_dir = state.run_base_dir.as_ref().clone();
     let run_id = record.id;
     let review_command = req.review_command;
     let require_review = req.require_review.unwrap_or(false);
@@ -396,13 +439,23 @@ async fn create_run(
     let started = RunStore::start(&base_dir, run_id)?.context("run disappeared before start")?;
 
     let executor_base_dir = base_dir.clone();
+    let execution_dir = workspace_execution_dir.unwrap_or_else(|| executor_base_dir.clone());
     tokio::spawn(async move {
         let supervisor_base_dir = base_dir;
         let result = tokio::task::spawn_blocking(move || {
             let base_dir = executor_base_dir;
-            let progress_dir = base_dir.join(".ralphterm").join("progress");
+            let progress_dir = execution_dir.join(".ralphterm").join("progress");
             let summary_path = progress_dir.join(format!("{slug}-summary.md"));
             let diff_path = progress_dir.join(format!("{slug}-diff.patch"));
+            let _cwd_guard = CurrentDirGuard::change_to(&execution_dir).map_err(|err| {
+                anyhow::Error::new(err)
+                    .context(format!("switch to execution directory {}", execution_dir.display()))
+            });
+            let Ok(_cwd_guard) = _cwd_guard else {
+                let _ = RunStore::write_failure(&base_dir, run_id, None, None);
+                tracing::error!(%run_id, "background plan run failed to switch execution directory");
+                return;
+            };
             if let Err(err) = run_plan(RunOptions {
                 plan_path,
                 agent_command: Some(agent_command),
@@ -468,6 +521,30 @@ async fn create_run(
     });
 
     Ok(Json(started))
+}
+
+struct CurrentDirGuard {
+    previous: PathBuf,
+}
+
+impl CurrentDirGuard {
+    fn change_to(path: &FsPath) -> std::io::Result<Self> {
+        let previous = std::env::current_dir()?;
+        std::env::set_current_dir(path)?;
+        Ok(Self { previous })
+    }
+}
+
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        if let Err(err) = std::env::set_current_dir(&self.previous) {
+            tracing::error!(
+                previous = %self.previous.display(),
+                error = %err,
+                "failed to restore current directory"
+            );
+        }
+    }
 }
 
 fn plan_slug_for_artifacts(plan_path: &FsPath) -> String {

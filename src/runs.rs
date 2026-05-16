@@ -33,6 +33,8 @@ pub struct RunRecord {
     pub phase: RunPhase,
     pub status: RunStatus,
     pub plan_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +44,8 @@ pub struct CreatedRunRecord {
     pub phase: RunPhase,
     pub status: RunStatus,
     pub plan_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +73,7 @@ impl RunStore {
             phase: request.phase,
             status: request.status,
             plan_path: request.plan_path,
+            workspace_path: request.workspace_path,
         };
         let run_dir = base_dir
             .as_ref()
@@ -351,6 +356,7 @@ mod tests {
                 phase: RunPhase::Planning,
                 status: RunStatus::Created,
                 plan_path: Some("docs/plan.md".into()),
+                workspace_path: None,
             },
         )
         .unwrap();
@@ -397,6 +403,7 @@ mod tests {
                 phase: RunPhase::Planning,
                 status: RunStatus::Created,
                 plan_path: Some("plans/task.md".into()),
+                workspace_path: None,
             },
         )
         .unwrap();
@@ -442,6 +449,7 @@ mod tests {
                 phase: RunPhase::Executing,
                 status: RunStatus::Running,
                 plan_path: Some("plans/task.md".into()),
+                workspace_path: None,
             },
         )
         .unwrap();
