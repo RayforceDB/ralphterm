@@ -1,4 +1,9 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    fs,
+    net::SocketAddr,
+    path::{Path as FsPath, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::Context;
 use axum::{
@@ -21,7 +26,7 @@ mod store;
 use pty_agent::{AgentKind, SessionConfig, SessionInput};
 use ralphterm::{
     runner::{run_plan, run_smoke, RunOptions},
-    runs::{CreatedRunRecord, RunPhase, RunRecord, RunStatus, RunStore},
+    runs::{CreatedRunRecord, RunPhase, RunRecord, RunResultArtifacts, RunStatus, RunStore},
     workspace::WorkspaceManager,
 };
 use store::{SessionRecord, SessionStore};
@@ -149,6 +154,8 @@ struct CreateSessionResponse {
 #[derive(Debug, Deserialize)]
 struct CreateRunRequest {
     plan_path: Option<String>,
+    agent_command: Option<String>,
+    no_commit: Option<bool>,
 }
 
 #[tokio::main]
@@ -259,15 +266,93 @@ async fn create_run(
     State(state): State<AppState>,
     Json(req): Json<CreateRunRequest>,
 ) -> Result<Json<CreatedRunRecord>, ApiError> {
+    let plan_path = req.plan_path.clone();
+    if req.agent_command.is_some() && plan_path.is_none() {
+        return Err(ApiError::bad_request(
+            "plan_path is required when agent_command is set",
+        ));
+    }
     let record = RunStore::create(
         state.run_base_dir.as_ref(),
         RunRecord {
             phase: RunPhase::Planning,
             status: RunStatus::Created,
-            plan_path: req.plan_path,
+            plan_path: plan_path.clone(),
         },
     )?;
-    Ok(Json(record))
+
+    let Some(agent_command) = req.agent_command else {
+        return Ok(Json(record));
+    };
+
+    let plan_path = plan_path
+        .map(PathBuf::from)
+        .ok_or_else(|| ApiError::bad_request("plan_path is required when agent_command is set"))?;
+    let base_dir = state.run_base_dir.as_ref().clone();
+    let run_id = record.id;
+    let no_commit = req.no_commit.unwrap_or(false);
+    let slug = plan_slug_for_artifacts(&plan_path);
+
+    tokio::task::spawn_blocking(move || {
+        let progress_dir = base_dir.join(".ralphterm").join("progress");
+        let summary_path = progress_dir.join(format!("{slug}-summary.md"));
+        let diff_path = progress_dir.join(format!("{slug}-diff.patch"));
+        if let Err(err) = run_plan(RunOptions {
+            plan_path,
+            agent_command: Some(agent_command),
+            review_command: None,
+            require_review: false,
+            max_review_retries: 1,
+            no_commit,
+            dry_run: false,
+        }) {
+            let summary_markdown = fs::read_to_string(&summary_path).ok();
+            let diff_patch = fs::read_to_string(&diff_path).ok();
+            RunStore::write_failure(&base_dir, run_id, summary_markdown, diff_patch)?
+                .context("run disappeared before failure could be written")?;
+            return Err(err);
+        }
+
+        let summary_markdown =
+            fs::read_to_string(&summary_path).context("read run summary artifact")?;
+        let diff_patch = fs::read_to_string(&diff_path).context("read run diff artifact")?;
+        RunStore::write_result(
+            &base_dir,
+            run_id,
+            RunResultArtifacts {
+                summary_markdown,
+                diff_patch,
+            },
+        )?
+        .context("run disappeared before result could be written")
+    })
+    .await
+    .context("join run executor")?
+    .map(Json)
+    .map_err(ApiError::from)
+}
+
+fn plan_slug_for_artifacts(plan_path: &FsPath) -> String {
+    let raw = plan_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let slug: String = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "plan".to_string()
+    } else {
+        slug
+    }
 }
 
 async fn list_runs(State(state): State<AppState>) -> Result<Json<Vec<CreatedRunRecord>>, ApiError> {
@@ -408,6 +493,13 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: "run not found".into(),
+        }
+    }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
         }
     }
 }

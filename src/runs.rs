@@ -196,6 +196,43 @@ impl RunStore {
         )?;
         Ok(Some(record))
     }
+
+    pub fn write_failure(
+        base_dir: impl AsRef<Path>,
+        id: Uuid,
+        summary_markdown: Option<String>,
+        diff_patch: Option<String>,
+    ) -> Result<Option<CreatedRunRecord>> {
+        let Some(mut record) = Self::get(base_dir.as_ref(), id)? else {
+            return Ok(None);
+        };
+
+        let dir = run_dir(base_dir.as_ref(), id);
+        if let Some(summary_markdown) = summary_markdown {
+            let summary_path = dir.join("summary.md");
+            fs::write(&summary_path, summary_markdown)
+                .with_context(|| format!("write {}", summary_path.display()))?;
+        }
+        if let Some(diff_patch) = diff_patch {
+            let diff_path = dir.join("diff.patch");
+            fs::write(&diff_path, diff_patch)
+                .with_context(|| format!("write {}", diff_path.display()))?;
+        }
+
+        record.phase = RunPhase::Complete;
+        record.status = RunStatus::Failed;
+        write_record(base_dir.as_ref(), &record)?;
+        append_event(
+            base_dir.as_ref(),
+            id,
+            RunEvent {
+                event_type: "run_failed".to_string(),
+                status: record.status.clone(),
+                timestamp: timestamp(),
+            },
+        )?;
+        Ok(Some(record))
+    }
 }
 
 fn run_dir(base_dir: &Path, id: Uuid) -> std::path::PathBuf {

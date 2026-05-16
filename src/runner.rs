@@ -62,6 +62,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     if pending.is_empty() {
         output.push_str("No pending tasks.\n");
         if !options.dry_run {
+            write_no_pending_run_summary(plan_name, &plan_slug(&options.plan_path))?;
             write_run_diff_patch(
                 &plan_slug(&options.plan_path),
                 false,
@@ -662,6 +663,15 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
             ));
         }
     }
+    fs::write(&summary_path, summary)
+        .with_context(|| format!("write run summary {}", summary_path.display()))
+}
+
+fn write_no_pending_run_summary(plan_name: &str, plan_slug: &str) -> Result<()> {
+    let progress_dir = PathBuf::from(".ralphterm").join("progress");
+    fs::create_dir_all(&progress_dir).context("create progress directory")?;
+    let summary_path = run_summary_path(plan_slug);
+    let summary = format!("# Run Summary: {plan_name}\n\nResult: passed\n\nNo pending tasks.\n");
     fs::write(&summary_path, summary)
         .with_context(|| format!("write run summary {}", summary_path.display()))
 }
