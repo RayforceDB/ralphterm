@@ -19,7 +19,10 @@ mod signals;
 mod store;
 
 use pty_agent::{AgentKind, SessionConfig, SessionInput};
-use ralphterm::runner::{run_plan, run_smoke, RunOptions};
+use ralphterm::{
+    runner::{run_plan, run_smoke, RunOptions},
+    runs::{CreatedRunRecord, RunPhase, RunRecord, RunStatus, RunStore},
+};
 use store::{SessionRecord, SessionStore};
 
 #[derive(Debug, Parser)]
@@ -79,6 +82,7 @@ impl RunAgentKind {
 #[derive(Clone)]
 struct AppState {
     store: Arc<SessionStore>,
+    run_base_dir: Arc<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,6 +127,11 @@ struct ResizeRequest {
 #[derive(Debug, Serialize)]
 struct CreateSessionResponse {
     id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateRunRequest {
+    plan_path: Option<String>,
 }
 
 #[tokio::main]
@@ -174,9 +183,14 @@ async fn main() -> anyhow::Result<()> {
 async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
     let state = AppState {
         store: Arc::new(SessionStore::default()),
+        run_base_dir: Arc::new(std::env::current_dir().context("read current directory")?),
     };
     let app = Router::new()
         .route("/health", get(health))
+        .route("/v1/runs", post(create_run).get(list_runs))
+        .route("/v1/runs/:id", get(get_run))
+        .route("/v1/runs/:id/events", get(get_run_events))
+        .route("/v1/runs/:id/cancel", post(cancel_run))
         .route("/v1/sessions", post(create_session))
         .route("/v1/sessions/:id", get(get_session))
         .route("/v1/sessions/:id/input", post(send_input))
@@ -197,6 +211,51 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
 
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true}))
+}
+
+async fn create_run(
+    State(state): State<AppState>,
+    Json(req): Json<CreateRunRequest>,
+) -> Result<Json<CreatedRunRecord>, ApiError> {
+    let record = RunStore::create(
+        state.run_base_dir.as_ref(),
+        RunRecord {
+            phase: RunPhase::Planning,
+            status: RunStatus::Created,
+            plan_path: req.plan_path,
+        },
+    )?;
+    Ok(Json(record))
+}
+
+async fn list_runs(State(state): State<AppState>) -> Result<Json<Vec<CreatedRunRecord>>, ApiError> {
+    Ok(Json(RunStore::list(state.run_base_dir.as_ref())?))
+}
+
+async fn get_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<CreatedRunRecord>, ApiError> {
+    Ok(Json(
+        RunStore::get(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?,
+    ))
+}
+
+async fn get_run_events(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ralphterm::runs::RunEvent>>, ApiError> {
+    Ok(Json(
+        RunStore::events(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?,
+    ))
+}
+
+async fn cancel_run(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    RunStore::cancel(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn create_session(
@@ -300,6 +359,13 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: "session not found".into(),
+        }
+    }
+
+    fn run_not_found() -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: "run not found".into(),
         }
     }
 }
