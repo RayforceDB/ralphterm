@@ -290,6 +290,18 @@ fn run_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
     assert!(summary.contains("Phase: agent execution"), "{summary}");
     assert!(summary.contains("timed out"), "{summary}");
     assert!(summary.contains(transcript_path), "{summary}");
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed machine-readable run summary"),
+    )
+    .expect("parse failed machine-readable run summary");
+    assert_eq!(summary_json["plan"], "plan.md");
+    assert_eq!(summary_json["result"], "failed");
+    assert_eq!(summary_json["failed_task"]["number"], 1);
+    assert_eq!(summary_json["failed_task"]["title"], "Create first file");
+    assert_eq!(summary_json["failed_task"]["phase"], "agent execution");
+    assert_eq!(summary_json["failed_task"]["transcript"], transcript_path);
 }
 
 #[test]
@@ -1885,6 +1897,12 @@ fn run_command_with_no_pending_tasks_writes_empty_diff_patch() {
     .expect("write plan");
     repo.git(["add", "plan.md"]);
     repo.git(["commit", "-m", "docs: add completed plan"]);
+    fs::create_dir_all(repo.path.join(".ralphterm/progress")).expect("create progress dir");
+    fs::write(
+        repo.path.join(".ralphterm/progress/plan-summary.json"),
+        r#"{"plan":"plan.md","result":"failed","failed_task":{"number":99}}"#,
+    )
+    .expect("write stale summary json");
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(&repo.path)
@@ -1910,6 +1928,16 @@ fn run_command_with_no_pending_tasks_writes_empty_diff_patch() {
     let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
         .expect("read run diff patch");
     assert_eq!(diff_patch, "");
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read no-pending machine-readable summary"),
+    )
+    .expect("parse no-pending machine-readable summary");
+    assert_eq!(summary_json["plan"], "plan.md");
+    assert_eq!(summary_json["result"], "passed");
+    assert_eq!(summary_json["tasks"].as_array().unwrap().len(), 0);
+    assert!(summary_json.get("failed_task").is_none(), "{summary_json}");
 }
 
 #[test]
@@ -2048,6 +2076,26 @@ fn run_command_writes_passed_summary_with_transcripts_after_success() {
     for transcript_path in transcript_paths {
         assert!(summary.contains(transcript_path), "{summary}");
     }
+
+    let summary_json_path = repo.path.join(".ralphterm/progress/plan-summary.json");
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&summary_json_path).expect("read machine-readable run summary"),
+    )
+    .expect("parse machine-readable run summary");
+    assert_eq!(summary_json["plan"], "plan.md");
+    assert_eq!(summary_json["result"], "passed");
+    assert_eq!(summary_json["tasks"][0]["number"], 1);
+    assert_eq!(summary_json["tasks"][0]["title"], "Create first file");
+    assert_eq!(summary_json["tasks"][0]["status"], "passed");
+    assert_eq!(
+        summary_json["tasks"][0]["transcript"],
+        ".ralphterm/progress/plan-task-1.transcript"
+    );
+    assert_eq!(
+        summary_json["tasks"][0]["validation"],
+        ".ralphterm/progress/plan-task-1-validation.txt"
+    );
+    assert_eq!(summary_json["tasks"].as_array().unwrap().len(), 2);
 }
 
 #[test]
@@ -4511,6 +4559,20 @@ fn failed_retry_summary_links_failing_attempt_artifacts() {
     assert!(
         !summary.contains("Review transcript: .ralphterm/progress/plan-task-1-review.transcript"),
         "failed summary must not link stale attempt-1 review transcript:\n{summary}"
+    );
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed retry machine-readable summary"),
+    )
+    .expect("parse failed retry machine-readable summary");
+    assert_eq!(
+        summary_json["failed_task"]["transcript"],
+        ".ralphterm/progress/plan-task-1-attempt-2.transcript"
+    );
+    assert_eq!(
+        summary_json["failed_task"]["review_transcript"],
+        ".ralphterm/progress/plan-task-1-attempt-2-review.transcript"
     );
 }
 

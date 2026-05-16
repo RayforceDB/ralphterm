@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use serde_json::json;
 
 use crate::plan::{parse_plan, Task};
 
@@ -954,6 +955,12 @@ fn run_summary_path(plan_slug: &str) -> PathBuf {
         .join(format!("{plan_slug}-summary.md"))
 }
 
+fn run_summary_json_path(plan_slug: &str) -> PathBuf {
+    PathBuf::from(".ralphterm")
+        .join("progress")
+        .join(format!("{plan_slug}-summary.json"))
+}
+
 fn remove_stale_run_summary(plan_slug: &str) -> Result<()> {
     let summary_path = run_summary_path(plan_slug);
     match fs::remove_file(&summary_path) {
@@ -962,6 +969,18 @@ fn remove_stale_run_summary(plan_slug: &str) -> Result<()> {
         Err(err) => {
             Err(err).with_context(|| format!("remove stale run summary {}", summary_path.display()))
         }
+    }?;
+
+    let summary_json_path = run_summary_json_path(plan_slug);
+    match fs::remove_file(&summary_json_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "remove stale run summary json {}",
+                summary_json_path.display()
+            )
+        }),
     }
 }
 
@@ -982,7 +1001,32 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
         }
     }
     fs::write(&summary_path, summary)
-        .with_context(|| format!("write run summary {}", summary_path.display()))
+        .with_context(|| format!("write run summary {}", summary_path.display()))?;
+
+    let summary_json_path = run_summary_json_path(plan_slug);
+    let summary_json_tasks: Vec<_> = tasks
+        .iter()
+        .map(|task| {
+            json!({
+                "number": task.number,
+                "title": task.title,
+                "status": "passed",
+                "transcript": task.transcript_display,
+                "validation": task.validation_output_display,
+                "review_transcript": task.review_transcript_display,
+            })
+        })
+        .collect();
+    let summary_json = json!({
+        "plan": plan_name,
+        "result": "passed",
+        "tasks": summary_json_tasks,
+    });
+    fs::write(
+        &summary_json_path,
+        serde_json::to_string_pretty(&summary_json).context("serialize run summary json")? + "\n",
+    )
+    .with_context(|| format!("write run summary json {}", summary_json_path.display()))
 }
 
 fn write_no_pending_run_summary(plan_name: &str, plan_slug: &str) -> Result<()> {
@@ -991,7 +1035,21 @@ fn write_no_pending_run_summary(plan_name: &str, plan_slug: &str) -> Result<()> 
     let summary_path = run_summary_path(plan_slug);
     let summary = format!("# Run Summary: {plan_name}\n\nResult: passed\n\nNo pending tasks.\n");
     fs::write(&summary_path, summary)
-        .with_context(|| format!("write run summary {}", summary_path.display()))
+        .with_context(|| format!("write run summary {}", summary_path.display()))?;
+
+    let summary_json_path = run_summary_json_path(plan_slug);
+    let summary_json = json!({
+        "plan": plan_name,
+        "result": "passed",
+        "tasks": [],
+    });
+    fs::write(
+        &summary_json_path,
+        serde_json::to_string_pretty(&summary_json)
+            .context("serialize no-pending run summary json")?
+            + "\n",
+    )
+    .with_context(|| format!("write run summary json {}", summary_json_path.display()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1058,6 +1116,7 @@ fn write_failed_run_summary(
             progress.validation_output_display
         ));
     }
+    let mut failed_review_transcript_display = None;
     if link_review_transcript {
         let review_transcript_display = attempt_progress
             .and_then(|attempt| {
@@ -1080,13 +1139,56 @@ fn write_failed_run_summary(
                     .then_some(progress.review_transcript_display.as_str())
             });
         if let Some(review_transcript_display) = review_transcript_display {
+            failed_review_transcript_display = Some(review_transcript_display.to_string());
             summary.push_str(&format!(
                 "  - Review transcript: {review_transcript_display}\n"
             ));
         }
     }
     fs::write(&summary_path, summary)
-        .with_context(|| format!("write failed run summary {}", summary_path.display()))
+        .with_context(|| format!("write failed run summary {}", summary_path.display()))?;
+
+    let summary_json_path = run_summary_json_path(plan_slug);
+    let passed_json_tasks: Vec<_> = passed_tasks
+        .iter()
+        .map(|task| {
+            json!({
+                "number": task.number,
+                "title": task.title,
+                "status": "passed",
+                "transcript": task.transcript_display,
+                "validation": task.validation_output_display,
+                "review_transcript": task.review_transcript_display,
+            })
+        })
+        .collect();
+    let failed_task = json!({
+        "number": task.number,
+        "title": task.title,
+        "status": "failed",
+        "phase": phase,
+        "reason": reason,
+        "transcript": transcript_display,
+        "validation": link_validation_output.then(|| progress.validation_output_display.clone()),
+        "review_transcript": failed_review_transcript_display,
+    });
+    let summary_json = json!({
+        "plan": plan_name,
+        "result": "failed",
+        "tasks": passed_json_tasks,
+        "failed_task": failed_task,
+    });
+    fs::write(
+        &summary_json_path,
+        serde_json::to_string_pretty(&summary_json).context("serialize failed run summary json")?
+            + "\n",
+    )
+    .with_context(|| {
+        format!(
+            "write failed run summary json {}",
+            summary_json_path.display()
+        )
+    })
 }
 
 fn failed_run_error(original: anyhow::Error, summary_result: Result<()>) -> anyhow::Error {
