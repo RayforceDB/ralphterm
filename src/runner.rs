@@ -73,6 +73,11 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     if options.require_review && options.review_command.is_none() {
         bail!("--require-review needs --review-command or --review-agent");
     }
+    if let Some(review_command) = options.review_command.as_deref() {
+        if parse_agent_command(review_command)? == parse_agent_command(&agent_command)? {
+            bail!("independent review command must differ from agent command");
+        }
+    }
     let plan_slug = plan_slug(&options.plan_path);
     remove_stale_run_summary(&plan_slug)?;
     let run_baseline_revision = if options.no_commit {
@@ -1487,9 +1492,7 @@ struct SpawnedAgent {
 }
 
 fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent> {
-    let mut parts = shlex::split(agent_command)
-        .filter(|parts| !parts.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("invalid agent command"))?;
+    let mut parts = parse_agent_command(agent_command)?;
     let command = parts.remove(0);
 
     let pty_system = native_pty_system();
@@ -1529,4 +1532,10 @@ fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent
         child,
         master: pair.master,
     })
+}
+
+fn parse_agent_command(agent_command: &str) -> Result<Vec<String>> {
+    shlex::split(agent_command)
+        .filter(|parts| !parts.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("invalid agent command"))
 }

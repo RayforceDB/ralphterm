@@ -1696,6 +1696,118 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
 }
 
 #[test]
+fn require_review_rejects_same_implementation_and_review_command_before_agent_runs() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let fake_agent = fixture_path("fake-agent.sh");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fake_agent.to_str().expect("utf8 fixture path"),
+            "--review-command",
+            fake_agent.to_str().expect("utf8 fixture path"),
+            "--require-review",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("independent review command must differ from agent command"),
+        "{diagnostics}"
+    );
+    assert!(
+        !repo.path.join("first.txt").exists(),
+        "RalphTerm should reject non-independent review configuration before running the agent"
+    );
+}
+
+#[test]
+fn require_review_rejects_quoted_equivalent_implementation_and_review_command_before_agent_runs() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let fake_agent = fixture_path("fake-agent.sh");
+    let fake_agent = fake_agent.to_str().expect("utf8 fixture path");
+    let quoted_same_command = format!("'{fake_agent}'");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fake_agent,
+            "--review-command",
+            quoted_same_command.as_str(),
+            "--require-review",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("independent review command must differ from agent command"),
+        "{diagnostics}"
+    );
+    assert!(
+        !repo.path.join("first.txt").exists(),
+        "RalphTerm should reject equivalent non-independent review configuration before running the agent"
+    );
+}
+
+#[test]
 fn review_agent_codex_uses_codex_from_path_and_satisfies_required_review() {
     let repo = TempRepo::new();
     repo.init_git();
