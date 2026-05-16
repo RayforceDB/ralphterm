@@ -136,7 +136,6 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         let final_review_transcript_display: String;
         let (_transcript, _validation_output) = loop {
             let attempt_progress = progress.attempt(attempt);
-            remove_stale_validation_output(&progress)?;
             if attempt > 1 {
                 append_progress(
                     &progress.log_path,
@@ -169,6 +168,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &format!("{err:#}"),
                         &progress,
                         Some(&attempt_progress),
+                        false,
                     );
                     return Err(failed_run_error(err, summary_result));
                 }
@@ -218,6 +218,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &detail,
                     &progress,
                     Some(&attempt_progress),
+                    false,
                 );
                 let err = anyhow::anyhow!(
                     "agent command timed out after {:?} for task {}\n{}",
@@ -241,6 +242,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &format!("agent command exited with {}", agent_run.exit_code),
                     &progress,
                     Some(&attempt_progress),
+                    false,
                 );
                 let err = anyhow::anyhow!(
                     "agent command exited with {} for task {}",
@@ -267,6 +269,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &detail,
                     &progress,
                     Some(&attempt_progress),
+                    false,
                 );
                 let err = anyhow::anyhow!(
                     "agent for task {} did not emit required COMPLETED signal (detected signal={})",
@@ -298,6 +301,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &err.to_string(),
                         &progress,
                         Some(&attempt_progress),
+                        true,
                     );
                     return Err(failed_run_error(err, summary_result));
                 }
@@ -350,6 +354,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                             &err.to_string(),
                             &progress,
                             Some(&attempt_progress),
+                            true,
                         );
                         return Err(failed_run_error(err.into(), summary_result));
                     }
@@ -629,19 +634,6 @@ fn remove_stale_run_summary(plan_slug: &str) -> Result<()> {
     }
 }
 
-fn remove_stale_validation_output(progress: &ProgressPaths) -> Result<()> {
-    match fs::remove_file(&progress.validation_output_path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| {
-            format!(
-                "remove stale validation output {}",
-                progress.validation_output_path.display()
-            )
-        }),
-    }
-}
-
 fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -> Result<()> {
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
@@ -672,6 +664,7 @@ fn write_failed_run_summary(
     reason: &str,
     progress: &ProgressPaths,
     attempt_progress: Option<&AttemptProgressPaths>,
+    link_validation_output: bool,
 ) -> Result<()> {
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
@@ -718,7 +711,7 @@ fn write_failed_run_summary(
     if let Some(transcript_display) = transcript_display {
         summary.push_str(&format!("  - Transcript: {transcript_display}\n"));
     }
-    if progress.validation_output_path.exists() {
+    if link_validation_output && progress.validation_output_path.exists() {
         summary.push_str(&format!(
             "  - Validation: {}\n",
             progress.validation_output_display

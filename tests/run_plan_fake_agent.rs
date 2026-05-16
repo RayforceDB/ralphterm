@@ -615,6 +615,10 @@ fn run_command_missing_completed_does_not_link_stale_validation_artifact() {
         !summary.contains("stale validation output"),
         "failed summary must not contain stale validation text:\n{summary}"
     );
+    assert!(
+        repo.path.join(validation_path).exists(),
+        "stale validation artifact should be preserved for resume diagnostics"
+    );
 }
 
 #[test]
@@ -3050,6 +3054,13 @@ fn max_review_retries_zero_blocks_after_first_review_fail() {
             .join(".ralphterm/progress/plan-task-1-attempt-2.transcript")
             .exists(),
         "attempt 2 transcript should not exist when review retry budget is zero"
+    );
+    let validation_path = ".ralphterm/progress/plan-task-1-validation.txt";
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(
+        summary.contains(&format!("Validation: {validation_path}")),
+        "post-validation review failure summary should link validation output artifact:\n{summary}"
     );
 }
 
