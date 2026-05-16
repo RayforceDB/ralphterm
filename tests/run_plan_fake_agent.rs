@@ -2,7 +2,7 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::PathBuf,
-    process::{Command, Stdio},
+    process::{Command, Output, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -144,6 +144,88 @@ fn smoke_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
         diagnostics.contains("still waiting for external input"),
         "{diagnostics}"
     );
+}
+
+#[test]
+fn run_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let start = Instant::now();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ralphterm"));
+    command
+        .current_dir(&repo.path)
+        .env("RALPHTERM_AGENT_TIMEOUT_MS", "250")
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("hanging-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped());
+    let output = run_with_test_timeout(command, Duration::from_secs(2));
+
+    let elapsed = start.elapsed();
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "run timeout was not bounded: elapsed={elapsed:?}\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let diagnostics = format!("{stdout}\n{stderr}");
+    assert!(diagnostics.contains("timed out"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("still waiting for external input"),
+        "{diagnostics}"
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("task_end number=1 result=failed"),
+        "{progress_log}"
+    );
+    let transcript_path = ".ralphterm/progress/plan-task-1.transcript";
+    let transcript = fs::read_to_string(repo.path.join(transcript_path)).expect("read transcript");
+    assert!(
+        transcript.contains("still waiting for external input"),
+        "{transcript}"
+    );
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Task 1: Create first file"), "{summary}");
+    assert!(summary.contains("Phase: agent execution"), "{summary}");
+    assert!(summary.contains("timed out"), "{summary}");
+    assert!(summary.contains(transcript_path), "{summary}");
 }
 
 #[test]
@@ -3367,6 +3449,28 @@ fn fixture_path(name: &str) -> PathBuf {
         .join("tests")
         .join("fixtures")
         .join(name)
+}
+
+fn run_with_test_timeout(mut command: Command, timeout: Duration) -> Output {
+    let mut child = command.spawn().expect("spawn ralphterm");
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child.try_wait().expect("poll ralphterm").is_some() {
+            return child.wait_with_output().expect("collect ralphterm output");
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("kill timed out ralphterm test command");
+            let output = child
+                .wait_with_output()
+                .expect("collect killed ralphterm output");
+            panic!(
+                "ralphterm test command exceeded {timeout:?}\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 struct TempRepo {

@@ -145,28 +145,29 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 review_feedback.as_deref(),
                 resume_context.as_ref(),
             );
-            let agent_run = match run_agent_command(&agent_command, &prompt)
-                .with_context(|| format!("run agent for task {}", task.number))
-            {
-                Ok(agent_run) => agent_run,
-                Err(err) => {
-                    append_progress(
-                        &progress.log_path,
-                        &format!("task_end number={} result=failed", task.number),
-                    )?;
-                    let summary_result = write_failed_run_summary(
-                        plan_name,
-                        &plan_slug,
-                        &executed_tasks,
-                        task,
-                        "agent execution",
-                        &format!("{err:#}"),
-                        &progress,
-                        Some(&attempt_progress),
-                    );
-                    return Err(failed_run_error(err, summary_result));
-                }
-            };
+            let agent_run =
+                match run_agent_command_with_timeout(&agent_command, &prompt, agent_timeout())
+                    .with_context(|| format!("run agent for task {}", task.number))
+                {
+                    Ok(agent_run) => agent_run,
+                    Err(err) => {
+                        append_progress(
+                            &progress.log_path,
+                            &format!("task_end number={} result=failed", task.number),
+                        )?;
+                        let summary_result = write_failed_run_summary(
+                            plan_name,
+                            &plan_slug,
+                            &executed_tasks,
+                            task,
+                            "agent execution",
+                            &format!("{err:#}"),
+                            &progress,
+                            Some(&attempt_progress),
+                        );
+                        return Err(failed_run_error(err, summary_result));
+                    }
+                };
             let transcript = agent_run.transcript;
             fs::write(&attempt_progress.transcript_path, &transcript).with_context(|| {
                 format!(
@@ -195,6 +196,34 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             output.push_str(&transcript);
             if !transcript.ends_with('\n') {
                 output.push('\n');
+            }
+            if agent_run.timed_out {
+                append_progress(
+                    &progress.log_path,
+                    &format!("task_end number={} result=failed", task.number),
+                )?;
+                let detail = format!(
+                    "agent command timed out after {:?}\n{}",
+                    agent_timeout(),
+                    transcript
+                );
+                let summary_result = write_failed_run_summary(
+                    plan_name,
+                    &plan_slug,
+                    &executed_tasks,
+                    task,
+                    "agent execution",
+                    &detail,
+                    &progress,
+                    Some(&attempt_progress),
+                );
+                let err = anyhow::anyhow!(
+                    "agent command timed out after {:?} for task {}\n{}",
+                    agent_timeout(),
+                    task.number,
+                    transcript
+                );
+                return Err(failed_run_error(err, summary_result));
             }
             if agent_run.exit_code != 0 {
                 append_progress(
@@ -378,6 +407,16 @@ fn smoke_timeout() -> Duration {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_SMOKE_TIMEOUT_MS);
+    Duration::from_millis(timeout_ms)
+}
+
+fn agent_timeout() -> Duration {
+    const DEFAULT_AGENT_TIMEOUT_MS: u64 = 30 * 60 * 1_000;
+    let timeout_ms = std::env::var("RALPHTERM_AGENT_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_AGENT_TIMEOUT_MS);
     Duration::from_millis(timeout_ms)
 }
 
