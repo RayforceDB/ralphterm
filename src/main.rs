@@ -155,6 +155,9 @@ struct CreateSessionResponse {
 struct CreateRunRequest {
     plan_path: Option<String>,
     agent_command: Option<String>,
+    review_command: Option<String>,
+    require_review: Option<bool>,
+    max_review_retries: Option<usize>,
     no_commit: Option<bool>,
 }
 
@@ -290,6 +293,9 @@ async fn create_run(
         .ok_or_else(|| ApiError::bad_request("plan_path is required when agent_command is set"))?;
     let base_dir = state.run_base_dir.as_ref().clone();
     let run_id = record.id;
+    let review_command = req.review_command;
+    let require_review = req.require_review.unwrap_or(false);
+    let max_review_retries = req.max_review_retries.unwrap_or(1);
     let no_commit = req.no_commit.unwrap_or(false);
     let slug = plan_slug_for_artifacts(&plan_path);
 
@@ -300,9 +306,9 @@ async fn create_run(
         if let Err(err) = run_plan(RunOptions {
             plan_path,
             agent_command: Some(agent_command),
-            review_command: None,
-            require_review: false,
-            max_review_retries: 1,
+            review_command,
+            require_review,
+            max_review_retries,
             no_commit,
             dry_run: false,
         }) {
