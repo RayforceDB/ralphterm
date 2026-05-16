@@ -6,11 +6,11 @@
 [![Website](https://img.shields.io/badge/website-ralphterm.rayforcedb.com-00d992)](https://ralphterm.rayforcedb.com)
 [![Social Preview](https://img.shields.io/badge/social-preview-818cf8)](https://ralphterm.rayforcedb.com/assets/social-preview.png)
 
-**Terminal-native orchestration for AI coding agents.**
+**A safer replacement for brittle one-shot AI CLI automation.**
 
-RalphTerm turns user-installed AI CLIs into durable, observable, API-controlled workers. It launches Claude Code, Codex, and future terminal agents inside real PTYs, types like a user, streams what the terminal prints, and exposes clean controls for orchestration systems.
+RalphTerm solves a concrete problem: many autonomous coding stacks depend on one-shot CLI prompt flags. That path gets fragile when the CLI asks for approval, changes output format, needs follow-up input, hits auth, or moves more behavior into the interactive terminal. RalphTerm runs Claude Code, Codex, and future terminal agents inside real PTYs, then gives orchestration systems a clean API around that session.
 
-No brittle one-shot prompt modes. No private provider APIs. No credential copying. The official CLI keeps owning login, rate limits, safety prompts, and account identity.
+The point is not to bypass the vendors. The point is to stop pretending the terminal is not there. The official CLI still owns login, rate limits, safety prompts, and account identity. RalphTerm owns session control, streaming, transcripts, signals, and approvals.
 
 ## Links
 
@@ -22,11 +22,11 @@ No brittle one-shot prompt modes. No private provider APIs. No credential copyin
 
 ## Why RalphTerm exists
 
-Modern AI coding tools are becoming interactive terminal products. Automation built on hidden flags or non-interactive prompt modes is fragile. RalphTerm takes the durable path: run the real CLI in a real terminal and build a reliable control plane around it.
+AI coding tools are becoming interactive terminal products. Automation built around non-interactive prompt mode is fragile. RalphTerm takes the durable path: run the real CLI in a real terminal and build a reliable control plane around it.
 
 ## What RalphTerm does today
 
-- Starts one isolated PTY session per agent run.
+- Replaces one-shot prompt-mode execution with one isolated PTY session per agent run.
 - Supports Claude Code and Codex as first-class agents.
 - Sends prompts and follow-up input as terminal keystrokes.
 - Streams raw terminal output over WebSocket.
