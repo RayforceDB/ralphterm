@@ -3731,6 +3731,10 @@ fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
         fs::read_to_string(repo.path.join("first.txt")).expect("read fixed file"),
         "fixed after review\n"
     );
+    assert!(
+        !repo.path.join("rejected.txt").exists(),
+        "accepted retry must not retain artifacts created only by the rejected implementation attempt"
+    );
     assert_eq!(
         fs::read_to_string(repo.path.join("agent-count.txt")).expect("read agent count"),
         "2\n"
@@ -3762,6 +3766,16 @@ fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
     assert!(
         progress_log.contains("review result=passed"),
         "{progress_log}"
+    );
+    let cleanup_index = progress_log
+        .find("review_retry_cleanup result=passed")
+        .expect("progress log should record cleanup before retry");
+    let retry_index = progress_log
+        .find("agent_retry attempt=2 reason=review_failed")
+        .expect("progress log should record retry after review failure");
+    assert!(
+        cleanup_index < retry_index,
+        "cleanup should be logged before retry starts:\n{progress_log}"
     );
 
     let attempt_1_transcript = repo

@@ -21,6 +21,54 @@ struct NoCommitBaseline {
     tracked_non_file_paths: BTreeSet<String>,
 }
 
+#[derive(Debug, Default)]
+struct RetryCleanupSnapshot {
+    dirs: BTreeSet<PathBuf>,
+    files: BTreeMap<PathBuf, Vec<u8>>,
+}
+
+impl RetryCleanupSnapshot {
+    fn capture(root: &Path) -> Result<Self> {
+        let mut snapshot = Self::default();
+        collect_retry_cleanup_snapshot(root, root, &mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    fn restore(&self, root: &Path) -> Result<()> {
+        let mut current = Vec::new();
+        collect_retry_cleanup_paths(root, root, &mut current)?;
+        current.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+        for relative_path in current {
+            if self.files.contains_key(&relative_path) || self.dirs.contains(&relative_path) {
+                continue;
+            }
+            let path = root.join(&relative_path);
+            if path.is_dir() {
+                fs::remove_dir_all(&path)
+                    .with_context(|| format!("remove rejected directory {}", path.display()))?;
+            } else if path.exists() || path.symlink_metadata().is_ok() {
+                fs::remove_file(&path)
+                    .with_context(|| format!("remove rejected file {}", path.display()))?;
+            }
+        }
+        for relative_dir in &self.dirs {
+            let path = root.join(relative_dir);
+            fs::create_dir_all(&path)
+                .with_context(|| format!("restore baseline directory {}", path.display()))?;
+        }
+        for (relative_file, contents) in &self.files {
+            let path = root.join(relative_file);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("restore parent directory {}", parent.display()))?;
+            }
+            fs::write(&path, contents)
+                .with_context(|| format!("restore baseline file {}", path.display()))?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RunOptions {
     pub plan_path: PathBuf,
@@ -130,6 +178,8 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         } else {
             git_status_paths().context("snapshot git status before task")?
         };
+        let review_retry_cleanup_baseline = RetryCleanupSnapshot::capture(Path::new("."))
+            .context("snapshot task baseline before review retryable implementation")?;
         output.push_str(&format!("Task {}: {}\n", task.number, task.title));
         let mut review_feedback = None;
         let mut attempt = 1;
@@ -350,6 +400,15 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                             output.push_str(&format!(
                                 "Review failed on attempt {attempt}; retrying implementation.\n"
                             ));
+                            review_retry_cleanup_baseline
+                                .restore(Path::new("."))
+                                .context(
+                                    "clean up rejected implementation attempt before review retry",
+                                )?;
+                            append_progress(
+                                &progress.log_path,
+                                "review_retry_cleanup result=passed reason=review_failed",
+                            )?;
                             review_feedback = Some(feedback);
                             attempt += 1;
                             continue;
@@ -1161,6 +1220,69 @@ fn git_status_paths_from_porcelain(include_untracked: bool) -> Result<BTreeSet<S
 
 fn is_ralphterm_artifact(path: &str) -> bool {
     path == ".ralphterm" || path.starts_with(".ralphterm/")
+}
+
+fn collect_retry_cleanup_snapshot(
+    root: &Path,
+    path: &Path,
+    snapshot: &mut RetryCleanupSnapshot,
+) -> Result<()> {
+    for entry in fs::read_dir(path).with_context(|| format!("read directory {}", path.display()))? {
+        let entry = entry.with_context(|| format!("read directory entry in {}", path.display()))?;
+        let entry_path = entry.path();
+        let relative_path = entry_path
+            .strip_prefix(root)
+            .with_context(|| format!("strip root prefix from {}", entry_path.display()))?
+            .to_path_buf();
+        if is_retry_cleanup_ignored_path(&relative_path) {
+            continue;
+        }
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("read file type {}", entry_path.display()))?;
+        if file_type.is_dir() {
+            snapshot.dirs.insert(relative_path.clone());
+            collect_retry_cleanup_snapshot(root, &entry_path, snapshot)?;
+        } else if file_type.is_file() {
+            snapshot.files.insert(
+                relative_path,
+                fs::read(&entry_path)
+                    .with_context(|| format!("snapshot file {}", entry_path.display()))?,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn collect_retry_cleanup_paths(root: &Path, path: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(path).with_context(|| format!("read directory {}", path.display()))? {
+        let entry = entry.with_context(|| format!("read directory entry in {}", path.display()))?;
+        let entry_path = entry.path();
+        let relative_path = entry_path
+            .strip_prefix(root)
+            .with_context(|| format!("strip root prefix from {}", entry_path.display()))?
+            .to_path_buf();
+        if is_retry_cleanup_ignored_path(&relative_path) {
+            continue;
+        }
+        if entry
+            .file_type()
+            .with_context(|| format!("read file type {}", entry_path.display()))?
+            .is_dir()
+        {
+            collect_retry_cleanup_paths(root, &entry_path, paths)?;
+        }
+        paths.push(relative_path);
+    }
+    Ok(())
+}
+
+fn is_retry_cleanup_ignored_path(path: &Path) -> bool {
+    matches!(
+        path.components().next(),
+        Some(component)
+            if component.as_os_str() == ".ralphterm" || component.as_os_str() == ".git"
+    )
 }
 
 fn git_inside_work_tree() -> bool {
