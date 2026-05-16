@@ -123,6 +123,60 @@ fn cli_cleanup_workspace_removes_worktree_and_branch() {
 }
 
 #[test]
+fn cli_cleanup_rejects_branch_without_managed_worktree() {
+    let repo = TestRepo::new();
+    git(repo.path(), ["branch", "ralphterm/not-managed"]);
+
+    let output = ralphterm_failure(repo.path(), ["workspace", "cleanup", "not-managed"]);
+
+    assert!(
+        output.contains("no managed workspace") || output.contains("no managed worktree"),
+        "{output}"
+    );
+    assert_eq!(
+        git(
+            repo.path(),
+            [
+                "branch",
+                "--list",
+                "ralphterm/not-managed",
+                "--format=%(refname:short)"
+            ]
+        ),
+        "ralphterm/not-managed"
+    );
+}
+
+#[test]
+fn cli_cleanup_rejects_dirty_workspace_without_forcing_removal() {
+    let repo = TestRepo::new();
+    ralphterm(repo.path(), ["workspace", "create", "dirty-workspace"]);
+    let workspace_path = repo
+        .path()
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("dirty-workspace");
+    fs::write(workspace_path.join("uncommitted.txt"), "dirty\n").unwrap();
+
+    let output = ralphterm_failure(repo.path(), ["workspace", "cleanup", "dirty-workspace"]);
+
+    assert!(output.contains("git command failed"), "{output}");
+    assert!(workspace_path.exists());
+    assert_eq!(
+        git(
+            repo.path(),
+            [
+                "branch",
+                "--list",
+                "ralphterm/dirty-workspace",
+                "--format=%(refname:short)"
+            ]
+        ),
+        "ralphterm/dirty-workspace"
+    );
+}
+
+#[test]
 fn create_excludes_ralphterm_metadata_from_git_status() {
     let repo = TestRepo::new();
     let manager = WorkspaceManager::discover(repo.path()).unwrap();
@@ -376,4 +430,30 @@ where
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn ralphterm_failure<I, S>(cwd: &Path, args: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "ralphterm command unexpectedly succeeded in {}\nstdout:\n{}\nstderr:\n{}",
+        cwd.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .trim()
+    .to_string()
 }

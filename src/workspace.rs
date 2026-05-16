@@ -110,23 +110,27 @@ impl WorkspaceManager {
     pub fn cleanup(&self, workspace: &Workspace) -> Result<()> {
         self.validate_workspace(workspace)?;
 
-        if workspace.path.exists() || self.has_worktree(&workspace.path)? {
-            self.git_checked([
-                "worktree",
-                "remove",
-                "--force",
-                workspace.path.to_str().with_context(|| {
-                    format!(
-                        "workspace path is not valid utf-8: {}",
-                        workspace.path.display()
-                    )
-                })?,
-            ])?;
+        if !self.has_worktree(&workspace.path)? {
+            bail!(
+                "no managed workspace worktree found at {}",
+                workspace.path.display()
+            );
         }
+
+        self.git_checked([
+            "worktree",
+            "remove",
+            workspace.path.to_str().with_context(|| {
+                format!(
+                    "workspace path is not valid utf-8: {}",
+                    workspace.path.display()
+                )
+            })?,
+        ])?;
 
         let branch_exists = self.git_output(["branch", "--list", workspace.branch.as_str()])?;
         if !branch_exists.trim().is_empty() {
-            self.git_checked(["branch", "-D", workspace.branch.as_str()])?;
+            self.git_checked(["branch", "-d", workspace.branch.as_str()])?;
         }
 
         Ok(())
