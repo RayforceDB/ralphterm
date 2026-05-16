@@ -387,9 +387,10 @@ async fn create_run(
         .review_command
         .clone()
         .or_else(|| req.review_agent.map(ApiAgentKind::command));
-    if agent_command.is_some() && plan_path.is_none() {
+    let dry_run = req.dry_run.unwrap_or(false);
+    if (agent_command.is_some() || dry_run) && plan_path.is_none() {
         return Err(ApiError::bad_request(
-            "plan_path is required when agent or agent_command is set",
+            "plan_path is required when agent, agent_command, or dry_run is set",
         ));
     }
     if req.require_review.unwrap_or(false) && review_command.is_none() {
@@ -432,7 +433,7 @@ async fn create_run(
         validate_workspace_plan_path(cwd_relative, &plan)
             .map_err(|err| ApiError::bad_request(err.to_string()))?;
 
-        if agent_command.is_some() {
+        if agent_command.is_some() && !dry_run {
             let candidate = manager
                 .workspace(workspace_id)
                 .map_err(|err| ApiError::bad_request(err.to_string()))?;
@@ -458,18 +459,17 @@ async fn create_run(
         },
     )?;
 
-    let Some(agent_command) = agent_command else {
+    if agent_command.is_none() && !dry_run {
         return Ok(Json(record));
-    };
+    }
 
     let plan_path = plan_path.map(PathBuf::from).ok_or_else(|| {
-        ApiError::bad_request("plan_path is required when agent or agent_command is set")
+        ApiError::bad_request("plan_path is required when agent, agent_command, or dry_run is set")
     })?;
     let run_id = record.id;
     let require_review = req.require_review.unwrap_or(false);
     let max_review_retries = req.max_review_retries.unwrap_or(1);
     let no_commit = req.no_commit.unwrap_or(false);
-    let dry_run = req.dry_run.unwrap_or(false);
     let slug = plan_slug_for_artifacts(&plan_path);
 
     let started = RunStore::start(&base_dir, run_id)?.context("run disappeared before start")?;
@@ -514,7 +514,7 @@ async fn create_run(
             });
             let run_output = match run_plan(RunOptions {
                 plan_path,
-                agent_command: Some(agent_command),
+                agent_command,
                 review_command,
                 require_review,
                 max_review_retries,

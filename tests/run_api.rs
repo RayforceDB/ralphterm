@@ -532,26 +532,7 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
 fn run_api_dry_run_succeeds_without_spawning_agent_or_changing_repo() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
-    git(&repo.path, ["init"]);
-    git(&repo.path, ["config", "user.email", "test@example.com"]);
-    git(&repo.path, ["config", "user.name", "Test User"]);
-
-    std::fs::write(repo.path.join(".gitignore"), ".ralphterm/\n").expect("write gitignore");
-    let plan_path = repo.path.join("plan.md");
-    std::fs::write(
-        &plan_path,
-        r#"# Example plan
-
-## Validation Commands
-- `test -f first.txt`
-
-### Task 1: Create first file
-- [ ] Write first.txt
-"#,
-    )
-    .expect("write plan");
-    git(&repo.path, ["add", ".gitignore", "plan.md"]);
-    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+    let plan_path = write_committed_api_dry_run_plan(&repo);
 
     let port = free_port();
     let bind = format!("127.0.0.1:{port}");
@@ -572,44 +553,76 @@ fn run_api_dry_run_succeeds_without_spawning_agent_or_changing_repo() {
     })
     .to_string();
 
-    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
-    assert_eq!(created.status, 200, "{}", created.body);
-    let created_json: serde_json::Value =
-        serde_json::from_str(&created.body).expect("created run json");
-    let id = created_json["id"].as_str().expect("run id");
+    let id = create_and_wait_for_dry_run(port, &body);
+    assert_api_dry_run_artifacts_and_clean_repo(port, id, &repo, &plan_path);
+}
 
-    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
-        (json["status"] == "succeeded").then(|| json.clone())
-    });
+#[test]
+fn run_api_dry_run_without_agent_command_executes_preview() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let plan_path = write_committed_api_dry_run_plan(&repo);
 
-    let summary_response = request_json(port, &format!("GET /v1/runs/{id}/summary HTTP/1.1"), None);
-    assert_eq!(summary_response.status, 200, "{}", summary_response.body);
-    assert!(
-        summary_response.body.contains("Dry run: plan.md"),
-        "{}",
-        summary_response.body
-    );
-    assert!(
-        summary_response.body.contains("Task 1: Create first file"),
-        "{}",
-        summary_response.body
-    );
-
-    let diff_response = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
-    assert_eq!(diff_response.status, 200, "{}", diff_response.body);
-    assert_eq!(diff_response.body, "");
-
-    let plan = std::fs::read_to_string(&plan_path).expect("read plan after dry run");
-    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
-    assert!(!repo.path.join("first.txt").exists());
-
-    let status = Command::new("git")
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(&repo.path)
-        .args(["status", "--short"])
-        .output()
-        .expect("git status");
-    assert!(status.status.success(), "git status failed");
-    assert_eq!(String::from_utf8_lossy(&status.stdout), "");
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "dry_run": true
+    })
+    .to_string();
+
+    let id = create_and_wait_for_dry_run(port, &body);
+    assert_api_dry_run_artifacts_and_clean_repo(port, id, &repo, &plan_path);
+}
+
+#[test]
+fn run_api_dry_run_with_workspace_id_does_not_create_workspace() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let plan_path = write_committed_api_dry_run_plan(&repo);
+    let workspace_path = repo
+        .path
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("api-dry-run-preview");
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "workspace_id": "api-dry-run-preview",
+        "plan_path": "plan.md",
+        "agent_command": repo.path.join("missing-agent-command").to_string_lossy(),
+        "dry_run": true
+    })
+    .to_string();
+
+    let id = create_and_wait_for_dry_run(port, &body);
+    assert_api_dry_run_artifacts_and_clean_repo(port, id, &repo, &plan_path);
+    assert!(
+        !workspace_path.exists(),
+        "API dry-run with workspace_id must not create a worktree at {}",
+        workspace_path.display()
+    );
 }
 
 #[test]
@@ -1706,6 +1719,80 @@ fn fixture_path(name: &str) -> PathBuf {
         .join("tests")
         .join("fixtures")
         .join(name)
+}
+
+fn write_committed_api_dry_run_plan(repo: &TempDir) -> PathBuf {
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    std::fs::write(repo.path.join(".gitignore"), ".ralphterm/\n").expect("write gitignore");
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", ".gitignore", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+    plan_path
+}
+
+fn create_and_wait_for_dry_run(port: u16, body: &str) -> String {
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id").to_string();
+
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+
+    id
+}
+
+fn assert_api_dry_run_artifacts_and_clean_repo(
+    port: u16,
+    id: String,
+    repo: &TempDir,
+    plan_path: &std::path::Path,
+) {
+    let summary_response = request_json(port, &format!("GET /v1/runs/{id}/summary HTTP/1.1"), None);
+    assert_eq!(summary_response.status, 200, "{}", summary_response.body);
+    assert!(
+        summary_response.body.contains("Dry run: plan.md"),
+        "{}",
+        summary_response.body
+    );
+    assert!(
+        summary_response.body.contains("Task 1: Create first file"),
+        "{}",
+        summary_response.body
+    );
+
+    let diff_response = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
+    assert_eq!(diff_response.status, 200, "{}", diff_response.body);
+    assert_eq!(diff_response.body, "");
+
+    let plan = std::fs::read_to_string(plan_path).expect("read plan after dry run");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+    assert!(!repo.path.join("first.txt").exists());
+
+    let status = Command::new("git")
+        .current_dir(&repo.path)
+        .args(["status", "--short"])
+        .output()
+        .expect("git status");
+    assert!(status.status.success(), "git status failed");
+    assert_eq!(String::from_utf8_lossy(&status.stdout), "");
 }
 
 fn server_test_lock() -> MutexGuard<'static, ()> {
