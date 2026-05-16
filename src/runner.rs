@@ -53,7 +53,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         bail!("--require-review needs --review-command or --review-agent");
     }
     if let Some(review_command) = review_command.as_deref() {
-        if parse_agent_command(review_command)? == parse_agent_command(&agent_command)? {
+        if agent_commands_equivalent(&agent_command, review_command)? {
             bail!("independent review command must differ from agent command");
         }
     }
@@ -1673,6 +1673,10 @@ fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent
         child,
         master: pair.master,
     })
+}
+
+pub fn agent_commands_equivalent(agent_command: &str, review_command: &str) -> Result<bool> {
+    Ok(parse_agent_command(agent_command)? == parse_agent_command(review_command)?)
 }
 
 fn parse_agent_command(agent_command: &str) -> Result<Vec<String>> {

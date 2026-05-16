@@ -25,7 +25,7 @@ mod store;
 
 use pty_agent::{AgentKind, SessionConfig, SessionInput};
 use ralphterm::{
-    runner::{run_plan, run_smoke, RunOptions},
+    runner::{agent_commands_equivalent, run_plan, run_smoke, RunOptions},
     runs::{CreatedRunRecord, RunPhase, RunRecord, RunResultArtifacts, RunStatus, RunStore},
     workspace::WorkspaceManager,
 };
@@ -280,14 +280,16 @@ async fn create_run(
             "review_command is required when require_review is true",
         ));
     }
-    if req.agent_command.as_ref().is_some_and(|agent_command| {
-        req.review_command
-            .as_ref()
-            .is_some_and(|review_command| agent_command == review_command)
-    }) {
-        return Err(ApiError::bad_request(
-            "agent_command and review_command must be different",
-        ));
+    if let (Some(agent_command), Some(review_command)) =
+        (req.agent_command.as_deref(), req.review_command.as_deref())
+    {
+        let commands_equivalent = agent_commands_equivalent(agent_command, review_command)
+            .map_err(|err| ApiError::bad_request(err.to_string()))?;
+        if commands_equivalent {
+            return Err(ApiError::bad_request(
+                "agent_command and review_command must be different",
+            ));
+        }
     }
     let record = RunStore::create(
         state.run_base_dir.as_ref(),
