@@ -81,6 +81,10 @@ ralphterm run docs/plans/example.md --agent claude \
       <h2>Artifacts and audit trail</h2>
       <p>Plan runs preserve transcripts for each implementation and review attempt. They also write progress logs, a run summary, and diff artifacts so another tool or human can inspect the exact terminal output and code changes.</p>
 
+      <h2>Workspace-isolated plan runs</h2>
+      <pre><code>ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude</code></pre>
+      <p>Add <code>--workspace-id &lt;id&gt;</code> when a plan should run in a managed git worktree instead of the checkout you invoked from. RalphTerm creates <code>.ralphterm/workspaces/&lt;id&gt;</code>, checks out a managed branch, preserves the caller-relative plan path, and runs from the corresponding directory inside the worktree. The run does not auto-clean the worktree when it finishes; inspect it or remove it later with <code>ralphterm workspace cleanup &lt;id&gt;</code>. With <code>--dry-run --workspace-id &lt;id&gt;</code>, dry run only previews the workspace path and pending plan work without creating the worktree or starting an agent.</p>
+
       <h2>Commit progress</h2>
       <p>After validation and <code>REVIEW_PASS</code>, RalphTerm marks the task checkbox, writes the run artifacts, and commits task progress. This commit progress step only happens after the review gate passes. Failed validation or review leaves the task uncommitted for follow-up.</p>
 

@@ -59,6 +59,16 @@ You can resume after a failed run by invoking the same plan again. RalphTerm ski
 
 Plan runs preserve transcripts for implementation and review attempts. They also write progress logs, a summary, and diff artifacts. After validation and `REVIEW_PASS`, RalphTerm marks the task checkbox and commits task progress. Failed validation or review leaves the task uncommitted for follow-up.
 
+## Workspace-isolated plan runs
+
+Add `--workspace-id <id>` when a plan run should happen in a managed git worktree instead of the checkout you invoked from.
+
+```bash
+ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude
+```
+
+RalphTerm creates `.ralphterm/workspaces/<id>`, checks out a managed branch for the workspace, preserves the caller-relative plan path, and runs from the corresponding directory inside the worktree. The run does not auto-clean the worktree when it finishes, so you can inspect the isolated branch and files before removing them with `ralphterm workspace cleanup <id>`. With `--dry-run --workspace-id <id>`, dry run only previews the workspace path and pending plan work; it does not create the worktree or start an agent.
+
 ## Approval workflow
 
 Default mode is manual.

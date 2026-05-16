@@ -176,6 +176,56 @@ fn public_docs_mention_review_agent_as_supported_review_config() {
 }
 
 #[test]
+fn docs_explain_workspace_isolated_plan_runs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let readme = std::fs::read_to_string(root.join("README.md")).expect("read README");
+    let getting_started = std::fs::read_to_string(root.join("docs/getting-started.md"))
+        .expect("read getting started markdown");
+    let workflows =
+        std::fs::read_to_string(root.join("docs/workflows.md")).expect("read workflows markdown");
+    let docs_index =
+        std::fs::read_to_string(root.join("site/docs/index.html")).expect("read public docs index");
+    let workflows_html = std::fs::read_to_string(root.join("site/docs/workflows.html"))
+        .expect("read public workflows page");
+
+    for (name, text) in [
+        ("README", readme.as_str()),
+        ("getting started", getting_started.as_str()),
+        ("workflows", workflows.as_str()),
+        ("public docs index", docs_index.as_str()),
+        ("public workflows", workflows_html.as_str()),
+    ] {
+        assert!(
+            text.contains("--workspace-id"),
+            "{name} should show the --workspace-id option"
+        );
+        assert!(
+            text.contains(".ralphterm/workspaces/<id>")
+                || text.contains(".ralphterm/workspaces/&lt;id&gt;"),
+            "{name} should name the managed workspace directory"
+        );
+        assert!(
+            text.contains("does not auto-clean"),
+            "{name} should say plan runs preserve managed worktrees"
+        );
+    }
+
+    for (name, text) in [
+        ("getting started", docs_index),
+        ("workflows", workflows_html),
+    ] {
+        assert!(
+            text.contains("caller-relative plan path"),
+            "{name} should explain plan paths are resolved relative to the caller before switching workspace"
+        );
+        assert!(
+            text.contains("dry run only previews"),
+            "{name} should explain dry-run does not create the workspace"
+        );
+    }
+}
+
+#[test]
 fn getting_started_shows_minimal_plan_file_shape() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let docs_markdown =

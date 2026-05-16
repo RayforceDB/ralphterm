@@ -93,11 +93,14 @@ ralphterm run docs/plans/example.md --dry-run
 ralphterm run docs/plans/example.md --agent claude \
   --require-review \
   --review-command "codex exec review-task"
+ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude
 ```
 
 `--require-review` makes review mandatory for a plan run. If it is set without `--review-command` or `--review-agent`, RalphTerm fails before starting the implementation agent, so it cannot accept or execute tasks without an independent review configuration. Use `--review-agent codex` for a built-in reviewer CLI, or `--review-command <cmd>` for a custom reviewer command. The reviewer sees the task text, implementation transcript, validation output, and current git state. It must print `REVIEW_PASS` before RalphTerm marks the task `[x]` or commits. By default, the first `REVIEW_FAIL` triggers one retry with reviewer feedback sent back to the implementation agent; a second review failure leaves the task unchecked and prevents the commit. Use `--max-review-retries N` to allow more review-driven retries, or `--max-review-retries 0` to block on the first failed review.
 
 Start with `ralphterm smoke --agent claude` or `ralphterm smoke --agent codex` to verify the official CLI can start inside a real PTY, receive terminal input, print `COMPLETED`, and exit. Then use `--dry-run` to see the pending tasks, review mode, and validation commands without starting an agent, editing the plan, writing progress logs, or committing. Run the real plan command only after the official Claude Code CLI is installed, authenticated, and works interactively as `claude` in your shell. RalphTerm launches the interactive CLI in a PTY and sends terminal input; it does not use `claude -p`, `--print`, or any one-shot prompt mode. Use `--agent codex` to run the same workflow with an authenticated interactive `codex` CLI. The lower-level `--agent-command <cmd>` option remains available for tests and custom command wrappers.
+
+Use `ralphterm run PLAN --workspace-id <id>` when the plan should run in a managed git worktree instead of the checkout you invoked from. RalphTerm creates `.ralphterm/workspaces/<id>`, switches into the matching caller-relative plan path inside that worktree, and runs the plan from there. The run does not auto-clean the worktree; inspect it or remove it later with `ralphterm workspace cleanup <id>`. With `--dry-run --workspace-id <id>`, dry run only previews the workspace path and plan work without creating the worktree or running an agent.
 
 ## Milestone 1
 

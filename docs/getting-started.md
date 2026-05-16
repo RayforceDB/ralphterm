@@ -69,6 +69,14 @@ ralphterm run docs/plans/example.md --dry-run
 
 That prints pending tasks, review mode, and validation commands only. It does not start an agent, edit the plan, write `.ralphterm/progress/`, or commit.
 
+To isolate a real plan run from your current checkout, add `--workspace-id <id>`:
+
+```bash
+ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude
+```
+
+RalphTerm creates a managed git worktree at `.ralphterm/workspaces/<id>`, resolves the caller-relative plan path before switching directories, and runs from the corresponding path inside that worktree. It does not auto-clean the worktree after the run; inspect it or remove it later with `ralphterm workspace cleanup <id>`. With `--dry-run --workspace-id <id>`, dry run only previews the workspace path and plan work without creating the worktree or running an agent.
+
 A minimal plan is just a validation block plus unchecked task items:
 
 ```markdown
