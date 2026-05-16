@@ -312,6 +312,60 @@ fn run_command_no_commit_writes_working_tree_diff_patch() {
 }
 
 #[test]
+fn run_command_no_commit_diff_patch_includes_recreated_tracked_file_matching_head() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f tracked.txt`
+
+### Task 1: Recreate tracked file
+- [ ] Recreate tracked.txt with base content
+"#,
+    )
+    .expect("write plan");
+    fs::write(repo.path.join("tracked.txt"), "base\n").expect("write tracked file");
+    repo.git(["add", "plan.md", "tracked.txt"]);
+    repo.git(["commit", "-m", "docs: add tracked file"]);
+    fs::remove_file(repo.path.join("tracked.txt")).expect("delete tracked file before run");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(repo.git_output(["status", "--short", "tracked.txt"]), "");
+
+    let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
+        .expect("read run diff patch");
+    assert!(
+        diff_patch.contains("diff --git a/tracked.txt b/tracked.txt"),
+        "{diff_patch}"
+    );
+    assert!(diff_patch.contains("+base"), "{diff_patch}");
+}
+
+#[test]
 fn run_command_no_commit_diff_patch_includes_file_created_in_new_untracked_directory() {
     let repo = TempRepo::new();
     repo.init_git();

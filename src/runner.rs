@@ -371,6 +371,7 @@ fn working_tree_diff_patch(baseline: &NoCommitBaseline) -> Result<String> {
     let paths = git_status_paths()?
         .into_iter()
         .chain(untracked_files.iter().cloned())
+        .chain(baseline.tracked_non_file_paths.iter().cloned())
         .collect::<BTreeSet<_>>();
     for path in paths {
         if is_ralphterm_artifact(&path) {

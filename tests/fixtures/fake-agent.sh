@@ -15,4 +15,7 @@ fi
 if printf '%s\n' "$prompt" | grep -q 'Change tracked.txt'; then
   printf 'run-change\n' > tracked.txt
 fi
+if printf '%s\n' "$prompt" | grep -q 'Recreate tracked.txt with base content'; then
+  printf 'base\n' > tracked.txt
+fi
 printf 'COMPLETED\n'
