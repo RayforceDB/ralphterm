@@ -52,10 +52,20 @@ The agent should create first.txt.
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Pending tasks for plan.md:"), "{stdout}");
-    assert!(stdout.contains("1. Task 1: Create first file"), "{stdout}");
-    assert!(stdout.contains("2. Task 3: Create second file"), "{stdout}");
+    assert!(stdout.contains("Executing plan.md"), "{stdout}");
+    assert!(stdout.contains("Task 1: Create first file"), "{stdout}");
+    assert!(stdout.contains("Task 3: Create second file"), "{stdout}");
     assert!(!stdout.contains("Already finished"), "{stdout}");
+    assert!(stdout.contains("COMPLETED"), "{stdout}");
+
+    assert_eq!(
+        fs::read_to_string(repo.path.join("first.txt")).expect("first file created"),
+        "created by fake agent\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("second.txt")).expect("second file created"),
+        "created by fake agent\n"
+    );
 }
 
 fn fixture_path(name: &str) -> PathBuf {
