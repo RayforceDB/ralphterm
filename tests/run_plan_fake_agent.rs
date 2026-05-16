@@ -293,6 +293,154 @@ fn run_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
 }
 
 #[test]
+fn run_command_with_workspace_id_runs_inside_managed_workspace() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    let original_plan = r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+- [ ] Verify first.txt exists
+"#;
+    fs::write(&plan_path, original_plan).expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            "plan.md",
+            "--workspace-id",
+            "isolated",
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let workspace_path = repo.path.join(".ralphterm/workspaces/isolated");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&format!("Workspace: {}", workspace_path.display())),
+        "{stdout}"
+    );
+
+    let source_plan = fs::read_to_string(&plan_path).expect("read source plan");
+    assert_eq!(source_plan, original_plan);
+    assert!(
+        !repo.path.join("first.txt").exists(),
+        "source repo must not receive generated file"
+    );
+    assert_eq!(repo.git_output(["status", "--short"]), "");
+
+    let workspace_plan =
+        fs::read_to_string(workspace_path.join("plan.md")).expect("read workspace plan");
+    assert!(
+        workspace_plan.contains("- [x] Write first.txt"),
+        "{workspace_plan}"
+    );
+    assert!(
+        workspace_plan.contains("- [x] Verify first.txt exists"),
+        "{workspace_plan}"
+    );
+    let generated =
+        fs::read_to_string(workspace_path.join("first.txt")).expect("read generated file");
+    assert_eq!(generated, "created by fake agent\n");
+    let workspace_status = Command::new("git")
+        .current_dir(&workspace_path)
+        .args(["status", "--short"])
+        .output()
+        .expect("workspace git status");
+    assert!(
+        workspace_status.status.success(),
+        "workspace git status failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&workspace_status.stdout),
+        String::from_utf8_lossy(&workspace_status.stderr)
+    );
+    let workspace_status = String::from_utf8(workspace_status.stdout).expect("git status utf8");
+    assert!(
+        workspace_status.contains(" M plan.md\n"),
+        "{workspace_status}"
+    );
+    assert!(
+        workspace_status.contains("?? first.txt\n"),
+        "{workspace_status}"
+    );
+}
+
+#[test]
+fn run_command_with_workspace_id_rejects_absolute_plan_path() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--workspace-id",
+            "isolated",
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("--workspace-id requires a relative plan path"),
+        "{diagnostics}"
+    );
+    assert!(
+        !repo.path.join(".ralphterm/workspaces/isolated").exists(),
+        "absolute-path rejection must not create a workspace"
+    );
+    assert_eq!(repo.git_output(["status", "--short"]), "");
+}
+
+#[test]
 fn run_command_marks_completed_tasks_and_commits() {
     let repo = TempRepo::new();
     repo.init_git();

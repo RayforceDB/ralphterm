@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use axum::{
     extract::{Path, State, WebSocketUpgrade},
     http::StatusCode,
@@ -67,6 +67,8 @@ enum Command {
         no_commit: bool,
         #[arg(long)]
         dry_run: bool,
+        #[arg(long)]
+        workspace_id: Option<String>,
     },
     Smoke {
         #[arg(long, value_enum, conflicts_with = "agent_command")]
@@ -183,7 +185,22 @@ async fn main() -> anyhow::Result<()> {
             max_review_retries,
             no_commit,
             dry_run,
+            workspace_id,
         } => {
+            if let Some(id) = workspace_id {
+                if plan.is_absolute() {
+                    bail!("--workspace-id requires a relative plan path");
+                }
+
+                let cwd = std::env::current_dir().context("read current directory")?;
+                let manager = WorkspaceManager::discover(cwd)?;
+                let workspace = manager.create(id)?;
+                println!("Workspace: {}", workspace.path.display());
+                std::env::set_current_dir(&workspace.path).with_context(|| {
+                    format!("switch to workspace directory {}", workspace.path.display())
+                })?;
+            }
+
             let output = run_plan(RunOptions {
                 plan_path: plan,
                 agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
