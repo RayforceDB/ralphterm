@@ -79,7 +79,7 @@ ralphterm run docs/plans/example.md --agent claude \
       <p>You can resume after a failed run by invoking the same plan again. RalphTerm skips tasks already marked <code>[x]</code>, keeps failed context available to the next implementation prompt, and continues with pending tasks.</p>
 
       <h2>Artifacts and audit trail</h2>
-      <p>Plan runs preserve transcripts for each implementation and review attempt. They also write progress logs, a run summary, and diff artifacts so another tool or human can inspect the exact terminal output and code changes.</p>
+      <p>Plan runs preserve transcripts for each implementation and review attempt. They also write progress logs, <code>summary.md</code>, <code>summary.json</code>, and <code>diff.patch</code> so another tool or human can inspect the exact terminal output and code changes.</p>
 
       <h2>Workspace-isolated plan runs</h2>
       <pre><code>ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude</code></pre>

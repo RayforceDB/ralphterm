@@ -326,6 +326,7 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
         .route("/v1/runs", post(create_run).get(list_runs))
         .route("/v1/runs/:id", get(get_run))
         .route("/v1/runs/:id/summary", get(get_run_summary))
+        .route("/v1/runs/:id/summary.json", get(get_run_summary_json))
         .route("/v1/runs/:id/diff", get(get_run_diff))
         .route("/v1/runs/:id/events", get(get_run_events))
         .route("/v1/runs/:id/cancel", post(cancel_run))
@@ -499,13 +500,14 @@ async fn create_run(
             let base_dir = executor_base_dir;
             let progress_dir = execution_dir.join(".ralphterm").join("progress");
             let summary_path = progress_dir.join(format!("{slug}-summary.md"));
+            let summary_json_path = progress_dir.join(format!("{slug}-summary.json"));
             let diff_path = progress_dir.join(format!("{slug}-diff.patch"));
             let _cwd_guard = CurrentDirGuard::change_to(&execution_dir).map_err(|err| {
                 anyhow::Error::new(err)
                     .context(format!("switch to execution directory {}", execution_dir.display()))
             });
             let Ok(_cwd_guard) = _cwd_guard else {
-                let _ = RunStore::write_failure(&base_dir, run_id, None, None);
+                let _ = RunStore::write_failure(&base_dir, run_id, None, None, None);
                 tracing::error!(%run_id, "background plan run failed to switch execution directory");
                 return;
             };
@@ -550,8 +552,15 @@ async fn create_run(
                 Ok(output) => output,
                 Err(err) => {
                     let summary_markdown = fs::read_to_string(&summary_path).ok();
+                    let summary_json = fs::read_to_string(&summary_json_path).ok();
                     let diff_patch = fs::read_to_string(&diff_path).ok();
-                    match RunStore::write_failure(&base_dir, run_id, summary_markdown, diff_patch) {
+                    match RunStore::write_failure(
+                        &base_dir,
+                        run_id,
+                        summary_markdown,
+                        summary_json,
+                        diff_patch,
+                    ) {
                         Ok(Some(_)) => {}
                         Ok(None) => {
                             tracing::error!(%run_id, "run disappeared before failure could be written")
@@ -571,6 +580,7 @@ async fn create_run(
                     run_id,
                     RunResultArtifacts {
                         summary_markdown: run_output,
+                        summary_json: None,
                         diff_patch: String::new(),
                     },
                 ) {
@@ -589,7 +599,7 @@ async fn create_run(
                 Ok(summary_markdown) => summary_markdown,
                 Err(err) => {
                     let error = anyhow::Error::new(err).context("read run summary artifact");
-                    let _ = RunStore::write_failure(&base_dir, run_id, None, None);
+                    let _ = RunStore::write_failure(&base_dir, run_id, None, None, None);
                     tracing::error!(%run_id, error = %error, "background plan run failed");
                     return;
                 }
@@ -598,7 +608,28 @@ async fn create_run(
                 Ok(diff_patch) => diff_patch,
                 Err(err) => {
                     let error = anyhow::Error::new(err).context("read run diff artifact");
-                    let _ = RunStore::write_failure(&base_dir, run_id, Some(summary_markdown), None);
+                    let _ = RunStore::write_failure(
+                        &base_dir,
+                        run_id,
+                        Some(summary_markdown),
+                        None,
+                        None,
+                    );
+                    tracing::error!(%run_id, error = %error, "background plan run failed");
+                    return;
+                }
+            };
+            let summary_json = match fs::read_to_string(&summary_json_path) {
+                Ok(summary_json) => summary_json,
+                Err(err) => {
+                    let error = anyhow::Error::new(err).context("read run summary json artifact");
+                    let _ = RunStore::write_failure(
+                        &base_dir,
+                        run_id,
+                        Some(summary_markdown),
+                        None,
+                        Some(diff_patch),
+                    );
                     tracing::error!(%run_id, error = %error, "background plan run failed");
                     return;
                 }
@@ -608,6 +639,7 @@ async fn create_run(
                 run_id,
                 RunResultArtifacts {
                     summary_markdown,
+                    summary_json: Some(summary_json),
                     diff_patch,
                 },
             ) {
@@ -620,7 +652,7 @@ async fn create_run(
         })
         .await;
         if let Err(err) = result {
-            let _ = RunStore::write_failure(&supervisor_base_dir, run_id, None, None);
+            let _ = RunStore::write_failure(&supervisor_base_dir, run_id, None, None, None);
             tracing::error!(%run_id, error = %err, "background plan worker failed to join");
         }
     });
@@ -695,6 +727,16 @@ async fn get_run_summary(
     let path =
         RunStore::summary_path(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?;
     read_run_artifact(path, "summary").await
+}
+
+async fn get_run_summary_json(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let path = RunStore::summary_json_path(state.run_base_dir.as_ref(), id)?
+        .ok_or(ApiError::run_not_found())?;
+    let content = read_run_artifact(path, "summary json").await?;
+    Ok(([(header::CONTENT_TYPE, "application/json")], content))
 }
 
 async fn get_run_diff(

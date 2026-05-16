@@ -354,6 +354,8 @@ fn getting_started_shows_minimal_plan_file_shape() {
 fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let api_markdown = std::fs::read_to_string(root.join("docs/api.md")).expect("read api docs");
+    let workflows_html = std::fs::read_to_string(root.join("site/docs/workflows.html"))
+        .expect("read public workflows docs");
     let api_html =
         std::fs::read_to_string(root.join("site/docs/api.html")).expect("read public api docs");
 
@@ -374,6 +376,14 @@ fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
             "{name} should document HTTP access to persisted run artifacts"
         );
         assert!(
+            text.contains("GET /v1/runs/:id/summary.json") && text.contains("summary.json"),
+            "{name} should document machine-readable run summaries"
+        );
+        assert!(
+            text.contains("runner-generated"),
+            "{name} should make clear summary.json is produced by the plan runner"
+        );
+        assert!(
             text.contains("review_command") && text.contains("require_review"),
             "{name} should show how API callers require independent review"
         );
@@ -382,4 +392,9 @@ fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
             "{name} should document persisted run result artifacts"
         );
     }
+
+    assert!(
+        workflows_html.contains("summary.json"),
+        "public workflows docs should document machine-readable run summaries"
+    );
 }

@@ -84,6 +84,7 @@ Default mode is manual.
 A completed run should produce:
 
 - `summary.md`
+- `summary.json`
 - `diff.patch`
 - phase transcripts
 - `events.jsonl`

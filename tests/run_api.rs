@@ -1006,6 +1006,29 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
     assert_eq!(summary_response.status, 200, "{}", summary_response.body);
     assert_eq!(summary_response.body, summary);
 
+    let summary_json_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/summary.json HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        summary_json_response.status, 200,
+        "{}",
+        summary_json_response.body
+    );
+    assert!(
+        summary_json_response
+            .content_type
+            .starts_with("application/json"),
+        "{}",
+        summary_json_response.content_type
+    );
+    let summary_json: serde_json::Value =
+        serde_json::from_str(&summary_json_response.body).expect("summary json response");
+    assert_eq!(summary_json["plan"], "plan.md");
+    assert_eq!(summary_json["result"], "passed");
+    assert_eq!(summary_json["tasks"][0]["title"], "Create first file");
+
     let diff_response = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
     assert_eq!(diff_response.status, 200, "{}", diff_response.body);
     assert_eq!(diff_response.body, diff);
@@ -2139,6 +2162,29 @@ fn run_api_records_failed_execution_when_agent_does_not_complete() {
     let summary = std::fs::read_to_string(&summary_path).expect("read failed run summary artifact");
     assert!(summary.contains("Result: failed"), "{summary}");
     assert!(summary.contains("missing required COMPLETED"), "{summary}");
+
+    let summary_json_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/summary.json HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        summary_json_response.status, 200,
+        "{}",
+        summary_json_response.body
+    );
+    assert!(
+        summary_json_response
+            .content_type
+            .starts_with("application/json"),
+        "{}",
+        summary_json_response.content_type
+    );
+    let summary_json: serde_json::Value = serde_json::from_str(&summary_json_response.body)
+        .expect("failed run summary json response");
+    assert_eq!(summary_json["result"], "failed");
+    assert_eq!(summary_json["failed_task"]["title"], "Create first file");
+    assert_eq!(summary_json["failed_task"]["phase"], "agent completion");
 }
 
 struct ChildGuard {

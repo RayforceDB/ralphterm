@@ -79,6 +79,7 @@ pub struct RunProgressEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunResultArtifacts {
     pub summary_markdown: String,
+    pub summary_json: Option<String>,
     pub diff_patch: String,
 }
 
@@ -180,6 +181,10 @@ impl RunStore {
         Self::artifact_path(base_dir, id, "summary.md")
     }
 
+    pub fn summary_json_path(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<PathBuf>> {
+        Self::artifact_path(base_dir, id, "summary.json")
+    }
+
     pub fn diff_path(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<PathBuf>> {
         Self::artifact_path(base_dir, id, "diff.patch")
     }
@@ -276,6 +281,11 @@ impl RunStore {
         let summary_path = dir.join("summary.md");
         fs::write(&summary_path, artifacts.summary_markdown)
             .with_context(|| format!("write {}", summary_path.display()))?;
+        if let Some(summary_json) = artifacts.summary_json {
+            let summary_json_path = dir.join("summary.json");
+            fs::write(&summary_json_path, summary_json)
+                .with_context(|| format!("write {}", summary_json_path.display()))?;
+        }
         let diff_path = dir.join("diff.patch");
         fs::write(&diff_path, artifacts.diff_patch)
             .with_context(|| format!("write {}", diff_path.display()))?;
@@ -304,6 +314,7 @@ impl RunStore {
         base_dir: impl AsRef<Path>,
         id: Uuid,
         summary_markdown: Option<String>,
+        summary_json: Option<String>,
         diff_patch: Option<String>,
     ) -> Result<Option<CreatedRunRecord>> {
         let _guard = record_mutation_lock()
@@ -323,6 +334,11 @@ impl RunStore {
             summary_markdown.unwrap_or_else(|| default_failure_summary(&record)),
         )
         .with_context(|| format!("write {}", summary_path.display()))?;
+        if let Some(summary_json) = summary_json {
+            let summary_json_path = dir.join("summary.json");
+            fs::write(&summary_json_path, summary_json)
+                .with_context(|| format!("write {}", summary_json_path.display()))?;
+        }
         let diff_path = dir.join("diff.patch");
         fs::write(&diff_path, diff_patch.unwrap_or_default())
             .with_context(|| format!("write {}", diff_path.display()))?;
@@ -701,6 +717,7 @@ mod tests {
             record.id,
             RunResultArtifacts {
                 summary_markdown: "# Summary\n\nDone.\n".into(),
+                summary_json: Some("{\"result\":\"passed\"}\n".into()),
                 diff_patch: "diff --git a/file b/file\n".into(),
             },
         )
@@ -765,6 +782,7 @@ mod tests {
             record.id,
             RunResultArtifacts {
                 summary_markdown: "# Summary\n\nSucceeded artifact.\n".into(),
+                summary_json: None,
                 diff_patch: "diff --git a/file b/file\n".into(),
             },
         )
@@ -819,7 +837,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = RunStore::write_failure(&temp, record.id, None, None)
+        let updated = RunStore::write_failure(&temp, record.id, None, None, None)
             .unwrap()
             .expect("existing run should be updated");
 
@@ -890,6 +908,7 @@ mod tests {
             missing_id,
             RunResultArtifacts {
                 summary_markdown: "# Summary\n".into(),
+                summary_json: None,
                 diff_patch: "diff --git a/missing b/missing\n".into(),
             },
         )
