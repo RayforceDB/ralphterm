@@ -840,6 +840,17 @@ fn run_command_validation_failure_overwrites_artifact_and_links_failed_summary()
         summary.contains(&format!("Validation: {validation_path}")),
         "failed run summary should link validation output artifact:\n{summary}"
     );
+
+    let diff_patch = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-diff.patch"))
+        .expect("read failed run diff patch");
+    assert!(
+        diff_patch.contains("diff --git a/first.txt b/first.txt"),
+        "failed no-commit run should preserve agent-created file diff:\n{diff_patch}"
+    );
+    assert!(
+        diff_patch.contains("+created by fake agent"),
+        "{diff_patch}"
+    );
 }
 
 #[test]

@@ -308,7 +308,14 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         Some(&attempt_progress),
                         true,
                         false,
-                    );
+                    )
+                    .and_then(|()| {
+                        if options.no_commit {
+                            write_run_diff_patch(&plan_slug, true, None, &run_baseline_paths)
+                        } else {
+                            Ok(())
+                        }
+                    });
                     return Err(failed_run_error(err, summary_result));
                 }
             };
@@ -775,7 +782,7 @@ fn failed_run_error(original: anyhow::Error, summary_result: Result<()>) -> anyh
     match summary_result {
         Ok(()) => original,
         Err(summary_err) => anyhow::anyhow!(
-            "{original}; additionally failed to write failed run summary: {summary_err}"
+            "{original}; additionally failed to write failed run artifacts: {summary_err}"
         ),
     }
 }
