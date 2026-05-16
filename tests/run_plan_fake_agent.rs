@@ -2163,6 +2163,68 @@ fn review_command_ignores_agent_transcript_review_pass_noise() {
 }
 
 #[test]
+fn review_prompt_echo_without_explicit_decision_does_not_trigger_retry() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-echo-prompt.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "prompt-echoing reviewer without an explicit decision must fail without retry\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("review result=failed"),
+        "{progress_log}"
+    );
+    assert!(
+        !progress_log.contains("agent_retry"),
+        "prompt REVIEW_FAIL instructions must not make the run retry:\n{progress_log}"
+    );
+    assert!(
+        !repo
+            .path
+            .join(".ralphterm/progress/plan-task-1-attempt-2.transcript")
+            .exists(),
+        "no retry transcript should be created for a reviewer with no explicit decision"
+    );
+}
+
+#[test]
 fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
@@ -2240,6 +2302,204 @@ fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
     assert!(
         progress_log.contains("review result=passed"),
         "{progress_log}"
+    );
+
+    let attempt_1_transcript = repo
+        .path
+        .join(".ralphterm/progress/plan-task-1-attempt-1.transcript");
+    let attempt_1_review_transcript = repo
+        .path
+        .join(".ralphterm/progress/plan-task-1-attempt-1-review.transcript");
+    let attempt_2_transcript = repo
+        .path
+        .join(".ralphterm/progress/plan-task-1-attempt-2.transcript");
+    let attempt_2_review_transcript = repo
+        .path
+        .join(".ralphterm/progress/plan-task-1-attempt-2-review.transcript");
+    for artifact in [
+        &attempt_1_transcript,
+        &attempt_1_review_transcript,
+        &attempt_2_transcript,
+        &attempt_2_review_transcript,
+    ] {
+        assert!(
+            artifact.exists(),
+            "expected per-attempt artifact to exist: {}",
+            artifact.display()
+        );
+    }
+
+    assert!(
+        fs::read_to_string(&attempt_1_review_transcript)
+            .expect("read attempt 1 review transcript")
+            .contains("REVIEW_FAIL"),
+        "first review attempt should be preserved as failed"
+    );
+    assert!(
+        fs::read_to_string(&attempt_2_review_transcript)
+            .expect("read attempt 2 review transcript")
+            .contains("REVIEW_PASS"),
+        "second review attempt should be preserved as passed"
+    );
+    assert!(
+        progress_log
+            .contains("transcript path=.ralphterm/progress/plan-task-1-attempt-2.transcript"),
+        "progress log should expose final accepted transcript path:\n{progress_log}"
+    );
+    assert!(
+        progress_log.contains(
+            "review transcript path=.ralphterm/progress/plan-task-1-attempt-2-review.transcript"
+        ),
+        "progress log should expose final accepted review transcript path:\n{progress_log}"
+    );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read run summary");
+    assert!(
+        summary.contains("Transcript: .ralphterm/progress/plan-task-1-attempt-2.transcript"),
+        "summary should expose final accepted transcript path:\n{summary}"
+    );
+    assert!(
+        summary.contains(
+            "Review transcript: .ralphterm/progress/plan-task-1-attempt-2-review.transcript"
+        ),
+        "summary should expose final accepted review transcript path:\n{summary}"
+    );
+}
+
+#[test]
+fn failed_retry_summary_links_failing_attempt_artifacts() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-after-review-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "run should fail when the retry review also fails\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        repo.path
+            .join(".ralphterm/progress/plan-task-1-attempt-2.transcript")
+            .exists(),
+        "attempt 2 transcript should exist"
+    );
+    assert!(
+        repo.path
+            .join(".ralphterm/progress/plan-task-1-attempt-2-review.transcript")
+            .exists(),
+        "attempt 2 review transcript should exist"
+    );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(
+        summary.contains("Transcript: .ralphterm/progress/plan-task-1-attempt-2.transcript"),
+        "failed summary should link the failing attempt transcript:\n{summary}"
+    );
+    assert!(
+        summary.contains(
+            "Review transcript: .ralphterm/progress/plan-task-1-attempt-2-review.transcript"
+        ),
+        "failed summary should link the failing attempt review transcript:\n{summary}"
+    );
+    assert!(
+        !summary.contains("Transcript: .ralphterm/progress/plan-task-1.transcript"),
+        "failed summary must not link stale attempt-1 transcript:\n{summary}"
+    );
+    assert!(
+        !summary.contains("Review transcript: .ralphterm/progress/plan-task-1-review.transcript"),
+        "failed summary must not link stale attempt-1 review transcript:\n{summary}"
+    );
+}
+
+#[test]
+fn review_fail_line_with_reason_triggers_retry() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-after-review-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-with-reason.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "reviewer REVIEW_FAIL with reason should retry and then pass\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("agent-count.txt")).expect("read agent count"),
+        "2\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("review-count.txt")).expect("read review count"),
+        "2\n"
+    );
+    let retry_prompt =
+        fs::read_to_string(repo.path.join("agent-prompt-2.txt")).expect("read retry prompt");
+    assert!(
+        retry_prompt.contains("REVIEW_FAIL needs a better file"),
+        "retry prompt should include reviewer reason:\n{retry_prompt}"
     );
 }
 
@@ -2322,8 +2582,8 @@ fn review_command_fail_blocks_marking_and_commit() {
     assert!(summary.contains("Result: failed"), "{summary}");
     assert!(summary.contains("Task 1: Create first file"), "{summary}");
     assert!(
-        summary.contains(".ralphterm/progress/plan-task-1-review.transcript"),
-        "{summary}"
+        summary.contains(".ralphterm/progress/plan-task-1-attempt-2-review.transcript"),
+        "failed summary should link the final failed review attempt after the bounded retry:\n{summary}"
     );
 }
 

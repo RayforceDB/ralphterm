@@ -107,7 +107,10 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         output.push_str(&format!("Task {}: {}\n", task.number, task.title));
         let mut review_feedback = None;
         let mut attempt = 1;
+        let final_transcript_display: String;
+        let final_review_transcript_display: String;
         let (_transcript, _validation_output) = loop {
+            let attempt_progress = progress.attempt(attempt);
             if attempt > 1 {
                 append_progress(
                     &progress.log_path,
@@ -137,20 +140,34 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         "agent execution",
                         &format!("{err:#}"),
                         &progress,
+                        Some(&attempt_progress),
                     );
                     return Err(failed_run_error(err, summary_result));
                 }
             };
             let transcript = agent_run.transcript;
-            fs::write(&progress.transcript_path, &transcript).with_context(|| {
-                format!("write transcript {}", progress.transcript_path.display())
+            fs::write(&attempt_progress.transcript_path, &transcript).with_context(|| {
+                format!(
+                    "write transcript {}",
+                    attempt_progress.transcript_path.display()
+                )
             })?;
+            if attempt == 1 {
+                fs::write(&progress.transcript_path, &transcript).with_context(|| {
+                    format!("write transcript {}", progress.transcript_path.display())
+                })?;
+            }
+            let current_transcript_display = if attempt == 1 {
+                progress.transcript_display.clone()
+            } else {
+                attempt_progress.transcript_display.clone()
+            };
             append_progress(
                 &progress.log_path,
                 &format!(
                     "signal={} transcript path={}",
                     completion_signal(&transcript, &prompt),
-                    progress.transcript_display
+                    current_transcript_display
                 ),
             )?;
             output.push_str(&transcript);
@@ -170,6 +187,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     "agent execution",
                     &format!("agent command exited with {}", agent_run.exit_code),
                     &progress,
+                    Some(&attempt_progress),
                 );
                 let err = anyhow::anyhow!(
                     "agent command exited with {} for task {}",
@@ -200,6 +218,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         "validation",
                         &err.to_string(),
                         &progress,
+                        Some(&attempt_progress),
                     );
                     return Err(failed_run_error(err, summary_result));
                 }
@@ -213,16 +232,40 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &transcript,
                     &validation_output,
                     &progress,
+                    &attempt_progress,
                 ) {
                     Ok(review_output) => {
                         output.push_str(&review_output);
                         append_progress(&progress.log_path, "review result=passed")?;
+                        final_transcript_display = current_transcript_display;
+                        final_review_transcript_display = if attempt == 1 {
+                            progress.review_transcript_display.clone()
+                        } else {
+                            attempt_progress.review_transcript_display.clone()
+                        };
                         break (transcript, validation_output);
                     }
                     Err(err) => {
                         append_progress(&progress.log_path, "review result=failed")?;
                         if attempt < MAX_REVIEW_ATTEMPTS {
                             let feedback = err.to_string();
+                            if !err.explicit_fail() {
+                                append_progress(
+                                    &progress.log_path,
+                                    &format!("task_end number={} result=failed", task.number),
+                                )?;
+                                let summary_result = write_failed_run_summary(
+                                    plan_name,
+                                    &plan_slug,
+                                    &executed_tasks,
+                                    task,
+                                    "review",
+                                    &feedback,
+                                    &progress,
+                                    Some(&attempt_progress),
+                                );
+                                return Err(failed_run_error(err.into(), summary_result));
+                            }
                             output.push_str(&format!(
                                 "Review failed on attempt {attempt}; retrying implementation.\n"
                             ));
@@ -242,13 +285,16 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                             "review",
                             &err.to_string(),
                             &progress,
+                            Some(&attempt_progress),
                         );
-                        return Err(failed_run_error(err, summary_result));
+                        return Err(failed_run_error(err.into(), summary_result));
                     }
                 }
             } else {
                 output.push_str("Review: skipped\n");
                 append_progress(&progress.log_path, "review result=skipped")?;
+                final_transcript_display = current_transcript_display;
+                final_review_transcript_display = progress.review_transcript_display.clone();
                 break (transcript, validation_output);
             }
         };
@@ -272,12 +318,12 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         executed_tasks.push(ExecutedTask {
             number: task.number,
             title: task.title.clone(),
-            transcript_display: progress.transcript_display,
+            transcript_display: final_transcript_display,
             validation_output_display: progress.validation_output_display,
             review_transcript_display: options
                 .review_command
                 .as_ref()
-                .map(|_| progress.review_transcript_display),
+                .map(|_| final_review_transcript_display),
         });
     }
 
@@ -361,10 +407,57 @@ struct ExecutedTask {
     review_transcript_display: Option<String>,
 }
 
+struct AttemptProgressPaths {
+    transcript_path: PathBuf,
+    review_transcript_path: PathBuf,
+    legacy_review_transcript_path: Option<PathBuf>,
+    transcript_display: String,
+    review_transcript_display: String,
+}
+
 struct AgentRun {
     transcript: String,
     exit_code: u32,
     timed_out: bool,
+}
+
+#[derive(Debug)]
+struct ReviewCommandError {
+    message: String,
+    explicit_fail: bool,
+}
+
+impl ReviewCommandError {
+    fn new(message: String, explicit_fail: bool) -> Self {
+        Self {
+            message,
+            explicit_fail,
+        }
+    }
+
+    fn explicit_fail(&self) -> bool {
+        self.explicit_fail
+    }
+}
+
+impl std::fmt::Display for ReviewCommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ReviewCommandError {}
+
+impl From<anyhow::Error> for ReviewCommandError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::new(error.to_string(), false)
+    }
+}
+
+impl From<std::io::Error> for ReviewCommandError {
+    fn from(error: std::io::Error) -> Self {
+        Self::new(error.to_string(), false)
+    }
 }
 
 impl ProgressPaths {
@@ -391,6 +484,31 @@ impl ProgressPaths {
             review_transcript_display,
             validation_output_display,
         })
+    }
+
+    fn attempt(&self, attempt: usize) -> AttemptProgressPaths {
+        let transcript_stem = self
+            .transcript_path
+            .file_stem()
+            .expect("progress transcript path has a file stem")
+            .to_string_lossy();
+        let transcript_path = self
+            .transcript_path
+            .with_file_name(format!("{transcript_stem}-attempt-{attempt}.transcript"));
+        let review_transcript_path = self.review_transcript_path.with_file_name(format!(
+            "{transcript_stem}-attempt-{attempt}-review.transcript"
+        ));
+        let transcript_display = transcript_path.to_string_lossy().into_owned();
+        let review_transcript_display = review_transcript_path.to_string_lossy().into_owned();
+        let legacy_review_transcript_path =
+            (attempt == 1).then(|| self.review_transcript_path.clone());
+        AttemptProgressPaths {
+            transcript_path,
+            review_transcript_path,
+            legacy_review_transcript_path,
+            transcript_display,
+            review_transcript_display,
+        }
     }
 }
 
@@ -440,6 +558,7 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
         .with_context(|| format!("write run summary {}", summary_path.display()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_failed_run_summary(
     plan_name: &str,
     plan_slug: &str,
@@ -448,6 +567,7 @@ fn write_failed_run_summary(
     phase: &str,
     reason: &str,
     progress: &ProgressPaths,
+    attempt_progress: Option<&AttemptProgressPaths>,
 ) -> Result<()> {
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
@@ -471,11 +591,28 @@ fn write_failed_run_summary(
         "- Task {}: {} — failed\n  - Phase: {phase}\n  - Reason: {reason}\n",
         task.number, task.title
     ));
-    if progress.transcript_path.exists() {
-        summary.push_str(&format!(
-            "  - Transcript: {}\n",
-            progress.transcript_display
-        ));
+    let transcript_display = attempt_progress
+        .and_then(|attempt| {
+            if attempt.legacy_review_transcript_path.is_some() {
+                progress
+                    .transcript_path
+                    .exists()
+                    .then_some(progress.transcript_display.as_str())
+            } else {
+                attempt
+                    .transcript_path
+                    .exists()
+                    .then_some(attempt.transcript_display.as_str())
+            }
+        })
+        .or_else(|| {
+            progress
+                .transcript_path
+                .exists()
+                .then_some(progress.transcript_display.as_str())
+        });
+    if let Some(transcript_display) = transcript_display {
+        summary.push_str(&format!("  - Transcript: {transcript_display}\n"));
     }
     if progress.validation_output_path.exists() {
         summary.push_str(&format!(
@@ -483,10 +620,28 @@ fn write_failed_run_summary(
             progress.validation_output_display
         ));
     }
-    if progress.review_transcript_path.exists() {
+    let review_transcript_display = attempt_progress
+        .and_then(|attempt| {
+            if let Some(legacy_review_transcript_path) = &attempt.legacy_review_transcript_path {
+                legacy_review_transcript_path
+                    .exists()
+                    .then_some(progress.review_transcript_display.as_str())
+            } else {
+                attempt
+                    .review_transcript_path
+                    .exists()
+                    .then_some(attempt.review_transcript_display.as_str())
+            }
+        })
+        .or_else(|| {
+            progress
+                .review_transcript_path
+                .exists()
+                .then_some(progress.review_transcript_display.as_str())
+        });
+    if let Some(review_transcript_display) = review_transcript_display {
         summary.push_str(&format!(
-            "  - Review transcript: {}\n",
-            progress.review_transcript_display
+            "  - Review transcript: {review_transcript_display}\n"
         ));
     }
     fs::write(&summary_path, summary)
@@ -969,7 +1124,8 @@ fn run_review_command(
     agent_transcript: &str,
     validation_output: &str,
     progress: &ProgressPaths,
-) -> Result<String> {
+    attempt_progress: &AttemptProgressPaths,
+) -> std::result::Result<String, ReviewCommandError> {
     let prompt = build_review_prompt(
         plan_name,
         task,
@@ -979,18 +1135,32 @@ fn run_review_command(
     );
     let review_run = run_agent_command(review_command, &prompt)
         .with_context(|| format!("run review for task {}", task.number))?;
-    fs::write(&progress.review_transcript_path, &review_run.transcript).with_context(|| {
+    fs::write(
+        &attempt_progress.review_transcript_path,
+        &review_run.transcript,
+    )
+    .with_context(|| {
         format!(
             "write review transcript {}",
-            progress.review_transcript_path.display()
+            attempt_progress.review_transcript_path.display()
         )
     })?;
+    if let Some(legacy_review_transcript_path) = &attempt_progress.legacy_review_transcript_path {
+        fs::write(legacy_review_transcript_path, &review_run.transcript).with_context(|| {
+            format!(
+                "write review transcript {}",
+                legacy_review_transcript_path.display()
+            )
+        })?;
+    }
+    let review_transcript_display = if attempt_progress.legacy_review_transcript_path.is_some() {
+        &progress.review_transcript_display
+    } else {
+        &attempt_progress.review_transcript_display
+    };
     append_progress(
         &progress.log_path,
-        &format!(
-            "review transcript path={}",
-            progress.review_transcript_display
-        ),
+        &format!("review transcript path={review_transcript_display}"),
     )?;
 
     let mut output = review_run.transcript;
@@ -998,18 +1168,31 @@ fn run_review_command(
         output.push('\n');
     }
     if review_run.exit_code != 0 {
-        bail!(
-            "review command exited with {} for task {}\n{}",
-            review_run.exit_code,
-            task.number,
-            output
-        );
+        return Err(ReviewCommandError::new(
+            format!(
+                "review command exited with {} for task {}\n{}",
+                review_run.exit_code, task.number, output
+            ),
+            false,
+        ));
     }
-    if !review_output_passed(&output, &prompt) {
-        bail!("review failed for task {}\n{}", task.number, output);
+    match review_output_decision(&output, &prompt) {
+        Some(true) => {
+            output.push_str("Review passed\n");
+            Ok(output)
+        }
+        Some(false) => Err(ReviewCommandError::new(
+            format!("review failed for task {}\n{}", task.number, output),
+            true,
+        )),
+        None => Err(ReviewCommandError::new(
+            format!(
+                "review did not emit REVIEW_PASS or REVIEW_FAIL for task {}\n{}",
+                task.number, output
+            ),
+            false,
+        )),
     }
-    output.push_str("Review passed\n");
-    Ok(output)
 }
 
 fn build_review_prompt(
@@ -1035,7 +1218,7 @@ fn review_instruction() -> &'static str {
     "Print REVIEW_PASS only if the task matches the spec and the validation output supports accepting it. Print REVIEW_FAIL with the reason otherwise."
 }
 
-fn review_output_passed(transcript: &str, _prompt: &str) -> bool {
+fn review_output_decision(transcript: &str, _prompt: &str) -> Option<bool> {
     let normalized = transcript.replace("\r\n", "\n").replace('\r', "\n");
     let reviewer_output = normalized
         .rfind(review_instruction())
@@ -1044,13 +1227,20 @@ fn review_output_passed(transcript: &str, _prompt: &str) -> bool {
 
     reviewer_output
         .lines()
-        .filter_map(|line| match line.trim() {
-            "REVIEW_PASS" => Some(true),
-            "REVIEW_FAIL" => Some(false),
-            _ => None,
+        .filter_map(|line| {
+            let line = line.trim();
+            if line == "REVIEW_PASS" {
+                Some(true)
+            } else if line == "REVIEW_FAIL"
+                || line.starts_with("REVIEW_FAIL ")
+                || line.starts_with("REVIEW_FAIL:")
+            {
+                Some(false)
+            } else {
+                None
+            }
         })
         .next_back()
-        .unwrap_or(false)
 }
 
 fn git_state_for_review() -> String {
