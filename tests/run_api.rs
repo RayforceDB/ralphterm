@@ -507,6 +507,53 @@ fn run_api_rejects_workspace_plan_paths_that_escape_source_repo_without_creating
 }
 
 #[test]
+fn run_api_workspace_id_without_agent_command_creates_planning_run_without_workspace_path() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+    std::fs::write(repo.path.join("plan.md"), "# Plan\n").expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "workspace_id": "api-planning-only",
+        "plan_path": "plan.md"
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    assert_eq!(created_json["phase"], "planning");
+    assert_eq!(created_json["status"], "created");
+    assert_eq!(created_json["plan_path"], "plan.md");
+    assert!(
+        created_json.get("workspace_path").is_none(),
+        "{created_json}"
+    );
+    assert!(!repo
+        .path
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("api-planning-only")
+        .exists());
+}
+
+#[test]
 fn run_api_workspace_id_executes_plan_in_isolated_workspace_and_persists_result_artifacts() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
@@ -727,6 +774,52 @@ fn run_api_rejects_required_review_without_review_command_without_creating_run()
     assert_eq!(listed.status, 200, "{}", listed.body);
     let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
     assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+}
+
+#[test]
+fn run_api_rejects_workspace_required_review_without_review_command_without_side_effects() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+    std::fs::write(repo.path.join("plan.md"), "# Plan\n").expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "workspace_id": "api-invalid-review",
+        "plan_path": "plan.md",
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "require_review": true,
+        "no_commit": true
+    })
+    .to_string();
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+    assert!(!repo
+        .path
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("api-invalid-review")
+        .exists());
 }
 
 #[test]

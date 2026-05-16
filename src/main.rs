@@ -2,7 +2,7 @@ use std::{
     fs,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use anyhow::{bail, Context};
@@ -323,6 +323,11 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true}))
 }
 
+fn api_plan_execution_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 async fn dashboard_index() -> Html<&'static str> {
     Html(include_str!("../dashboard/index.html"))
 }
@@ -355,6 +360,22 @@ async fn create_run(
             "plan_path is required when agent_command is set",
         ));
     }
+    if req.require_review.unwrap_or(false) && req.review_command.is_none() {
+        return Err(ApiError::bad_request(
+            "review_command is required when require_review is true",
+        ));
+    }
+    if let (Some(agent_command), Some(review_command)) =
+        (req.agent_command.as_deref(), req.review_command.as_deref())
+    {
+        let commands_equivalent = agent_commands_equivalent(agent_command, review_command)
+            .map_err(|err| ApiError::bad_request(err.to_string()))?;
+        if commands_equivalent {
+            return Err(ApiError::bad_request(
+                "agent_command and review_command must be different",
+            ));
+        }
+    }
     let mut workspace_path = None;
     let mut workspace_execution_dir = None;
     if let Some(workspace_id) = req.workspace_id.as_deref() {
@@ -379,37 +400,17 @@ async fn create_run(
         validate_workspace_plan_path(cwd_relative, &plan)
             .map_err(|err| ApiError::bad_request(err.to_string()))?;
 
-        let workspace = if req.agent_command.is_some() {
+        if req.agent_command.is_some() {
             let candidate = manager
                 .workspace(workspace_id)
                 .map_err(|err| ApiError::bad_request(err.to_string()))?;
-            if candidate.path.exists() {
+            let workspace = if candidate.path.exists() {
                 candidate
             } else {
                 manager.create(workspace_id)?
-            }
-        } else {
-            manager
-                .workspace(workspace_id)
-                .map_err(|err| ApiError::bad_request(err.to_string()))?
-        };
-        workspace_execution_dir = Some(workspace.path.join(cwd_relative));
-        workspace_path = Some(workspace.path.to_string_lossy().to_string());
-    }
-    if req.require_review.unwrap_or(false) && req.review_command.is_none() {
-        return Err(ApiError::bad_request(
-            "review_command is required when require_review is true",
-        ));
-    }
-    if let (Some(agent_command), Some(review_command)) =
-        (req.agent_command.as_deref(), req.review_command.as_deref())
-    {
-        let commands_equivalent = agent_commands_equivalent(agent_command, review_command)
-            .map_err(|err| ApiError::bad_request(err.to_string()))?;
-        if commands_equivalent {
-            return Err(ApiError::bad_request(
-                "agent_command and review_command must be different",
-            ));
+            };
+            workspace_execution_dir = Some(workspace.path.join(cwd_relative));
+            workspace_path = Some(workspace.path.to_string_lossy().to_string());
         }
     }
     let record = RunStore::create(
@@ -443,6 +444,10 @@ async fn create_run(
     tokio::spawn(async move {
         let supervisor_base_dir = base_dir;
         let result = tokio::task::spawn_blocking(move || {
+            let _execution_guard = api_plan_execution_lock().lock().unwrap_or_else(|poisoned| {
+                tracing::error!("API plan execution lock was poisoned; continuing with inner lock");
+                poisoned.into_inner()
+            });
             let base_dir = executor_base_dir;
             let progress_dir = execution_dir.join(".ralphterm").join("progress");
             let summary_path = progress_dir.join(format!("{slug}-summary.md"));
