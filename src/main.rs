@@ -275,6 +275,20 @@ async fn create_run(
             "plan_path is required when agent_command is set",
         ));
     }
+    if req.require_review.unwrap_or(false) && req.review_command.is_none() {
+        return Err(ApiError::bad_request(
+            "review_command is required when require_review is true",
+        ));
+    }
+    if req.agent_command.as_ref().is_some_and(|agent_command| {
+        req.review_command
+            .as_ref()
+            .is_some_and(|review_command| agent_command == review_command)
+    }) {
+        return Err(ApiError::bad_request(
+            "agent_command and review_command must be different",
+        ));
+    }
     let record = RunStore::create(
         state.run_base_dir.as_ref(),
         RunRecord {

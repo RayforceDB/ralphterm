@@ -244,6 +244,69 @@ fn run_api_rejects_agent_command_without_plan_path_without_creating_run() {
 }
 
 #[test]
+fn run_api_rejects_required_review_without_review_command_without_creating_run() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": "docs/plan.md",
+        "require_review": true
+    })
+    .to_string();
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+}
+
+#[test]
+fn run_api_rejects_identical_agent_and_review_commands_without_creating_run() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let command = fixture_path("fake-agent.sh").to_string_lossy().to_string();
+    let body = serde_json::json!({
+        "plan_path": "docs/plan.md",
+        "agent_command": command,
+        "review_command": command,
+        "no_commit": true
+    })
+    .to_string();
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+}
+
+#[test]
 fn run_api_no_pending_plan_succeeds_and_persists_summary() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
