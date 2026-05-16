@@ -198,6 +198,77 @@ fn run_api_creates_lists_reads_events_and_cancels_run_records() {
 }
 
 #[test]
+fn cancelling_run_blocks_later_tasks_from_starting() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+
+### Task 1: Create first file
+- [ ] Write first.txt
+
+### Task 2: Create second file
+- [ ] Write second.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("slow-two-task-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+
+    wait_for_file(repo.path.join("first.txt"));
+    let cancelled = request_json(
+        port,
+        &format!("POST /v1/runs/{id}/cancel HTTP/1.1"),
+        Some("{}"),
+    );
+    assert_eq!(cancelled.status, 202, "{}", cancelled.body);
+
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "failed").then(|| json.clone())
+    });
+    thread::sleep(Duration::from_millis(1200));
+
+    assert!(repo.path.join("first.txt").exists());
+    assert!(
+        !repo.path.join("second.txt").exists(),
+        "cancelled run should not start task 2"
+    );
+}
+
+#[test]
 fn run_api_returns_running_record_before_background_plan_finishes() {
     let _guard = server_test_lock();
     let repo = TempDir::new();

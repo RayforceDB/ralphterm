@@ -349,7 +349,7 @@ impl RunStore {
             return Ok(None);
         };
         if record.status != RunStatus::Running {
-            return Ok(Some(()));
+            return Ok(None);
         }
         append_event(
             base_dir.as_ref(),
@@ -505,7 +505,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(appended, Some(()));
+        assert_eq!(appended, None);
 
         let events = RunStore::events(&temp, record.id).unwrap().unwrap();
         let event_types: Vec<_> = events

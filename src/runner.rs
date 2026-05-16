@@ -160,6 +160,7 @@ impl RetryCleanupSnapshot {
 }
 
 pub type RunEventSink = Arc<dyn Fn(PlanRunEvent) -> Result<()> + Send + Sync>;
+pub type RunCancellationCheck = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct PlanRunEvent {
@@ -204,6 +205,7 @@ pub struct RunOptions {
     pub no_commit: bool,
     pub dry_run: bool,
     pub event_sink: Option<RunEventSink>,
+    pub cancellation_check: Option<RunCancellationCheck>,
 }
 
 pub fn run_plan(options: RunOptions) -> Result<String> {
@@ -335,6 +337,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 resume_context.as_ref(),
             );
             let timeout = agent_timeout();
+            check_for_cancellation(&options)?;
             let agent_run = match run_agent_command_with_timeout(&agent_command, &prompt, timeout)
                 .with_context(|| format!("run agent for task {}", task.number))
             {
@@ -1972,6 +1975,13 @@ fn append_git_output(state: &mut String, label: &str, args: &[&str]) {
             state.push_str(&format!("{label} unavailable: {err}\n"));
         }
     }
+}
+
+fn check_for_cancellation(options: &RunOptions) -> Result<()> {
+    if let Some(check) = &options.cancellation_check {
+        check()?;
+    }
+    Ok(())
 }
 
 fn run_agent_command_with_timeout(

@@ -241,6 +241,7 @@ async fn main() -> anyhow::Result<()> {
                 no_commit,
                 dry_run,
                 event_sink: None,
+                cancellation_check: None,
             })?;
             print!("{output}");
             Ok(())
@@ -498,7 +499,7 @@ async fn create_run(
             };
             let event_base_dir = base_dir.clone();
             let event_sink = Arc::new(move |event: PlanRunEvent| {
-                RunStore::append_progress_event(
+                let appended = RunStore::append_progress_event(
                     &event_base_dir,
                     run_id,
                     RunProgressEvent {
@@ -510,7 +511,18 @@ async fn create_run(
                         message: event.message,
                     },
                 )?;
+                if appended.is_none() {
+                    anyhow::bail!("run was cancelled");
+                }
                 Ok(())
+            });
+            let cancellation_base_dir = base_dir.clone();
+            let cancellation_check = Arc::new(move || {
+                match RunStore::get(&cancellation_base_dir, run_id)? {
+                    Some(record) if record.status == RunStatus::Running => Ok(()),
+                    Some(_) => anyhow::bail!("run was cancelled"),
+                    None => anyhow::bail!("run disappeared"),
+                }
             });
             let run_output = match run_plan(RunOptions {
                 plan_path,
@@ -521,6 +533,7 @@ async fn create_run(
                 no_commit,
                 dry_run,
                 event_sink: Some(event_sink),
+                cancellation_check: Some(cancellation_check),
             }) {
                 Ok(output) => output,
                 Err(err) => {
