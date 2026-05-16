@@ -126,11 +126,19 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 &progress.log_path,
                 &format!("task_end number={} result=failed", task.number),
             )?;
-            bail!(
+            write_failed_run_summary(
+                plan_name,
+                &plan_slug,
+                task,
+                "agent execution",
+                &format!("agent command exited with {}", agent_run.exit_code),
+                &progress,
+            )?;
+            return Err(anyhow::anyhow!(
                 "agent command exited with {} for task {}",
                 agent_run.exit_code,
                 task.number
-            );
+            ));
         }
         if let Some(review_command) = options.review_command.as_deref() {
             match run_review_command(
@@ -150,6 +158,14 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     append_progress(
                         &progress.log_path,
                         &format!("task_end number={} result=failed", task.number),
+                    )?;
+                    write_failed_run_summary(
+                        plan_name,
+                        &plan_slug,
+                        task,
+                        "review",
+                        &err.to_string(),
+                        &progress,
                     )?;
                     return Err(err);
                 }
@@ -173,6 +189,14 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &progress.log_path,
                     &format!("task_end number={} result=failed", task.number),
                 )?;
+                write_failed_run_summary(
+                    plan_name,
+                    &plan_slug,
+                    task,
+                    "validation",
+                    &err.to_string(),
+                    &progress,
+                )?;
                 return Err(err);
             }
         };
@@ -184,10 +208,16 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &progress.log_path,
                     &format!("task_end number={} result=failed", task.number),
                 )?;
-                bail!(
-                    "validation changed the reviewed worktree after review for task {}",
-                    task.number
-                );
+                let reason = "validation changed the reviewed worktree after review";
+                write_failed_run_summary(
+                    plan_name,
+                    &plan_slug,
+                    task,
+                    "reviewed-worktree-change detection",
+                    reason,
+                    &progress,
+                )?;
+                return Err(anyhow::anyhow!("{reason} for task {}", task.number));
             }
         }
         append_progress(&progress.log_path, "validation result=passed")?;
@@ -368,6 +398,37 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
     }
     fs::write(&summary_path, summary)
         .with_context(|| format!("write run summary {}", summary_path.display()))
+}
+
+fn write_failed_run_summary(
+    plan_name: &str,
+    plan_slug: &str,
+    task: &Task,
+    phase: &str,
+    reason: &str,
+    progress: &ProgressPaths,
+) -> Result<()> {
+    let progress_dir = PathBuf::from(".ralphterm").join("progress");
+    fs::create_dir_all(&progress_dir).context("create progress directory")?;
+    let summary_path = run_summary_path(plan_slug);
+    let mut summary = format!(
+        "# Run Summary: {plan_name}\n\nResult: failed\n\n- Task {}: {} — failed\n  - Phase: {phase}\n  - Reason: {reason}\n",
+        task.number, task.title
+    );
+    if progress.transcript_path.exists() {
+        summary.push_str(&format!(
+            "  - Transcript: {}\n",
+            progress.transcript_display
+        ));
+    }
+    if progress.review_transcript_path.exists() {
+        summary.push_str(&format!(
+            "  - Review transcript: {}\n",
+            progress.review_transcript_display
+        ));
+    }
+    fs::write(&summary_path, summary)
+        .with_context(|| format!("write failed run summary {}", summary_path.display()))
 }
 
 fn write_run_diff_patch(

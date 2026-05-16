@@ -1268,12 +1268,14 @@ fn validation_failure_is_logged_and_does_not_complete_task() {
     );
     assert!(progress_log.contains("task_end number=1"), "{progress_log}");
     assert!(progress_log.contains("result=failed"), "{progress_log}");
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Task 1: Create first file"), "{summary}");
+    assert!(summary.contains("Phase: validation"), "{summary}");
     assert!(
-        !repo
-            .path
-            .join(".ralphterm/progress/plan-summary.md")
-            .exists(),
-        "failed run should not write passed summary"
+        summary.contains(".ralphterm/progress/plan-task-1.transcript"),
+        "{summary}"
     );
 }
 
@@ -1336,6 +1338,12 @@ fn agent_command_failure_writes_transcript_and_failed_task_end() {
         transcript.contains("agent failure output before exit"),
         "{transcript}"
     );
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Task 1: Create first file"), "{summary}");
+    assert!(summary.contains("Phase: agent execution"), "{summary}");
+    assert!(summary.contains(transcript_path), "{summary}");
 }
 
 #[test]
@@ -1945,6 +1953,15 @@ fn review_command_fail_blocks_marking_and_commit() {
         progress_log.contains("task_end number=1 result=failed"),
         "{progress_log}"
     );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Task 1: Create first file"), "{summary}");
+    assert!(
+        summary.contains(".ralphterm/progress/plan-task-1-review.transcript"),
+        "{summary}"
+    );
 }
 
 #[test]
@@ -1994,9 +2011,17 @@ fn failed_rerun_removes_pre_existing_passed_summary() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let summary = fs::read_to_string(&summary_path).expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Task 1: Create first file"), "{summary}");
+    assert!(summary.contains("Phase: validation"), "{summary}");
     assert!(
-        !summary_path.exists(),
-        "failed rerun should remove stale passed summary"
+        summary.contains(".ralphterm/progress/plan-task-1.transcript"),
+        "{summary}"
+    );
+    assert!(
+        !summary.contains("stale passed run"),
+        "failed summary should replace stale passed summary: {summary}"
     );
 }
 
