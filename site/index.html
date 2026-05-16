@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RalphTerm - Autonomous plan runs in real terminals</title>
-  <meta name="description" content="Write a markdown plan and let RalphTerm run Claude Code or Codex through real terminal sessions, validate each task, commit progress, and keep transcripts.">
+  <title>RalphTerm - Plan runs with independent review</title>
+  <meta name="description" content="Run a markdown plan through real Claude Code or Codex terminals, validate each task, require independent review, commit progress, and keep transcripts.">
   <meta name="keywords" content="RalphTerm, Claude Code, Codex, AI coding agents, plan runner, terminal automation, CLI orchestration, autonomous coding, PTY">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://ralphterm.rayforcedb.com/">
 
   <meta property="og:type" content="website">
-  <meta property="og:title" content="RalphTerm - Autonomous plan runs in real terminals">
-  <meta property="og:description" content="Write a plan, run real Claude Code or Codex terminal agents task by task, validate results, commit progress, and keep transcripts.">
+  <meta property="og:title" content="RalphTerm - Plan runs with independent review">
+  <meta property="og:description" content="Run a plan through real Claude Code or Codex terminal agents, validate the task, require an independent reviewer, and only then commit progress.">
   <meta property="og:url" content="https://ralphterm.rayforcedb.com/">
   <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png">
   <meta property="og:site_name" content="RalphTerm">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="RalphTerm - Autonomous plan runs in real terminals">
-  <meta name="twitter:description" content="Run markdown plans through real terminal agents instead of brittle one-shot prompt calls.">
+  <meta name="twitter:title" content="RalphTerm - Plan runs with independent review">
+  <meta name="twitter:description" content="Run markdown plans through real terminal agents, then require independent review before progress counts.">
   <meta name="twitter:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png">
 
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
@@ -31,7 +31,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "RalphTerm",
-    "description": "Autonomous plan runner for AI coding agents. It runs official CLIs in real terminal sessions, validates task output, commits progress, and keeps transcripts.",
+    "description": "Autonomous plan runner for AI coding agents. It runs official CLIs in real terminal sessions, validates task output, requires independent review when configured, commits progress, and keeps transcripts.",
     "url": "https://ralphterm.rayforcedb.com",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS",
@@ -59,13 +59,13 @@
 
   <main>
     <section class="hero">
-      <p class="badge">For plan-driven Claude Code and Codex runs</p>
-      <h1>Write a plan. Let real terminal agents execute it.</h1>
+      <p class="badge">For reviewed Claude Code and Codex plan runs</p>
+      <h1>Write a plan. Let real terminal agents execute it, then review it.</h1>
       <p class="lead">
-        RalphTerm runs markdown plans through official AI CLIs in real PTYs. It sends each task as terminal input, waits for completion, runs validation commands, marks finished checkboxes, commits progress, and stores transcripts.
+        RalphTerm runs the maintainer loop directly: implementation agent, validation commands, independent reviewer, then accepted progress. It runs the official CLIs in real PTYs, sends each task as terminal input, waits for completion, and keeps the transcript.
       </p>
       <p class="why-line">
-        Use it for autonomous engineering loops that need real interaction without <code>claude -p</code>, <code>--print</code>, or brittle one-shot prompt calls.
+        Use it for autonomous engineering loops that need real interaction without <code>claude -p</code>, <code>--print</code>, or brittle one-shot prompt calls. Unchecked agent progress is not good enough.
       </p>
       <div class="hero-actions">
         <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
@@ -104,7 +104,7 @@ $ ralphterm run docs/plans/example.md --agent claude \
         <h2>A plan runner for autonomous coding work.</h2>
       </div>
       <p>
-        RalphTerm does not replace Claude Code or Codex. It runs them the way a human runs them: inside a terminal. The product layer is the plan loop around that terminal: task prompts, validation, checked-off progress, commits, and transcripts.
+        RalphTerm does not replace Claude Code or Codex. It runs them the way a human runs them: inside a terminal. The product layer is the verified plan loop around that terminal: task prompts, validation, independent review, checked-off progress, commits, and transcripts.
       </p>
     </section>
 

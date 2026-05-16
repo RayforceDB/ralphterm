@@ -92,8 +92,23 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
         .expect("read workflows page");
 
     assert!(
-        site_index.contains("Write a plan. Let real terminal agents execute it."),
-        "landing page should lead with the concrete plan-runner product promise"
+        site_index.contains("Write a plan. Let real terminal agents execute it, then review it."),
+        "landing page should lead with plan execution plus cross-review verification"
+    );
+    let product_loop = "RalphTerm runs the maintainer loop directly: implementation agent, validation commands, independent reviewer, then accepted progress.";
+    assert!(
+        site_index.contains(product_loop),
+        "landing page should state the verified plan-runner loop before PTY plumbing"
+    );
+    let product_loop_index = site_index
+        .find(product_loop)
+        .expect("landing page should contain verified plan-runner loop");
+    let pty_index = site_index
+        .find("real PTYs")
+        .expect("landing page should still mention real PTY execution");
+    assert!(
+        product_loop_index < pty_index,
+        "landing page should explain the verified plan-runner loop before low-level PTY plumbing"
     );
     assert!(
         site_index.contains("ralphterm run docs/plans/example.md --dry-run"),
