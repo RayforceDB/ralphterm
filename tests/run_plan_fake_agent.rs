@@ -1347,6 +1347,120 @@ fn agent_command_failure_writes_transcript_and_failed_task_end() {
 }
 
 #[test]
+fn missing_agent_command_writes_failed_summary() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            "definitely-not-a-real-agent-command-for-failed-summary",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Task 1: Create first file"), "{summary}");
+    assert!(summary.contains("Phase: agent execution"), "{summary}");
+    assert!(
+        summary.contains("spawn agent command")
+            || summary.contains("No such file")
+            || summary.contains("not found"),
+        "{summary}"
+    );
+}
+
+#[test]
+fn failed_summary_includes_prior_passed_tasks_in_same_run() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt && test ! -f second.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+
+### Task 2: Create second file
+- [ ] Write second.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(
+        summary.contains("- Task 1: Create first file — passed"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains(".ralphterm/progress/plan-task-1.transcript"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("- Task 2: Create second file — failed"),
+        "{summary}"
+    );
+    assert!(summary.contains("Phase: validation"), "{summary}");
+    assert!(
+        summary.contains(".ralphterm/progress/plan-task-2.transcript"),
+        "{summary}"
+    );
+}
+
+#[test]
 fn review_command_pass_allows_task_acceptance_after_validation() {
     let repo = TempRepo::new();
     repo.init_git();

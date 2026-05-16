@@ -104,8 +104,27 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         };
         output.push_str(&format!("Task {}: {}\n", task.number, task.title));
         let prompt = build_task_prompt(plan_name, task, &plan.validation_commands);
-        let agent_run = run_agent_command(&agent_command, &prompt)
-            .with_context(|| format!("run agent for task {}", task.number))?;
+        let agent_run = match run_agent_command(&agent_command, &prompt)
+            .with_context(|| format!("run agent for task {}", task.number))
+        {
+            Ok(agent_run) => agent_run,
+            Err(err) => {
+                append_progress(
+                    &progress.log_path,
+                    &format!("task_end number={} result=failed", task.number),
+                )?;
+                let summary_result = write_failed_run_summary(
+                    plan_name,
+                    &plan_slug,
+                    &executed_tasks,
+                    task,
+                    "agent execution",
+                    &format!("{err:#}"),
+                    &progress,
+                );
+                return Err(failed_run_error(err, summary_result));
+            }
+        };
         let transcript = agent_run.transcript;
         fs::write(&progress.transcript_path, &transcript)
             .with_context(|| format!("write transcript {}", progress.transcript_path.display()))?;
@@ -126,19 +145,21 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 &progress.log_path,
                 &format!("task_end number={} result=failed", task.number),
             )?;
-            write_failed_run_summary(
+            let summary_result = write_failed_run_summary(
                 plan_name,
                 &plan_slug,
+                &executed_tasks,
                 task,
                 "agent execution",
                 &format!("agent command exited with {}", agent_run.exit_code),
                 &progress,
-            )?;
-            return Err(anyhow::anyhow!(
+            );
+            let err = anyhow::anyhow!(
                 "agent command exited with {} for task {}",
                 agent_run.exit_code,
                 task.number
-            ));
+            );
+            return Err(failed_run_error(err, summary_result));
         }
         if let Some(review_command) = options.review_command.as_deref() {
             match run_review_command(
@@ -159,15 +180,16 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &progress.log_path,
                         &format!("task_end number={} result=failed", task.number),
                     )?;
-                    write_failed_run_summary(
+                    let summary_result = write_failed_run_summary(
                         plan_name,
                         &plan_slug,
+                        &executed_tasks,
                         task,
                         "review",
                         &err.to_string(),
                         &progress,
-                    )?;
-                    return Err(err);
+                    );
+                    return Err(failed_run_error(err, summary_result));
                 }
             }
         } else {
@@ -189,15 +211,16 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &progress.log_path,
                     &format!("task_end number={} result=failed", task.number),
                 )?;
-                write_failed_run_summary(
+                let summary_result = write_failed_run_summary(
                     plan_name,
                     &plan_slug,
+                    &executed_tasks,
                     task,
                     "validation",
                     &err.to_string(),
                     &progress,
-                )?;
-                return Err(err);
+                );
+                return Err(failed_run_error(err, summary_result));
             }
         };
         if let Some(reviewed_git_state) = reviewed_git_state {
@@ -209,15 +232,17 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &format!("task_end number={} result=failed", task.number),
                 )?;
                 let reason = "validation changed the reviewed worktree after review";
-                write_failed_run_summary(
+                let summary_result = write_failed_run_summary(
                     plan_name,
                     &plan_slug,
+                    &executed_tasks,
                     task,
                     "reviewed-worktree-change detection",
                     reason,
                     &progress,
-                )?;
-                return Err(anyhow::anyhow!("{reason} for task {}", task.number));
+                );
+                let err = anyhow::anyhow!("{reason} for task {}", task.number);
+                return Err(failed_run_error(err, summary_result));
             }
         }
         append_progress(&progress.log_path, "validation result=passed")?;
@@ -403,6 +428,7 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
 fn write_failed_run_summary(
     plan_name: &str,
     plan_slug: &str,
+    passed_tasks: &[ExecutedTask],
     task: &Task,
     phase: &str,
     reason: &str,
@@ -411,10 +437,22 @@ fn write_failed_run_summary(
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
     let summary_path = run_summary_path(plan_slug);
-    let mut summary = format!(
-        "# Run Summary: {plan_name}\n\nResult: failed\n\n- Task {}: {} — failed\n  - Phase: {phase}\n  - Reason: {reason}\n",
+    let mut summary = format!("# Run Summary: {plan_name}\n\nResult: failed\n\n");
+    for passed_task in passed_tasks {
+        summary.push_str(&format!(
+            "- Task {}: {} — passed\n  - Transcript: {}\n",
+            passed_task.number, passed_task.title, passed_task.transcript_display
+        ));
+        if let Some(review_transcript_display) = &passed_task.review_transcript_display {
+            summary.push_str(&format!(
+                "  - Review transcript: {review_transcript_display}\n"
+            ));
+        }
+    }
+    summary.push_str(&format!(
+        "- Task {}: {} — failed\n  - Phase: {phase}\n  - Reason: {reason}\n",
         task.number, task.title
-    );
+    ));
     if progress.transcript_path.exists() {
         summary.push_str(&format!(
             "  - Transcript: {}\n",
@@ -429,6 +467,15 @@ fn write_failed_run_summary(
     }
     fs::write(&summary_path, summary)
         .with_context(|| format!("write failed run summary {}", summary_path.display()))
+}
+
+fn failed_run_error(original: anyhow::Error, summary_result: Result<()>) -> anyhow::Error {
+    match summary_result {
+        Ok(()) => original,
+        Err(summary_err) => anyhow::anyhow!(
+            "{original}; additionally failed to write failed run summary: {summary_err}"
+        ),
+    }
 }
 
 fn write_run_diff_patch(
