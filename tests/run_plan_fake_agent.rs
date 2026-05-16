@@ -2766,6 +2766,68 @@ fn resume_is_not_logged_when_latest_task_end_is_successful() {
 }
 
 #[test]
+fn failed_task_resume_prompt_links_latest_failed_attempt_transcript() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let progress_dir = repo.path.join(".ralphterm/progress");
+    fs::create_dir_all(&progress_dir).expect("create progress dir");
+    fs::write(
+        progress_dir.join("plan.log"),
+        "timestamp=1 task_start number=1 title=Create first file\n\
+         timestamp=2 signal=COMPLETED transcript path=.ralphterm/progress/plan-task-1-attempt-1.transcript\n\
+         timestamp=3 agent_retry attempt=2 reason=review_failed\n\
+         timestamp=4 signal=COMPLETED transcript path=.ralphterm/progress/plan-task-1-attempt-2.transcript\n\
+         timestamp=5 task_end number=1 result=failed\n",
+    )
+    .expect("seed progress log");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("rerun ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm retry failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let retry_prompt = fs::read_to_string(repo.path.join("fake-agent-last-prompt.txt"))
+        .expect("read retry prompt");
+    assert!(
+        retry_prompt.contains(".ralphterm/progress/plan-task-1-attempt-2.transcript"),
+        "resume prompt should link latest failed attempt transcript:\n{retry_prompt}"
+    );
+    assert!(
+        !retry_prompt.contains(".ralphterm/progress/plan-task-1-attempt-1.transcript"),
+        "resume prompt should not link stale attempt transcript:\n{retry_prompt}"
+    );
+}
+
+#[test]
 fn failed_task_resume_is_logged_before_retry_start_and_completes_task() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
@@ -2835,6 +2897,21 @@ fn failed_task_resume_is_logged_before_retry_start_and_completes_task() {
 
     let plan = fs::read_to_string(&plan_path).expect("read completed plan");
     assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let retry_prompt = fs::read_to_string(repo.path.join("fake-agent-last-prompt.txt"))
+        .expect("read retry agent prompt");
+    assert!(
+        retry_prompt.contains("Previous run for this task failed"),
+        "retry prompt should include resume context:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains(".ralphterm/progress/plan-task-1-attempt-1.transcript"),
+        "retry prompt should point at the previous transcript:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains(".ralphterm/progress/plan-task-1-validation.txt"),
+        "retry prompt should point at the failed validation output:\n{retry_prompt}"
+    );
 
     let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
         .expect("read progress log");

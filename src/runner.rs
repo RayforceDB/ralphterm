@@ -89,12 +89,24 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
 
     for task in pending {
         let progress = ProgressPaths::new(&plan_slug, task.number)?;
-        if last_task_end_failed(&progress.log_path, task.number)? {
+        let last_task_end = last_task_end_status(&progress.log_path, task.number)?;
+        let resume_context = if last_task_end.failed {
             append_progress(
                 &progress.log_path,
                 &format!("resume number={} previous_result=failed", task.number),
             )?;
-        }
+            let previous_attempt = progress.attempt(1);
+            let transcript_display = last_task_end
+                .transcript_display
+                .filter(|path| path != &progress.transcript_display)
+                .unwrap_or(previous_attempt.transcript_display);
+            Some(ResumeContext {
+                transcript_display,
+                validation_output_display: progress.validation_output_display.clone(),
+            })
+        } else {
+            None
+        };
         append_progress(
             &progress.log_path,
             &format!("task_start number={} title={}", task.number, task.title),
@@ -122,6 +134,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 task,
                 &plan.validation_commands,
                 review_feedback.as_deref(),
+                resume_context.as_ref(),
             );
             let agent_run = match run_agent_command(&agent_command, &prompt)
                 .with_context(|| format!("run agent for task {}", task.number))
@@ -413,6 +426,11 @@ struct AttemptProgressPaths {
     legacy_review_transcript_path: Option<PathBuf>,
     transcript_display: String,
     review_transcript_display: String,
+}
+
+struct ResumeContext {
+    transcript_display: String,
+    validation_output_display: String,
 }
 
 struct AgentRun {
@@ -809,24 +827,58 @@ fn git_head_revision() -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn last_task_end_failed(path: &Path, task_number: usize) -> Result<bool> {
+#[derive(Default)]
+struct LastTaskEndStatus {
+    failed: bool,
+    transcript_display: Option<String>,
+}
+
+fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndStatus> {
     if !path.exists() {
-        return Ok(false);
+        return Ok(LastTaskEndStatus::default());
     }
 
     let log = fs::read_to_string(path)
         .with_context(|| format!("read progress log {}", path.display()))?;
+    let task_start_prefix = format!("task_start number={task_number}");
     let task_end_prefix = format!("task_end number={task_number}");
-    let mut last_failed = None;
+    let mut in_task = false;
+    let mut latest_task_transcript = None;
+    let mut last_status = LastTaskEndStatus::default();
     for line in log.lines() {
         let Some(event) = progress_event(line) else {
             continue;
         };
+        if event_starts_with_token(event, &task_start_prefix) {
+            in_task = true;
+            latest_task_transcript = None;
+            continue;
+        }
+        if in_task {
+            if let Some(transcript_display) = signal_transcript_display(event) {
+                latest_task_transcript = Some(transcript_display.to_string());
+            }
+        }
         if event_starts_with_token(event, &task_end_prefix) {
-            last_failed = Some(event.contains("result=failed"));
+            let failed = event.contains("result=failed");
+            last_status = LastTaskEndStatus {
+                failed,
+                transcript_display: failed.then(|| latest_task_transcript.clone()).flatten(),
+            };
+            in_task = false;
         }
     }
-    Ok(last_failed.unwrap_or(false))
+    Ok(last_status)
+}
+
+fn signal_transcript_display(event: &str) -> Option<&str> {
+    if !event.starts_with("signal=") {
+        return None;
+    }
+    event
+        .split_once("transcript path=")
+        .map(|(_, transcript_display)| transcript_display.trim())
+        .filter(|transcript_display| !transcript_display.is_empty())
 }
 
 fn progress_event(line: &str) -> Option<&str> {
@@ -1052,6 +1104,7 @@ fn build_task_prompt(
     task: &Task,
     validation_commands: &[String],
     review_feedback: Option<&str>,
+    resume_context: Option<&ResumeContext>,
 ) -> String {
     let mut prompt = format!(
         "You are executing one task from {plan_name}.\n\nTask {}: {}\n\n{}",
@@ -1071,6 +1124,15 @@ fn build_task_prompt(
         if !review_feedback.ends_with('\n') {
             prompt.push('\n');
         }
+    }
+    if let Some(resume_context) = resume_context {
+        prompt.push_str("\nPrevious run for this task failed. You may inspect prior artifacts before continuing:\n");
+        prompt.push_str("- Previous transcript: ");
+        prompt.push_str(&resume_context.transcript_display);
+        prompt.push('\n');
+        prompt.push_str("- Previous validation output: ");
+        prompt.push_str(&resume_context.validation_output_display);
+        prompt.push('\n');
     }
     prompt.push_str("\nWhen the task is complete, print COMPLETED.\n");
     prompt
