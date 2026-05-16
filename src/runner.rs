@@ -471,6 +471,12 @@ fn write_failed_run_summary(
             progress.transcript_display
         ));
     }
+    if progress.validation_output_path.exists() {
+        summary.push_str(&format!(
+            "  - Validation: {}\n",
+            progress.validation_output_display
+        ));
+    }
     if progress.review_transcript_path.exists() {
         summary.push_str(&format!(
             "  - Review transcript: {}\n",
@@ -899,13 +905,19 @@ fn build_task_prompt(plan_name: &str, task: &Task, validation_commands: &[String
 
 fn run_validation_commands(commands: &[String], output_path: &Path) -> Result<String> {
     let mut output = String::new();
+    fs::write(output_path, &output)
+        .with_context(|| format!("write validation output {}", output_path.display()))?;
     for command in commands {
         output.push_str(&format!("Validation: {command}\n"));
-        let result = Command::new("sh")
-            .arg("-lc")
-            .arg(command)
-            .output()
-            .with_context(|| format!("run validation command `{command}`"))?;
+        let result = match Command::new("sh").arg("-lc").arg(command).output() {
+            Ok(result) => result,
+            Err(err) => {
+                fs::write(output_path, &output).with_context(|| {
+                    format!("write validation output {}", output_path.display())
+                })?;
+                return Err(err).with_context(|| format!("run validation command `{command}`"));
+            }
+        };
         let stdout = String::from_utf8_lossy(&result.stdout);
         let stderr = String::from_utf8_lossy(&result.stderr);
         if !stdout.is_empty() {
@@ -917,6 +929,8 @@ fn run_validation_commands(commands: &[String], output_path: &Path) -> Result<St
         if result.status.success() {
             output.push_str("Validation passed\n");
         } else {
+            fs::write(output_path, &output)
+                .with_context(|| format!("write validation output {}", output_path.display()))?;
             bail!(
                 "validation command failed `{command}` with {}\nstdout:\n{}\nstderr:\n{}",
                 result.status,
