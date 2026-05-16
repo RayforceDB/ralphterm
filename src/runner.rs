@@ -108,6 +108,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             Some(ResumeContext {
                 transcript_display,
                 validation_output_display: progress.validation_output_display.clone(),
+                review_transcript_display: last_task_end.review_transcript_display,
             })
         } else {
             None
@@ -436,6 +437,7 @@ struct AttemptProgressPaths {
 struct ResumeContext {
     transcript_display: String,
     validation_output_display: String,
+    review_transcript_display: Option<String>,
 }
 
 struct AgentRun {
@@ -836,6 +838,7 @@ fn git_head_revision() -> Option<String> {
 struct LastTaskEndStatus {
     failed: bool,
     transcript_display: Option<String>,
+    review_transcript_display: Option<String>,
 }
 
 fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndStatus> {
@@ -849,6 +852,7 @@ fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndSt
     let task_end_prefix = format!("task_end number={task_number}");
     let mut in_task = false;
     let mut latest_task_transcript = None;
+    let mut latest_review_transcript = None;
     let mut last_status = LastTaskEndStatus::default();
     for line in log.lines() {
         let Some(event) = progress_event(line) else {
@@ -857,11 +861,15 @@ fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndSt
         if event_starts_with_token(event, &task_start_prefix) {
             in_task = true;
             latest_task_transcript = None;
+            latest_review_transcript = None;
             continue;
         }
         if in_task {
             if let Some(transcript_display) = signal_transcript_display(event) {
                 latest_task_transcript = Some(transcript_display.to_string());
+            }
+            if let Some(review_transcript_display) = review_transcript_display(event) {
+                latest_review_transcript = Some(review_transcript_display.to_string());
             }
         }
         if event_starts_with_token(event, &task_end_prefix) {
@@ -869,6 +877,9 @@ fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndSt
             last_status = LastTaskEndStatus {
                 failed,
                 transcript_display: failed.then(|| latest_task_transcript.clone()).flatten(),
+                review_transcript_display: failed
+                    .then(|| latest_review_transcript.clone())
+                    .flatten(),
             };
             in_task = false;
         }
@@ -884,6 +895,13 @@ fn signal_transcript_display(event: &str) -> Option<&str> {
         .split_once("transcript path=")
         .map(|(_, transcript_display)| transcript_display.trim())
         .filter(|transcript_display| !transcript_display.is_empty())
+}
+
+fn review_transcript_display(event: &str) -> Option<&str> {
+    event
+        .strip_prefix("review transcript path=")
+        .map(str::trim)
+        .filter(|review_transcript_display| !review_transcript_display.is_empty())
 }
 
 fn progress_event(line: &str) -> Option<&str> {
@@ -1138,6 +1156,11 @@ fn build_task_prompt(
         prompt.push_str("- Previous validation output: ");
         prompt.push_str(&resume_context.validation_output_display);
         prompt.push('\n');
+        if let Some(review_transcript_display) = &resume_context.review_transcript_display {
+            prompt.push_str("- Previous review transcript: ");
+            prompt.push_str(review_transcript_display);
+            prompt.push('\n');
+        }
     }
     prompt.push_str("\nWhen the task is complete, print COMPLETED.\n");
     prompt

@@ -2561,6 +2561,105 @@ fn failed_retry_summary_links_failing_attempt_artifacts() {
 }
 
 #[test]
+fn resume_after_review_failure_prompt_links_previous_review_transcript() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm with failing review");
+
+    assert!(
+        !first_output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+    let plan = fs::read_to_string(&plan_path).expect("read plan after review failure");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+    assert!(
+        repo.path
+            .join(".ralphterm/progress/plan-task-1-attempt-2-review.transcript")
+            .exists(),
+        "failed review transcript should exist"
+    );
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("rerun ralphterm after review failure");
+
+    assert!(
+        second_output.status.success(),
+        "ralphterm retry failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let retry_prompt = fs::read_to_string(repo.path.join("fake-agent-last-prompt.txt"))
+        .expect("read retry agent prompt");
+    assert!(
+        retry_prompt.contains("Previous run for this task failed"),
+        "retry prompt should include resume context:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains(
+            "- Previous transcript: .ralphterm/progress/plan-task-1-attempt-2.transcript"
+        ),
+        "retry prompt should point at the previous implementation transcript:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains(
+            "- Previous validation output: .ralphterm/progress/plan-task-1-validation.txt"
+        ),
+        "retry prompt should point at the previous validation output:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains(
+            "- Previous review transcript: .ralphterm/progress/plan-task-1-attempt-2-review.transcript"
+        ),
+        "retry prompt should point at the failed review transcript:\n{retry_prompt}"
+    );
+}
+
+#[test]
 fn review_fail_line_with_reason_triggers_retry() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
