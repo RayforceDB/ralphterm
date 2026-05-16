@@ -89,7 +89,7 @@ $ ralphterm run docs/plans/example.md --agent claude \
     --review-command "codex exec review-task"
 [plan] loaded docs/plans/example.md
 [task 1] sent to Claude Code in a real PTY
-[validation] cargo test --all passed
+[validation] test -f docs/plans/example-output.txt passed
 [review] independent PTY reviewer printed REVIEW_PASS
 [plan] marked task complete
 [git] committed task progress
@@ -146,7 +146,7 @@ $ ralphterm run docs/plans/example.md --agent claude \
       <p class="eyebrow">Next</p>
       <h2>From task execution to full replacement-grade autonomy.</h2>
       <p>
-        The current loop can execute plan tasks, validate results, commit progress, and keep transcripts. The next milestone adds stronger isolation, review phases, approval queues, and final patch summaries around that working core.
+        The current loop can execute plan tasks, validate results, require an independent reviewer, commit progress, and keep transcripts. The next milestone adds stronger isolation, approval queues, richer review loops, and final patch summaries around that working core.
       </p>
       <div class="hero-actions small-actions">
         <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">Star the repo</a>

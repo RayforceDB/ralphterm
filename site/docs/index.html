@@ -24,9 +24,9 @@
         <span>RalphTerm</span>
       </a>
       <div class="nav-links">
-        <a href="/#why">Why</a>
-        <a href="/#product">Product</a>
-        <a href="/#workflow">Workflow</a>
+        <a href="/#how">Why</a>
+        <a href="/#what">Product</a>
+        <a href="/#api">Workflow</a>
         <a href="/docs/">Docs</a>
       </div>
       <div class="nav-cta">
@@ -67,7 +67,7 @@ cargo build --release</code></pre>
 {
   "agent": "claude",
   "command": "/bin/sh",
-  "args": ["-lc", "read line; printf '%s\n' "$line"; echo COMPLETED"],
+  "args": ["-lc", "read line; printf '%s\\n' \"$line\"; echo COMPLETED"],
   "prompt": "hello from ralphterm"
 }
 JSON
