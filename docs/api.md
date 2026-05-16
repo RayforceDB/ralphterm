@@ -148,6 +148,26 @@ content-type: application/json
 
 Use this for follow-up prompts, explicit approval responses, or operator intervention.
 
+## List sessions
+
+```http
+GET /v1/sessions
+```
+
+Returns the in-memory session records for the running daemon. The dashboard uses this endpoint to render active and recently exited PTY sessions.
+
+```json
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000000",
+    "agent": "claude",
+    "status": "running",
+    "signal": null,
+    "exit_code": null
+  }
+]
+```
+
 ## Resize session
 
 ```http

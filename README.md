@@ -61,6 +61,7 @@ Expected:
 ```http
 GET  /health
 POST /v1/sessions
+GET  /v1/sessions
 GET  /v1/sessions/:id
 POST /v1/sessions/:id/input
 POST /v1/sessions/:id/resize
@@ -82,6 +83,7 @@ ID=$(curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
   }' | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
 
 curl http://127.0.0.1:7878/v1/sessions/$ID
+curl http://127.0.0.1:7878/v1/sessions
 curl http://127.0.0.1:7878/v1/sessions/$ID/transcript
 ```
 
