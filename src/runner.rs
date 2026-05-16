@@ -169,6 +169,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &progress,
                         Some(&attempt_progress),
                         false,
+                        false,
                     );
                     return Err(failed_run_error(err, summary_result));
                 }
@@ -219,6 +220,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &progress,
                     Some(&attempt_progress),
                     false,
+                    false,
                 );
                 let err = anyhow::anyhow!(
                     "agent command timed out after {:?} for task {}\n{}",
@@ -242,6 +244,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &format!("agent command exited with {}", agent_run.exit_code),
                     &progress,
                     Some(&attempt_progress),
+                    false,
                     false,
                 );
                 let err = anyhow::anyhow!(
@@ -269,6 +272,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &detail,
                     &progress,
                     Some(&attempt_progress),
+                    false,
                     false,
                 );
                 let err = anyhow::anyhow!(
@@ -302,6 +306,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &progress,
                         Some(&attempt_progress),
                         true,
+                        false,
                     );
                     return Err(failed_run_error(err, summary_result));
                 }
@@ -354,6 +359,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                             &err.to_string(),
                             &progress,
                             Some(&attempt_progress),
+                            true,
                             true,
                         );
                         return Err(failed_run_error(err.into(), summary_result));
@@ -665,6 +671,7 @@ fn write_failed_run_summary(
     progress: &ProgressPaths,
     attempt_progress: Option<&AttemptProgressPaths>,
     link_validation_output: bool,
+    link_review_transcript: bool,
 ) -> Result<()> {
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
@@ -717,29 +724,32 @@ fn write_failed_run_summary(
             progress.validation_output_display
         ));
     }
-    let review_transcript_display = attempt_progress
-        .and_then(|attempt| {
-            if let Some(legacy_review_transcript_path) = &attempt.legacy_review_transcript_path {
-                legacy_review_transcript_path
-                    .exists()
-                    .then_some(progress.review_transcript_display.as_str())
-            } else {
-                attempt
+    if link_review_transcript {
+        let review_transcript_display = attempt_progress
+            .and_then(|attempt| {
+                if let Some(legacy_review_transcript_path) = &attempt.legacy_review_transcript_path
+                {
+                    legacy_review_transcript_path
+                        .exists()
+                        .then_some(progress.review_transcript_display.as_str())
+                } else {
+                    attempt
+                        .review_transcript_path
+                        .exists()
+                        .then_some(attempt.review_transcript_display.as_str())
+                }
+            })
+            .or_else(|| {
+                progress
                     .review_transcript_path
                     .exists()
-                    .then_some(attempt.review_transcript_display.as_str())
-            }
-        })
-        .or_else(|| {
-            progress
-                .review_transcript_path
-                .exists()
-                .then_some(progress.review_transcript_display.as_str())
-        });
-    if let Some(review_transcript_display) = review_transcript_display {
-        summary.push_str(&format!(
-            "  - Review transcript: {review_transcript_display}\n"
-        ));
+                    .then_some(progress.review_transcript_display.as_str())
+            });
+        if let Some(review_transcript_display) = review_transcript_display {
+            summary.push_str(&format!(
+                "  - Review transcript: {review_transcript_display}\n"
+            ));
+        }
     }
     fs::write(&summary_path, summary)
         .with_context(|| format!("write failed run summary {}", summary_path.display()))
