@@ -193,12 +193,27 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 let cwd = std::env::current_dir().context("read current directory")?;
-                let manager = WorkspaceManager::discover(cwd)?;
-                let workspace = manager.create(id)?;
-                println!("Workspace: {}", workspace.path.display());
-                std::env::set_current_dir(&workspace.path).with_context(|| {
-                    format!("switch to workspace directory {}", workspace.path.display())
+                let manager = WorkspaceManager::discover(&cwd)?;
+                let cwd_relative = cwd.strip_prefix(manager.repo_root()).with_context(|| {
+                    format!(
+                        "current directory {} is not inside repository {}",
+                        cwd.display(),
+                        manager.repo_root().display()
+                    )
                 })?;
+                validate_workspace_plan_path(cwd_relative, &plan)?;
+
+                if dry_run {
+                    let workspace = manager.workspace(id)?;
+                    println!("Workspace: {} (dry run)", workspace.path.display());
+                } else {
+                    let workspace = manager.create(id)?;
+                    println!("Workspace: {}", workspace.path.display());
+                    let workspace_cwd = workspace.path.join(cwd_relative);
+                    std::env::set_current_dir(&workspace_cwd).with_context(|| {
+                        format!("switch to workspace directory {}", workspace_cwd.display())
+                    })?;
+                }
             }
 
             let output = run_plan(RunOptions {
@@ -225,6 +240,26 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Workspace { command } => run_workspace_command(command),
     }
+}
+
+fn validate_workspace_plan_path(cwd_relative: &FsPath, plan: &FsPath) -> anyhow::Result<()> {
+    let mut normalized = PathBuf::new();
+    for component in cwd_relative.components().chain(plan.components()) {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    bail!("plan path must stay inside the repository");
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                bail!("plan path must stay inside the repository");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn run_workspace_command(command: WorkspaceCommand) -> anyhow::Result<()> {
