@@ -2,6 +2,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::PathBuf,
+    process::Command,
 };
 
 use anyhow::{bail, Context, Result};
@@ -45,6 +46,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         if !transcript.ends_with('\n') {
             output.push('\n');
         }
+        output.push_str(&run_validation_commands(&plan.validation_commands)?);
     }
 
     Ok(output)
@@ -65,6 +67,31 @@ fn build_task_prompt(plan_name: &str, task: &Task, validation_commands: &[String
     }
     prompt.push_str("\nWhen the task is complete, print COMPLETED.\n");
     prompt
+}
+
+fn run_validation_commands(commands: &[String]) -> Result<String> {
+    let mut output = String::new();
+    for command in commands {
+        output.push_str(&format!("Validation: {command}\n"));
+        let result = Command::new("sh")
+            .arg("-lc")
+            .arg(command)
+            .output()
+            .with_context(|| format!("run validation command `{command}`"))?;
+        if result.status.success() {
+            output.push_str("Validation passed\n");
+        } else {
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            bail!(
+                "validation command failed `{command}` with {}\nstdout:\n{}\nstderr:\n{}",
+                result.status,
+                stdout,
+                stderr
+            );
+        }
+    }
+    Ok(output)
 }
 
 fn run_agent_command(agent_command: &str, prompt: &str) -> Result<String> {

@@ -14,7 +14,7 @@ fn run_command_prints_pending_tasks_in_order() {
         r#"# Example plan
 
 ## Validation Commands
-- `cargo test --all`
+- `test -f first.txt`
 
 ### Task 1: Create first file
 - [ ] Write first.txt
@@ -57,6 +57,8 @@ The agent should create first.txt.
     assert!(stdout.contains("Task 3: Create second file"), "{stdout}");
     assert!(!stdout.contains("Already finished"), "{stdout}");
     assert!(stdout.contains("COMPLETED"), "{stdout}");
+    assert!(stdout.contains("Validation: test -f first.txt"), "{stdout}");
+    assert!(stdout.contains("Validation passed"), "{stdout}");
 
     assert_eq!(
         fs::read_to_string(repo.path.join("first.txt")).expect("first file created"),
