@@ -212,6 +212,10 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             number: task.number,
             title: task.title.clone(),
             transcript_display: progress.transcript_display,
+            review_transcript_display: options
+                .review_command
+                .as_ref()
+                .map(|_| progress.review_transcript_display),
         });
     }
 
@@ -289,6 +293,7 @@ struct ExecutedTask {
     number: usize,
     title: String,
     transcript_display: String,
+    review_transcript_display: Option<String>,
 }
 
 struct AgentRun {
@@ -355,6 +360,11 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
             "- Task {}: {} — passed\n  - Transcript: {}\n",
             task.number, task.title, task.transcript_display
         ));
+        if let Some(review_transcript_display) = &task.review_transcript_display {
+            summary.push_str(&format!(
+                "  - Review transcript: {review_transcript_display}\n"
+            ));
+        }
     }
     fs::write(&summary_path, summary)
         .with_context(|| format!("write run summary {}", summary_path.display()))

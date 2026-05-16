@@ -1417,6 +1417,13 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
         review_prompt.contains("\nfirst.txt\n"),
         "review prompt should expose newly-created files for review:\n{review_prompt}"
     );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read run summary");
+    assert!(
+        summary.contains(".ralphterm/progress/plan-task-1-review.transcript"),
+        "passed run summary should link the independent review transcript:\n{summary}"
+    );
 }
 
 #[test]
