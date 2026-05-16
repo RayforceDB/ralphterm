@@ -20,7 +20,63 @@ Response:
 {"ok": true}
 ```
 
-## Create session
+## Run a reviewed plan
+
+Use the run API when RalphTerm owns the plan loop, not just the terminal session. The daemon creates a run record under `.ralphterm/runs/<id>/`, executes the markdown plan, stores events, and writes result artifacts.
+
+```http
+POST /v1/runs
+content-type: application/json
+```
+
+Request:
+
+```json
+{
+  "plan_path": "docs/plans/example.md",
+  "agent_command": "claude",
+  "review_command": "codex exec review-task",
+  "require_review": true,
+  "max_review_retries": 1,
+  "no_commit": false
+}
+```
+
+Fields:
+
+- `plan_path`: markdown plan path, relative to the daemon working directory or absolute
+- `agent_command`: optional implementation command; omit it to create a run record without starting work
+- `review_command`: optional independent reviewer command
+- `require_review`: rejects the request unless `review_command` is set
+- `max_review_retries`: number of review failures allowed before the task blocks
+- `no_commit`: marks accepted tasks and writes artifacts without creating git commits
+
+Response:
+
+```json
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "created_at": "unix-ms:1778954400000",
+  "phase": "complete",
+  "status": "succeeded",
+  "plan_path": "docs/plans/example.md"
+}
+```
+
+Run endpoints:
+
+```http
+GET  /v1/runs
+GET  /v1/runs/:id
+GET  /v1/runs/:id/events
+POST /v1/runs/:id/cancel
+```
+
+`GET /v1/runs/:id/events` returns run lifecycle events such as `run_created`, `run_succeeded`, `run_failed`, and `run_cancelled`. A completed run writes `summary.md` and `diff.patch` under `.ralphterm/runs/<id>/`.
+
+## Create a raw session
+
+Use the session API when another orchestrator owns planning and review.
 
 ```http
 POST /v1/sessions

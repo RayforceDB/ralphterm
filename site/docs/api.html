@@ -55,6 +55,11 @@
       <p>The API is local-first and binds to <code>127.0.0.1</code> by default because it controls real terminal processes.</p>
       <h2>Endpoints</h2>
       <pre><code>GET  /health
+POST /v1/runs
+GET  /v1/runs
+GET  /v1/runs/:id
+GET  /v1/runs/:id/events
+POST /v1/runs/:id/cancel
 POST /v1/sessions
 GET  /v1/sessions/:id
 POST /v1/sessions/:id/input
@@ -62,7 +67,26 @@ POST /v1/sessions/:id/resize
 POST /v1/sessions/:id/cancel
 GET  /v1/sessions/:id/transcript
 GET  /v1/sessions/:id/events</code></pre>
-      <h2>Create a session</h2>
+      <h2>Run a reviewed plan</h2>
+      <p>Use the run API when RalphTerm owns the plan loop. The daemon executes the markdown plan, stores lifecycle events, and writes result artifacts under <code>.ralphterm/runs/&lt;id&gt;/</code>.</p>
+      <pre><code>POST /v1/runs
+content-type: application/json
+
+{
+  "plan_path": "docs/plans/example.md",
+  "agent_command": "claude",
+  "review_command": "codex exec review-task",
+  "require_review": true,
+  "max_review_retries": 1,
+  "no_commit": false
+}</code></pre>
+      <p><code>review_command</code> starts an independent reviewer after validation. <code>require_review</code> rejects the request if that reviewer is missing.</p>
+      <pre><code>GET  /v1/runs
+GET  /v1/runs/:id
+GET  /v1/runs/:id/events
+POST /v1/runs/:id/cancel</code></pre>
+      <p><code>GET /v1/runs/:id/events</code> returns events such as <code>run_created</code>, <code>run_succeeded</code>, <code>run_failed</code>, and <code>run_cancelled</code>. A completed run writes <code>summary.md</code> and <code>diff.patch</code>.</p>
+      <h2>Create a raw session</h2>
       <pre><code>POST /v1/sessions
 content-type: application/json
 

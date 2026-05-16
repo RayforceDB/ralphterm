@@ -198,3 +198,33 @@ fn getting_started_shows_minimal_plan_file_shape() {
         );
     }
 }
+
+#[test]
+fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let api_markdown = std::fs::read_to_string(root.join("docs/api.md")).expect("read api docs");
+    let api_html =
+        std::fs::read_to_string(root.join("site/docs/api.html")).expect("read public api docs");
+
+    for (name, text) in [
+        ("markdown api docs", api_markdown),
+        ("public api docs", api_html),
+    ] {
+        assert!(
+            text.contains("POST /v1/runs"),
+            "{name} should document the run API entry point"
+        );
+        assert!(
+            text.contains("GET /v1/runs/:id/events"),
+            "{name} should document run event polling"
+        );
+        assert!(
+            text.contains("review_command") && text.contains("require_review"),
+            "{name} should show how API callers require independent review"
+        );
+        assert!(
+            text.contains("summary.md") && text.contains("diff.patch"),
+            "{name} should document persisted run result artifacts"
+        );
+    }
+}
