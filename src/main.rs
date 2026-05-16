@@ -32,7 +32,7 @@ use ralphterm::{
     },
     workspace::WorkspaceManager,
 };
-use store::{SessionRecord, SessionStore};
+use store::{ApprovalDecisionError, SessionRecord, SessionStore};
 
 #[derive(Debug, Parser)]
 #[command(name = "ralphterm")]
@@ -791,7 +791,15 @@ async fn approval_decision(
     Path(id): Path<Uuid>,
     Json(req): Json<ApprovalRequest>,
 ) -> Result<(StatusCode, Json<ApprovalResponse>), ApiError> {
-    state.store.approval_decision(id, req.approved).await?;
+    state
+        .store
+        .approval_decision(id, req.approved)
+        .await
+        .map_err(|err| match err {
+            ApprovalDecisionError::NotFound => ApiError::not_found(),
+            ApprovalDecisionError::NoPending => ApiError::conflict("no approval pending"),
+            ApprovalDecisionError::Send(err) => err.into(),
+        })?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApprovalResponse {
@@ -878,6 +886,13 @@ impl ApiError {
     fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
             message: message.into(),
         }
     }

@@ -45,6 +45,13 @@ pub enum SessionEvent {
     Error { message: String },
 }
 
+#[derive(Debug)]
+pub enum ApprovalDecisionError {
+    NotFound,
+    NoPending,
+    Send(anyhow::Error),
+}
+
 struct SessionHandle {
     record: Mutex<SessionRecord>,
     transcript: Mutex<String>,
@@ -129,18 +136,33 @@ impl SessionStore {
             .context("send input")
     }
 
-    pub async fn approval_decision(&self, id: Uuid, approved: bool) -> anyhow::Result<()> {
+    pub async fn approval_decision(
+        &self,
+        id: Uuid,
+        approved: bool,
+    ) -> Result<(), ApprovalDecisionError> {
         let session = self
             .sessions
             .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("session not found"))?;
+            .ok_or(ApprovalDecisionError::NotFound)?;
+        {
+            let mut approval_requested = session
+                .approval_requested
+                .lock()
+                .expect("approval requested lock");
+            if !*approval_requested {
+                return Err(ApprovalDecisionError::NoPending);
+            }
+            *approval_requested = false;
+        }
         session
             .input_tx
             .send(SessionInput {
                 text: if approved { "y" } else { "n" }.to_string(),
                 enter: true,
             })
-            .context("send approval decision")?;
+            .context("send approval decision")
+            .map_err(ApprovalDecisionError::Send)?;
         let _ = session
             .event_tx
             .send(SessionEvent::ApprovalDecision { approved });
