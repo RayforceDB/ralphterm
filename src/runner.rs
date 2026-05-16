@@ -291,7 +291,9 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 .unwrap_or(previous_attempt.transcript_display);
             Some(ResumeContext {
                 transcript_display,
-                validation_output_display: progress.validation_output_display.clone(),
+                validation_output_display: last_task_end
+                    .validation_output_available
+                    .then(|| progress.validation_output_display.clone()),
                 review_transcript_display: last_task_end.review_transcript_display,
             })
         } else {
@@ -830,7 +832,7 @@ struct AttemptProgressPaths {
 
 struct ResumeContext {
     transcript_display: String,
-    validation_output_display: String,
+    validation_output_display: Option<String>,
     review_transcript_display: Option<String>,
 }
 
@@ -1252,6 +1254,7 @@ fn git_head_revision() -> Option<String> {
 struct LastTaskEndStatus {
     failed: bool,
     transcript_display: Option<String>,
+    validation_output_available: bool,
     review_transcript_display: Option<String>,
 }
 
@@ -1266,6 +1269,7 @@ fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndSt
     let task_end_prefix = format!("task_end number={task_number}");
     let mut in_task = false;
     let mut latest_task_transcript = None;
+    let mut latest_validation_output_available = false;
     let mut latest_review_transcript = None;
     let mut last_status = LastTaskEndStatus::default();
     for line in log.lines() {
@@ -1275,12 +1279,16 @@ fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndSt
         if event_starts_with_token(event, &task_start_prefix) {
             in_task = true;
             latest_task_transcript = None;
+            latest_validation_output_available = false;
             latest_review_transcript = None;
             continue;
         }
         if in_task {
             if let Some(transcript_display) = signal_transcript_display(event) {
                 latest_task_transcript = Some(transcript_display.to_string());
+            }
+            if event.starts_with("validation result=") {
+                latest_validation_output_available = true;
             }
             if let Some(review_transcript_display) = review_transcript_display(event) {
                 latest_review_transcript = Some(review_transcript_display.to_string());
@@ -1291,6 +1299,9 @@ fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndSt
             last_status = LastTaskEndStatus {
                 failed,
                 transcript_display: failed.then(|| latest_task_transcript.clone()).flatten(),
+                // A review transcript can only be written after validation produced output.
+                validation_output_available: failed
+                    && (latest_validation_output_available || latest_review_transcript.is_some()),
                 review_transcript_display: failed
                     .then(|| latest_review_transcript.clone())
                     .flatten(),
@@ -1681,9 +1692,11 @@ fn build_task_prompt(
         prompt.push_str("- Previous transcript: ");
         prompt.push_str(&resume_context.transcript_display);
         prompt.push('\n');
-        prompt.push_str("- Previous validation output: ");
-        prompt.push_str(&resume_context.validation_output_display);
-        prompt.push('\n');
+        if let Some(validation_output_display) = &resume_context.validation_output_display {
+            prompt.push_str("- Previous validation output: ");
+            prompt.push_str(validation_output_display);
+            prompt.push('\n');
+        }
         if let Some(review_transcript_display) = &resume_context.review_transcript_display {
             prompt.push_str("- Previous review transcript: ");
             prompt.push_str(review_transcript_display);

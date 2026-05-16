@@ -867,6 +867,96 @@ fn run_command_requires_completed_signal_before_validation_review_completion_or_
 }
 
 #[test]
+fn run_command_resume_after_agent_completion_failure_does_not_reference_missing_validation_output()
+{
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent-no-completed.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm without completed signal");
+
+    assert!(
+        !first_output.status.success(),
+        "ralphterm run unexpectedly succeeded without COMPLETED\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+    assert!(
+        !repo
+            .path
+            .join(".ralphterm/progress/plan-task-1-validation.txt")
+            .exists(),
+        "first failed run must not write validation output before COMPLETED"
+    );
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("rerun ralphterm after missing completed signal");
+
+    assert!(
+        second_output.status.success(),
+        "ralphterm retry failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let resume_prompt = fs::read_to_string(repo.path.join("fake-agent-last-prompt.txt"))
+        .expect("read resume agent prompt");
+    assert!(
+        resume_prompt.contains("Previous run for this task failed"),
+        "resume prompt should include resume context:\n{resume_prompt}"
+    );
+    assert!(
+        resume_prompt.contains(
+            "- Previous transcript: .ralphterm/progress/plan-task-1-attempt-1.transcript"
+        ),
+        "resume prompt should point at the prior implementation transcript:\n{resume_prompt}"
+    );
+    assert!(
+        !resume_prompt.contains("Previous validation output:"),
+        "resume prompt must not point to validation output from a run that failed before validation:\n{resume_prompt}"
+    );
+}
+
+#[test]
 fn run_command_missing_completed_does_not_link_stale_validation_artifact() {
     let repo = TempRepo::new();
     repo.init_git();
@@ -4421,6 +4511,88 @@ fn failed_retry_summary_links_failing_attempt_artifacts() {
     assert!(
         !summary.contains("Review transcript: .ralphterm/progress/plan-task-1-review.transcript"),
         "failed summary must not link stale attempt-1 review transcript:\n{summary}"
+    );
+}
+
+#[test]
+fn resume_after_validation_failure_prompt_links_previous_validation_output() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f second.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm with failing validation");
+
+    assert!(
+        !first_output.status.success(),
+        "ralphterm run unexpectedly passed validation\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+    assert!(
+        repo.path
+            .join(".ralphterm/progress/plan-task-1-validation.txt")
+            .exists(),
+        "failed validation should write validation output"
+    );
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("rerun ralphterm after validation failure");
+
+    assert!(
+        !second_output.status.success(),
+        "second run should still fail validation but must capture resume prompt\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let resume_prompt = fs::read_to_string(repo.path.join("fake-agent-last-prompt.txt"))
+        .expect("read resume agent prompt");
+    assert!(
+        resume_prompt.contains("Previous run for this task failed"),
+        "resume prompt should include resume context:\n{resume_prompt}"
+    );
+    assert!(
+        resume_prompt.contains("- Previous validation output: .ralphterm/progress/plan-task-1-validation.txt"),
+        "resume prompt should point at previous validation output after validation ran:\n{resume_prompt}"
     );
 }
 
