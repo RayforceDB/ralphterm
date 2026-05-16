@@ -855,6 +855,196 @@ fn run_api_executes_plan_with_review_command_and_persists_review_transcript() {
 }
 
 #[test]
+fn run_api_plan_run_records_structured_task_progress_events() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "review_command": fixture_path("review-pass.sh").to_string_lossy(),
+        "no_commit": false
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+
+    let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
+    assert_eq!(events.status, 200, "{}", events.body);
+    let events_json: serde_json::Value = serde_json::from_str(&events.body).expect("events json");
+    let event_types: Vec<_> = events_json
+        .as_array()
+        .expect("event list")
+        .iter()
+        .map(|event| event["type"].as_str().expect("event type"))
+        .collect();
+    assert_eq!(
+        event_types,
+        vec![
+            "run_created",
+            "run_started",
+            "task_started",
+            "validation_passed",
+            "review_started",
+            "review_passed",
+            "task_committed",
+            "task_succeeded",
+            "run_succeeded",
+        ],
+        "{events_json}"
+    );
+
+    let task_started = events_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["type"] == "task_started")
+        .expect("task_started event");
+    assert_eq!(task_started["task_number"], 1);
+    assert_eq!(task_started["task_title"], "Create first file");
+
+    let committed = events_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["type"] == "task_committed")
+        .expect("task_committed event");
+    assert!(
+        committed["message"]
+            .as_str()
+            .is_some_and(|message| message.len() >= 7),
+        "{events_json}"
+    );
+    assert!(
+        committed["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("task: Create first file")),
+        "{events_json}"
+    );
+}
+
+#[test]
+fn run_api_validation_failure_records_structured_failure_events() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f missing.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "review_command": fixture_path("review-pass.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "failed").then(|| json.clone())
+    });
+
+    let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
+    assert_eq!(events.status, 200, "{}", events.body);
+    let events_json: serde_json::Value = serde_json::from_str(&events.body).expect("events json");
+    let event_types: Vec<_> = events_json
+        .as_array()
+        .expect("event list")
+        .iter()
+        .map(|event| event["type"].as_str().expect("event type"))
+        .collect();
+    assert!(event_types.contains(&"validation_failed"), "{events_json}");
+    assert!(event_types.contains(&"task_failed"), "{events_json}");
+    assert!(!event_types.contains(&"review_started"), "{events_json}");
+    assert!(!event_types.contains(&"task_committed"), "{events_json}");
+
+    let task_failed = events_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["type"] == "task_failed")
+        .expect("task_failed event");
+    assert_eq!(task_failed["task_number"], 1);
+    assert_eq!(task_failed["task_title"], "Create first file");
+    assert!(
+        task_failed["message"].as_str().is_some_and(|message| {
+            message.contains("validation") || message.contains("command failed")
+        }),
+        "{events_json}"
+    );
+}
+
+#[test]
 fn run_api_rejects_agent_command_without_plan_path_without_creating_run() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
@@ -1156,6 +1346,18 @@ fn run_api_records_failed_execution_when_agent_does_not_complete() {
             .expect("event list")
             .iter()
             .any(|event| event["type"] == "run_failed"),
+        "{events_json}"
+    );
+    assert!(
+        events_json
+            .as_array()
+            .expect("event list")
+            .iter()
+            .any(|event| event["type"] == "task_failed"
+                && event["task_number"] == 1
+                && event["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("COMPLETED"))),
         "{events_json}"
     );
 

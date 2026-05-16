@@ -25,8 +25,11 @@ mod store;
 
 use pty_agent::{AgentKind, SessionConfig, SessionInput};
 use ralphterm::{
-    runner::{agent_commands_equivalent, run_plan, run_smoke, RunOptions},
-    runs::{CreatedRunRecord, RunPhase, RunRecord, RunResultArtifacts, RunStatus, RunStore},
+    runner::{agent_commands_equivalent, run_plan, run_smoke, PlanRunEvent, RunOptions},
+    runs::{
+        CreatedRunRecord, RunPhase, RunProgressEvent, RunRecord, RunResultArtifacts, RunStatus,
+        RunStore,
+    },
     workspace::WorkspaceManager,
 };
 use store::{SessionRecord, SessionStore};
@@ -225,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
                 max_review_retries,
                 no_commit,
                 dry_run,
+                event_sink: None,
             })?;
             print!("{output}");
             Ok(())
@@ -464,6 +468,22 @@ async fn create_run(
                 tracing::error!(%run_id, "background plan run failed to switch execution directory");
                 return;
             };
+            let event_base_dir = base_dir.clone();
+            let event_sink = Arc::new(move |event: PlanRunEvent| {
+                RunStore::append_progress_event(
+                    &event_base_dir,
+                    run_id,
+                    RunProgressEvent {
+                        event_type: event.event_type.to_string(),
+                        task_number: event.task_number,
+                        task_title: event.task_title,
+                        attempt: event.attempt,
+                        artifact_path: event.artifact_path,
+                        message: event.message,
+                    },
+                )?;
+                Ok(())
+            });
             if let Err(err) = run_plan(RunOptions {
                 plan_path,
                 agent_command: Some(agent_command),
@@ -472,6 +492,7 @@ async fn create_run(
                 max_review_retries,
                 no_commit,
                 dry_run: false,
+                event_sink: Some(event_sink),
             }) {
                 let summary_markdown = fs::read_to_string(&summary_path).ok();
                 let diff_patch = fs::read_to_string(&diff_path).ok();

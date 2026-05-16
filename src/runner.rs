@@ -6,7 +6,7 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
-    sync::mpsc,
+    sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -159,7 +159,42 @@ impl RetryCleanupSnapshot {
     }
 }
 
+pub type RunEventSink = Arc<dyn Fn(PlanRunEvent) -> Result<()> + Send + Sync>;
+
 #[derive(Debug, Clone)]
+pub struct PlanRunEvent {
+    pub event_type: &'static str,
+    pub task_number: Option<usize>,
+    pub task_title: Option<String>,
+    pub attempt: Option<usize>,
+    pub artifact_path: Option<String>,
+    pub message: Option<String>,
+}
+
+impl PlanRunEvent {
+    fn for_task(event_type: &'static str, task: &Task, attempt: Option<usize>) -> Self {
+        Self {
+            event_type,
+            task_number: Some(task.number),
+            task_title: Some(task.title.clone()),
+            attempt,
+            artifact_path: None,
+            message: None,
+        }
+    }
+
+    fn with_artifact(mut self, artifact_path: impl Into<String>) -> Self {
+        self.artifact_path = Some(artifact_path.into());
+        self
+    }
+
+    fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = Some(message.into());
+        self
+    }
+}
+
+#[derive(Clone)]
 pub struct RunOptions {
     pub plan_path: PathBuf,
     pub agent_command: Option<String>,
@@ -168,6 +203,7 @@ pub struct RunOptions {
     pub max_review_retries: usize,
     pub no_commit: bool,
     pub dry_run: bool,
+    pub event_sink: Option<RunEventSink>,
 }
 
 pub fn run_plan(options: RunOptions) -> Result<String> {
@@ -263,6 +299,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             &progress.log_path,
             &format!("task_start number={} title={}", task.number, task.title),
         )?;
+        emit_plan_event(&options, PlanRunEvent::for_task("task_started", task, None))?;
         let baseline_paths = if options.no_commit {
             BTreeSet::new()
         } else {
@@ -307,13 +344,20 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &progress.log_path,
                         &format!("task_end number={} result=failed", task.number),
                     )?;
+                    let detail = format!("{err:#}");
+                    emit_task_failed_event(
+                        &options,
+                        task,
+                        attempt,
+                        format!("agent execution failed: {detail}"),
+                    )?;
                     let summary_result = write_failed_run_summary(
                         plan_name,
                         &plan_slug,
                         &executed_tasks,
                         task,
                         "agent execution",
-                        &format!("{err:#}"),
+                        &detail,
                         &progress,
                         Some(&attempt_progress),
                         false,
@@ -358,6 +402,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &format!("task_end number={} result=failed", task.number),
                 )?;
                 let detail = format!("agent command timed out after {timeout:?}\n{transcript}");
+                emit_task_failed_event(&options, task, attempt, detail.clone())?;
                 let summary_result = write_failed_run_summary(
                     plan_name,
                     &plan_slug,
@@ -383,13 +428,15 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &progress.log_path,
                     &format!("task_end number={} result=failed", task.number),
                 )?;
+                let detail = format!("agent command exited with {}", agent_run.exit_code);
+                emit_task_failed_event(&options, task, attempt, detail.clone())?;
                 let summary_result = write_failed_run_summary(
                     plan_name,
                     &plan_slug,
                     &executed_tasks,
                     task,
                     "agent execution",
-                    &format!("agent command exited with {}", agent_run.exit_code),
+                    &detail,
                     &progress,
                     Some(&attempt_progress),
                     false,
@@ -411,6 +458,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     "missing required COMPLETED signal from agent (detected signal={})",
                     signal.as_str()
                 );
+                emit_task_failed_event(&options, task, attempt, detail.clone())?;
                 let summary_result = write_failed_run_summary(
                     plan_name,
                     &plan_slug,
@@ -440,9 +488,21 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 }
                 Err(err) => {
                     append_progress(&progress.log_path, "validation result=failed")?;
+                    let validation_error = err.to_string();
+                    emit_plan_event(
+                        &options,
+                        PlanRunEvent::for_task("validation_failed", task, Some(attempt))
+                            .with_artifact(progress.validation_output_display.clone())
+                            .with_message(validation_error.clone()),
+                    )?;
                     append_progress(
                         &progress.log_path,
                         &format!("task_end number={} result=failed", task.number),
+                    )?;
+                    emit_plan_event(
+                        &options,
+                        PlanRunEvent::for_task("task_failed", task, Some(attempt))
+                            .with_message(format!("validation failed: {validation_error}")),
                     )?;
                     let summary_result = write_failed_run_summary(
                         plan_name,
@@ -450,7 +510,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &executed_tasks,
                         task,
                         "validation",
-                        &err.to_string(),
+                        &validation_error,
                         &progress,
                         Some(&attempt_progress),
                         true,
@@ -467,7 +527,16 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 }
             };
             append_progress(&progress.log_path, "validation result=passed")?;
+            emit_plan_event(
+                &options,
+                PlanRunEvent::for_task("validation_passed", task, Some(attempt))
+                    .with_artifact(progress.validation_output_display.clone()),
+            )?;
             if let Some(review_command) = options.review_command.as_deref() {
+                emit_plan_event(
+                    &options,
+                    PlanRunEvent::for_task("review_started", task, Some(attempt)),
+                )?;
                 match run_review_command(
                     review_command,
                     plan_name,
@@ -481,6 +550,10 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     Ok(review_output) => {
                         output.push_str(&review_output);
                         append_progress(&progress.log_path, "review result=passed")?;
+                        emit_plan_event(
+                            &options,
+                            PlanRunEvent::for_task("review_passed", task, Some(attempt)),
+                        )?;
                         final_transcript_display = current_transcript_display;
                         final_review_transcript_display = if attempt == 1 {
                             progress.review_transcript_display.clone()
@@ -492,11 +565,25 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     Err(err) => {
                         append_progress(&progress.log_path, "review result=failed")?;
                         let feedback = err.to_string();
+                        emit_plan_event(
+                            &options,
+                            PlanRunEvent::for_task("review_failed", task, Some(attempt))
+                                .with_message(feedback.clone()),
+                        )?;
                         let review_retries_used = attempt - 1;
                         if err.explicit_fail() && review_retries_used < options.max_review_retries {
                             output.push_str(&format!(
                                 "Review failed on attempt {attempt}; retrying implementation.\n"
                             ));
+                            emit_plan_event(
+                                &options,
+                                PlanRunEvent::for_task(
+                                    "agent_retry_started",
+                                    task,
+                                    Some(attempt + 1),
+                                )
+                                .with_message(feedback.clone()),
+                            )?;
                             if let Some(review_retry_cleanup_baseline) =
                                 &review_retry_cleanup_baseline
                             {
@@ -544,6 +631,11 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                             &progress.log_path,
                             &format!("task_end number={} result=failed", task.number),
                         )?;
+                        emit_plan_event(
+                            &options,
+                            PlanRunEvent::for_task("task_failed", task, Some(attempt))
+                                .with_message(format!("review failed: {feedback}")),
+                        )?;
                         let summary_result = write_failed_run_summary(
                             plan_name,
                             &plan_slug,
@@ -576,6 +668,11 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             let commit = commit_task(&task.title, &baseline_paths)
                 .with_context(|| format!("commit task {}", task.number))?;
             append_progress(&progress.log_path, &format!("commit hash={commit}"))?;
+            emit_plan_event(
+                &options,
+                PlanRunEvent::for_task("task_committed", task, None)
+                    .with_message(format!("{commit} task: {}", task.title)),
+            )?;
             output.push_str(&format!("Committed {commit}\n"));
         } else {
             append_progress(&progress.log_path, "commit no_commit=true")?;
@@ -583,6 +680,10 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         append_progress(
             &progress.log_path,
             &format!("task_end number={} result=passed", task.number),
+        )?;
+        emit_plan_event(
+            &options,
+            PlanRunEvent::for_task("task_succeeded", task, None),
         )?;
         executed_tasks.push(ExecutedTask {
             number: task.number,
@@ -677,6 +778,25 @@ fn describe_dry_run(
         output.push_str(&format!("Task {}: {}\n", task.number, task.title));
     }
     output
+}
+
+fn emit_plan_event(options: &RunOptions, event: PlanRunEvent) -> Result<()> {
+    if let Some(event_sink) = &options.event_sink {
+        event_sink(event)?;
+    }
+    Ok(())
+}
+
+fn emit_task_failed_event(
+    options: &RunOptions,
+    task: &Task,
+    attempt: usize,
+    message: impl Into<String>,
+) -> Result<()> {
+    emit_plan_event(
+        options,
+        PlanRunEvent::for_task("task_failed", task, Some(attempt)).with_message(message),
+    )
 }
 
 struct ProgressPaths {

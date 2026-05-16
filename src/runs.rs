@@ -54,6 +54,26 @@ pub struct RunEvent {
     pub event_type: String,
     pub status: RunStatus,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_number: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunProgressEvent {
+    pub event_type: String,
+    pub task_number: Option<usize>,
+    pub task_title: Option<String>,
+    pub attempt: Option<usize>,
+    pub artifact_path: Option<String>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +111,11 @@ impl RunStore {
             event_type: "run_created".to_string(),
             status: record.status.clone(),
             timestamp: now,
+            task_number: None,
+            task_title: None,
+            attempt: None,
+            artifact_path: None,
+            message: None,
         };
         let event_json = serde_json::to_string(&event).context("serialize run event")?;
         let mut events = OpenOptions::new()
@@ -185,6 +210,11 @@ impl RunStore {
                 event_type: "run_started".to_string(),
                 status: record.status.clone(),
                 timestamp: timestamp(),
+                task_number: None,
+                task_title: None,
+                attempt: None,
+                artifact_path: None,
+                message: None,
             },
         )?;
         Ok(Some(record))
@@ -207,6 +237,11 @@ impl RunStore {
                 event_type: "run_cancelled".to_string(),
                 status: record.status.clone(),
                 timestamp: timestamp(),
+                task_number: None,
+                task_title: None,
+                attempt: None,
+                artifact_path: None,
+                message: None,
             },
         )?;
         Ok(Some(record))
@@ -245,6 +280,11 @@ impl RunStore {
                 event_type: "run_succeeded".to_string(),
                 status: record.status.clone(),
                 timestamp: timestamp(),
+                task_number: None,
+                task_title: None,
+                attempt: None,
+                artifact_path: None,
+                message: None,
             },
         )?;
         Ok(Some(record))
@@ -288,9 +328,45 @@ impl RunStore {
                 event_type: "run_failed".to_string(),
                 status: record.status.clone(),
                 timestamp: timestamp(),
+                task_number: None,
+                task_title: None,
+                attempt: None,
+                artifact_path: None,
+                message: None,
             },
         )?;
         Ok(Some(record))
+    }
+
+    pub fn append_progress_event(
+        base_dir: impl AsRef<Path>,
+        id: Uuid,
+        event: RunProgressEvent,
+    ) -> Result<Option<()>> {
+        let _guard = record_mutation_lock()
+            .lock()
+            .expect("run record lock poisoned");
+        let Some(record) = Self::get(base_dir.as_ref(), id)? else {
+            return Ok(None);
+        };
+        if record.status != RunStatus::Running {
+            return Ok(Some(()));
+        }
+        append_event(
+            base_dir.as_ref(),
+            id,
+            RunEvent {
+                event_type: event.event_type,
+                status: record.status,
+                timestamp: timestamp(),
+                task_number: event.task_number,
+                task_title: event.task_title,
+                attempt: event.attempt,
+                artifact_path: event.artifact_path,
+                message: event.message,
+            },
+        )?;
+        Ok(Some(()))
     }
 }
 
@@ -386,6 +462,55 @@ mod tests {
         assert!(
             missing_events.is_empty(),
             "missing event log for an existing run should return an empty event list"
+        );
+
+        remove_dir_all_if_exists(&temp);
+    }
+
+    #[test]
+    fn append_progress_event_skips_cancelled_runs() {
+        let temp = std::env::temp_dir().join(format!(
+            "ralphterm-run-progress-cancelled-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp).unwrap();
+
+        let record = RunStore::create(
+            &temp,
+            RunRecord {
+                phase: RunPhase::Planning,
+                status: RunStatus::Created,
+                plan_path: Some("plans/task.md".into()),
+                workspace_path: None,
+            },
+        )
+        .unwrap();
+        RunStore::start(&temp, record.id).unwrap().unwrap();
+        RunStore::cancel(&temp, record.id).unwrap().unwrap();
+
+        let appended = RunStore::append_progress_event(
+            &temp,
+            record.id,
+            super::RunProgressEvent {
+                event_type: "task_succeeded".into(),
+                task_number: Some(1),
+                task_title: Some("Create first file".into()),
+                attempt: None,
+                artifact_path: None,
+                message: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(appended, Some(()));
+
+        let events = RunStore::events(&temp, record.id).unwrap().unwrap();
+        let event_types: Vec<_> = events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect();
+        assert_eq!(
+            event_types,
+            vec!["run_created", "run_started", "run_cancelled"]
         );
 
         remove_dir_all_if_exists(&temp);
