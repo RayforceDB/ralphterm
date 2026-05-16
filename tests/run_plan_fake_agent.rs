@@ -1645,9 +1645,15 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
 
     let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
         .expect("read progress log");
+    let validation_index = progress_log
+        .find("validation result=passed")
+        .expect("validation pass logged");
+    let review_index = progress_log
+        .find("review result=passed")
+        .expect("review pass logged");
     assert!(
-        progress_log.contains("review result=passed"),
-        "{progress_log}"
+        validation_index < review_index,
+        "review must run after validation so it can verify the accepted task evidence:\n{progress_log}"
     );
     assert!(
         progress_log
@@ -1665,6 +1671,14 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
     );
     let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
         .expect("review fixture should capture prompt");
+    assert!(
+        review_prompt.contains("Validation output:\nValidation: test -f first.txt"),
+        "review prompt should include completed validation output:\n{review_prompt}"
+    );
+    assert!(
+        review_prompt.contains("Validation passed"),
+        "review prompt should include validation pass evidence:\n{review_prompt}"
+    );
     assert!(
         review_prompt.contains("\nfirst.txt\n"),
         "review prompt should expose newly-created files for review:\n{review_prompt}"
@@ -1771,7 +1785,7 @@ printf 'REVIEW_PASS\n'
 }
 
 #[test]
-fn review_command_runs_before_validation_commands() {
+fn validation_commands_run_before_review_command() {
     let repo = TempRepo::new();
     repo.init_git();
     let plan_path = repo.path.join("plan.md");
@@ -1780,7 +1794,7 @@ fn review_command_runs_before_validation_commands() {
         r#"# Example plan
 
 ## Validation Commands
-- `test -f review-before-validation.txt`
+- `test -f first.txt`
 
 ### Task 1: Create first file
 - [ ] Write first.txt
@@ -1800,7 +1814,7 @@ fn review_command_runs_before_validation_commands() {
                 .to_str()
                 .expect("utf8 fixture path"),
             "--review-command",
-            fixture_path("review-pass-creates-validation-file.sh")
+            fixture_path("review-pass.sh")
                 .to_str()
                 .expect("utf8 fixture path"),
             "--no-commit",
@@ -1811,42 +1825,42 @@ fn review_command_runs_before_validation_commands() {
 
     assert!(
         output.status.success(),
-        "review should run before validation commands so reviewer-created verification artifacts are available\nstdout:\n{}\nstderr:\n{}",
+        "validation should run before review so the reviewer sees acceptance evidence\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
     let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
         .expect("read progress log");
-    let review_index = progress_log
-        .find("review result=passed")
-        .expect("review pass logged");
     let validation_index = progress_log
         .find("validation result=passed")
         .expect("validation pass logged");
+    let review_index = progress_log
+        .find("review result=passed")
+        .expect("review pass logged");
     assert!(
-        review_index < validation_index,
-        "review gate must be logged before validation commands:\n{progress_log}"
+        validation_index < review_index,
+        "validation must be logged before the review gate:\n{progress_log}"
     );
 
     let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
         .expect("review fixture should capture prompt");
     assert!(
-        review_prompt.contains("Validation status:\nValidation commands have not run yet."),
-        "pre-validation review prompt should label validation as status, not output:\n{review_prompt}"
+        review_prompt.contains("Validation output:\nValidation: test -f first.txt"),
+        "post-validation review prompt should include validation output:\n{review_prompt}"
     );
     assert!(
-        review_prompt.contains("ready for validation"),
-        "pre-validation reviewer should approve readiness for validation:\n{review_prompt}"
+        review_prompt.contains("Validation passed"),
+        "post-validation reviewer should see validation pass evidence:\n{review_prompt}"
     );
     assert!(
-        !review_prompt.contains("validation is trustworthy"),
-        "pre-validation reviewer cannot judge validation trustworthiness before commands run:\n{review_prompt}"
+        !review_prompt.contains("Validation commands have not run yet"),
+        "review prompt should not claim validation is pending:\n{review_prompt}"
     );
 }
 
 #[test]
-fn validation_commands_that_change_worktree_after_review_block_acceptance() {
+fn validation_commands_that_change_worktree_are_visible_to_review() {
     let repo = TempRepo::new();
     repo.init_git();
     let plan_path = repo.path.join("plan.md");
@@ -1885,22 +1899,24 @@ fn validation_commands_that_change_worktree_after_review_block_acceptance() {
         .expect("run ralphterm");
 
     assert!(
-        !output.status.success(),
-        "validation side effects after review must block task acceptance\nstdout:\n{}\nstderr:\n{}",
+        output.status.success(),
+        "validation side effects should be visible to the reviewer before acceptance\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
-    );
-    let diagnostics = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        diagnostics.contains("validation changed the reviewed worktree"),
-        "{diagnostics}"
     );
     let plan = fs::read_to_string(&plan_path).expect("read plan");
-    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
+        .expect("review fixture should capture prompt");
+    let git_state = review_prompt
+        .split("Current git diff:\n")
+        .nth(1)
+        .expect("review prompt has git state");
+    assert!(
+        git_state.contains("Untracked files:\n") && git_state.contains("\nsneaky.txt\n"),
+        "review prompt should include validation-created worktree artifacts in git state:\n{review_prompt}"
+    );
 
     let validation_path = ".ralphterm/progress/plan-task-1-validation.txt";
     let validation = fs::read_to_string(repo.path.join(validation_path))
@@ -1910,15 +1926,15 @@ fn validation_commands_that_change_worktree_after_review_block_acceptance() {
         "{validation}"
     );
     let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
-        .expect("read failed run summary");
+        .expect("read passed run summary");
     assert!(
         summary.contains(&format!("Validation: {validation_path}")),
-        "reviewed-worktree-change failed summary should link validation output artifact:\n{summary}"
+        "passed summary should link validation output artifact:\n{summary}"
     );
 }
 
 #[test]
-fn validation_commands_that_change_reviewed_untracked_file_after_review_block_acceptance() {
+fn validation_commands_that_change_untracked_files_are_visible_to_review() {
     let repo = TempRepo::new();
     repo.init_git();
     let plan_path = repo.path.join("plan.md");
@@ -1957,22 +1973,28 @@ fn validation_commands_that_change_reviewed_untracked_file_after_review_block_ac
         .expect("run ralphterm");
 
     assert!(
-        !output.status.success(),
-        "validation changes to reviewed untracked files must block task acceptance\nstdout:\n{}\nstderr:\n{}",
+        output.status.success(),
+        "validation changes to untracked files should be visible to the reviewer before acceptance\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
-    );
-    let diagnostics = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        diagnostics.contains("validation changed the reviewed worktree"),
-        "{diagnostics}"
     );
     let plan = fs::read_to_string(&plan_path).expect("read plan");
-    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
+        .expect("review fixture should capture prompt");
+    let git_state = review_prompt
+        .split("Current git diff:\n")
+        .nth(1)
+        .expect("review prompt has git state");
+    assert!(
+        git_state.contains("Untracked files:\n") && git_state.contains("\nfirst.txt\n"),
+        "review prompt should include validation-mutated untracked file in git state:\n{review_prompt}"
+    );
+    assert!(
+        review_prompt.contains("Validation: printf validation-side-effect > first.txt"),
+        "review prompt should include the validation command output:\n{review_prompt}"
+    );
 }
 
 #[test]
@@ -2199,13 +2221,15 @@ fn review_command_fail_blocks_marking_and_commit() {
 
     let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
         .expect("read progress log");
+    let validation_index = progress_log
+        .find("validation result=passed")
+        .expect("validation pass logged before review failure");
+    let review_index = progress_log
+        .find("review result=failed")
+        .expect("review failure logged");
     assert!(
-        !progress_log.contains("validation result=passed"),
-        "validation must not run after a failed review gate:\n{progress_log}"
-    );
-    assert!(
-        progress_log.contains("review result=failed"),
-        "{progress_log}"
+        validation_index < review_index,
+        "validation should run before the failed review gate:\n{progress_log}"
     );
     assert!(
         progress_log.contains("task_end number=1 result=failed"),

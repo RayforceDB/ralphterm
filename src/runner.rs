@@ -161,13 +161,40 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             );
             return Err(failed_run_error(err, summary_result));
         }
+        let validation_output = match run_validation_commands(
+            &plan.validation_commands,
+            &progress.validation_output_path,
+        ) {
+            Ok(validation_output) => {
+                output.push_str(&validation_output);
+                validation_output
+            }
+            Err(err) => {
+                append_progress(&progress.log_path, "validation result=failed")?;
+                append_progress(
+                    &progress.log_path,
+                    &format!("task_end number={} result=failed", task.number),
+                )?;
+                let summary_result = write_failed_run_summary(
+                    plan_name,
+                    &plan_slug,
+                    &executed_tasks,
+                    task,
+                    "validation",
+                    &err.to_string(),
+                    &progress,
+                );
+                return Err(failed_run_error(err, summary_result));
+            }
+        };
+        append_progress(&progress.log_path, "validation result=passed")?;
         if let Some(review_command) = options.review_command.as_deref() {
             match run_review_command(
                 review_command,
                 plan_name,
                 task,
                 &transcript,
-                "Validation commands have not run yet. Review the implementation before validation.",
+                &validation_output,
                 &progress,
             ) {
                 Ok(review_output) => {
@@ -196,56 +223,6 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             output.push_str("Review: skipped\n");
             append_progress(&progress.log_path, "review result=skipped")?;
         }
-        let reviewed_git_state = if options.review_command.is_some() && git_inside_work_tree() {
-            Some(reviewed_worktree_snapshot())
-        } else {
-            None
-        };
-        match run_validation_commands(&plan.validation_commands, &progress.validation_output_path) {
-            Ok(validation_output) => {
-                output.push_str(&validation_output);
-            }
-            Err(err) => {
-                append_progress(&progress.log_path, "validation result=failed")?;
-                append_progress(
-                    &progress.log_path,
-                    &format!("task_end number={} result=failed", task.number),
-                )?;
-                let summary_result = write_failed_run_summary(
-                    plan_name,
-                    &plan_slug,
-                    &executed_tasks,
-                    task,
-                    "validation",
-                    &err.to_string(),
-                    &progress,
-                );
-                return Err(failed_run_error(err, summary_result));
-            }
-        };
-        if let Some(reviewed_git_state) = reviewed_git_state {
-            let current_git_state = reviewed_worktree_snapshot();
-            if current_git_state != reviewed_git_state {
-                append_progress(&progress.log_path, "validation result=failed")?;
-                append_progress(
-                    &progress.log_path,
-                    &format!("task_end number={} result=failed", task.number),
-                )?;
-                let reason = "validation changed the reviewed worktree after review";
-                let summary_result = write_failed_run_summary(
-                    plan_name,
-                    &plan_slug,
-                    &executed_tasks,
-                    task,
-                    "reviewed-worktree-change detection",
-                    reason,
-                    &progress,
-                );
-                let err = anyhow::anyhow!("{reason} for task {}", task.number);
-                return Err(failed_run_error(err, summary_result));
-            }
-        }
-        append_progress(&progress.log_path, "validation result=passed")?;
         plan_text = crate::plan::mark_task_complete(&plan_text, task.number)
             .with_context(|| format!("mark task {} complete", task.number))?;
         fs::write(&options.plan_path, &plan_text)
@@ -998,23 +975,23 @@ fn build_review_prompt(
     plan_name: &str,
     task: &Task,
     agent_transcript: &str,
-    validation_status: &str,
+    validation_output: &str,
     git_diff: &str,
 ) -> String {
     format!(
-        "You are independently reviewing one RalphTerm plan task from {plan_name}.\n\nTask {}: {}\n\nTask body:\n{}\n\nAgent transcript:\n{}\n\nValidation status:\n{}\n\nCurrent git diff:\n{}\n\n{}\n",
+        "You are independently reviewing one RalphTerm plan task from {plan_name}.\n\nTask {}: {}\n\nTask body:\n{}\n\nAgent transcript:\n{}\n\nValidation output:\n{}\n\nCurrent git diff:\n{}\n\n{}\n",
         task.number,
         task.title,
         task.body,
         agent_transcript,
-        validation_status,
+        validation_output,
         git_diff,
         review_instruction()
     )
 }
 
 fn review_instruction() -> &'static str {
-    "Print REVIEW_PASS only if the task matches the spec and is ready for validation. Validation has not run yet; do not require validation results for this pre-validation review. Print REVIEW_FAIL with the reason otherwise."
+    "Print REVIEW_PASS only if the task matches the spec and the validation output supports accepting it. Print REVIEW_FAIL with the reason otherwise."
 }
 
 fn review_output_passed(transcript: &str, _prompt: &str) -> bool {
@@ -1061,34 +1038,6 @@ fn git_state_for_review() -> String {
         }
     }
 
-    state
-}
-
-fn reviewed_worktree_snapshot() -> String {
-    let mut state = git_state_for_review();
-    if let Ok(output) = Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard", "-z"])
-        .output()
-    {
-        if output.status.success() {
-            for path in String::from_utf8_lossy(&output.stdout)
-                .split('\0')
-                .filter(|path| !path.is_empty() && !is_ralphterm_artifact(path))
-            {
-                state.push_str("Untracked file snapshot: ");
-                state.push_str(path);
-                state.push('\n');
-                match fs::read(path) {
-                    Ok(contents) => {
-                        state.push_str(&format!("len={} bytes={contents:?}\n", contents.len()));
-                    }
-                    Err(err) => {
-                        state.push_str(&format!("unreadable: {err}\n"));
-                    }
-                }
-            }
-        }
-    }
     state
 }
 
