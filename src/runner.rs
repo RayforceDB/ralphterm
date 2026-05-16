@@ -1469,27 +1469,69 @@ fn review_output_decision(transcript: &str, _prompt: &str) -> Option<bool> {
 }
 
 fn git_state_for_review() -> String {
+    const REVIEW_UNTRACKED_PATCH_LIMIT_BYTES: u64 = 64 * 1024;
     let mut state = String::new();
 
     append_git_output(&mut state, "Unstaged diff", &["diff", "--"]);
     append_git_output(&mut state, "Staged diff", &["diff", "--cached", "--"]);
 
-    if let Ok(output) = Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard"])
-        .output()
-    {
-        if output.status.success() {
-            let untracked: String = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|path| !is_ralphterm_artifact(path))
-                .map(|path| format!("{path}\n"))
-                .collect();
-            if !untracked.trim().is_empty() {
-                if !state.ends_with('\n') && !state.is_empty() {
-                    state.push('\n');
+    if let Ok(untracked) = git_untracked_files() {
+        let untracked_paths: Vec<String> = untracked
+            .into_iter()
+            .filter(|path| !is_ralphterm_artifact(path))
+            .collect();
+        if !untracked_paths.is_empty() {
+            if !state.ends_with('\n') && !state.is_empty() {
+                state.push('\n');
+            }
+            state.push_str("Untracked files:\n");
+            for path in &untracked_paths {
+                state.push_str(path);
+                state.push('\n');
+            }
+            state.push_str("Untracked file patches:\n");
+            let mut remaining_patch_budget = REVIEW_UNTRACKED_PATCH_LIMIT_BYTES;
+            for path in &untracked_paths {
+                match fs::symlink_metadata(path) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        state.push_str(&format!(
+                            "{path} patch omitted: symbolic links are not dereferenced\n"
+                        ));
+                    }
+                    Ok(metadata) if !metadata.is_file() => {
+                        state.push_str(&format!("{path} patch omitted: not a regular file\n"));
+                    }
+                    Ok(metadata) if metadata.len() > REVIEW_UNTRACKED_PATCH_LIMIT_BYTES => {
+                        state.push_str(&format!(
+                            "{path} patch omitted: file exceeds review prompt limit ({}/{} bytes)\n",
+                            metadata.len(),
+                            REVIEW_UNTRACKED_PATCH_LIMIT_BYTES
+                        ));
+                    }
+                    Ok(metadata) if metadata.len() > remaining_patch_budget => {
+                        state.push_str(&format!(
+                            "{path} patch omitted: untracked patch budget exhausted ({}/{} bytes remaining)\n",
+                            metadata.len(),
+                            remaining_patch_budget
+                        ));
+                    }
+                    Ok(_) => match git_no_index_new_file_patch(path) {
+                        Ok(patch) => {
+                            let patch_len = patch.len() as u64;
+                            if patch_len > remaining_patch_budget {
+                                state.push_str(&format!(
+                                    "{path} patch omitted: untracked patch budget exhausted ({patch_len}/{} bytes remaining)\n",
+                                    remaining_patch_budget
+                                ));
+                            } else {
+                                remaining_patch_budget -= patch_len;
+                                state.push_str(&patch);
+                            }
+                        }
+                        Err(err) => state.push_str(&format!("{path} patch unavailable: {err}\n")),
+                    },
+                    Err(err) => state.push_str(&format!("{path} patch unavailable: {err}\n")),
                 }
-                state.push_str("Untracked files:\n");
-                state.push_str(&untracked);
             }
         }
     }

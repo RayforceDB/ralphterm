@@ -2707,12 +2707,155 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
         review_prompt.contains("\nfirst.txt\n"),
         "review prompt should expose newly-created files for review:\n{review_prompt}"
     );
+    assert!(
+        review_prompt.contains("diff --git a/first.txt b/first.txt"),
+        "review prompt should include a patch for untracked files, not only their names:\n{review_prompt}"
+    );
+    assert!(
+        review_prompt.contains("+created by fake agent"),
+        "review prompt should expose untracked file contents for independent verification:\n{review_prompt}"
+    );
 
     let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
         .expect("read run summary");
     assert!(
         summary.contains(".ralphterm/progress/plan-task-1-review.transcript"),
         "passed run summary should link the independent review transcript:\n{summary}"
+    );
+}
+
+#[test]
+fn review_prompt_omits_large_untracked_file_contents_with_marker() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    let large_secret = "DO_NOT_SEND_TO_REVIEW".repeat(4_000);
+    fs::write(repo.path.join("large-secret.txt"), &large_secret)
+        .expect("write large untracked file");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
+        .expect("review fixture should capture prompt");
+    assert!(
+        review_prompt.contains("large-secret.txt patch omitted: file exceeds review prompt limit"),
+        "large untracked files should be named but omitted with a clear marker"
+    );
+    assert!(
+        !review_prompt.contains("DO_NOT_SEND_TO_REVIEW"),
+        "large untracked file contents must not be sent to the review command"
+    );
+    assert!(
+        review_prompt.contains("diff --git a/first.txt b/first.txt"),
+        "small task-created files should still include patches"
+    );
+}
+
+#[test]
+fn review_prompt_applies_aggregate_untracked_patch_budget() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    for index in 0..10 {
+        fs::write(
+            repo.path.join(format!("small-untracked-{index:02}.txt")),
+            format!("AGGREGATE_SECRET_{index}\n{}", "x".repeat(10_000)),
+        )
+        .expect("write small untracked file");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
+        .expect("review fixture should capture prompt");
+    assert!(
+        review_prompt
+            .contains("small-untracked-09.txt patch omitted: untracked patch budget exhausted"),
+        "aggregate untracked file patch budget should omit later files with a clear marker"
+    );
+    assert!(
+        !review_prompt.contains("AGGREGATE_SECRET_9"),
+        "files omitted by aggregate budget must not leak their contents"
+    );
+    assert!(
+        review_prompt.contains("diff --git a/first.txt b/first.txt"),
+        "task-created file patch should still be available for review"
     );
 }
 
