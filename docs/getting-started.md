@@ -69,6 +69,22 @@ ralphterm run docs/plans/example.md --dry-run
 
 That prints pending tasks, review mode, and validation commands only. It does not start an agent, edit the plan, write `.ralphterm/progress/`, or commit.
 
+A minimal plan is just a validation block plus unchecked task items:
+
+```markdown
+# Example plan
+
+## Validation Commands
+- `cargo test --all`
+
+### Task 1: Add the smallest useful slice
+- [ ] Write the failing test first
+- [ ] Implement the slice
+- [ ] Run the validation command
+```
+
+RalphTerm sends the pending task to the implementation agent, then runs the validation commands. If review is required, the reviewer sees the transcript, validation output, and git diff before it can print `REVIEW_PASS`.
+
 After the official Claude Code CLI is installed, authenticated, and works interactively as `claude` in your shell, run:
 
 ```bash

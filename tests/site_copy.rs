@@ -174,3 +174,27 @@ fn public_docs_mention_review_agent_as_supported_review_config() {
         );
     }
 }
+
+#[test]
+fn getting_started_shows_minimal_plan_file_shape() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let docs_markdown =
+        std::fs::read_to_string(root.join("docs/getting-started.md")).expect("read docs markdown");
+    let docs_html =
+        std::fs::read_to_string(root.join("site/docs/index.html")).expect("read public docs index");
+
+    for (name, text) in [("markdown docs", docs_markdown), ("public docs", docs_html)] {
+        assert!(
+            text.contains("## Validation Commands"),
+            "{name} should show where plan-level validation commands go"
+        );
+        assert!(
+            text.contains("- [ ]"),
+            "{name} should show unchecked task items that RalphTerm can mark complete"
+        );
+        assert!(
+            text.contains("reviewer sees the transcript, validation output, and git diff"),
+            "{name} should explain the evidence sent through the review gate"
+        );
+    }
+}

@@ -84,6 +84,20 @@ curl http://127.0.0.1:7878/v1/sessions/$ID/transcript</code></pre>
       <p>After authenticating the official CLI, verify it can start in a real PTY, receive input, emit <code>COMPLETED</code>, and exit.</p>
       <pre><code>ralphterm smoke --agent claude
 ralphterm smoke --agent codex</code></pre>
+      <h2>Preview a plan</h2>
+      <pre><code>ralphterm run docs/plans/example.md --dry-run</code></pre>
+      <p>That prints pending tasks, review mode, and validation commands only. It does not start an agent, edit the plan, write <code>.ralphterm/progress/</code>, or commit.</p>
+      <p>A minimal plan is just a validation block plus unchecked task items:</p>
+      <pre><code># Example plan
+
+## Validation Commands
+- `cargo test --all`
+
+### Task 1: Add the smallest useful slice
+- [ ] Write the failing test first
+- [ ] Implement the slice
+- [ ] Run the validation command</code></pre>
+      <p>RalphTerm sends the pending task to the implementation agent, then runs the validation commands. If review is required, the reviewer sees the transcript, validation output, and git diff before it can print <code>REVIEW_PASS</code>.</p>
       <h2>Plan run with review</h2>
       <p>Use <code>--require-review</code> for real plan runs that must have an independent reviewer. RalphTerm fails before agent execution unless <code>--review-command</code> or <code>--review-agent</code> is supplied.</p>
       <pre><code>ralphterm run docs/plans/example.md --agent claude \
