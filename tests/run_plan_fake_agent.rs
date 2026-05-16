@@ -205,7 +205,10 @@ Literal example: `- [ ] do not mark`
         "{progress_log}"
     );
     assert!(progress_log.contains("signal=COMPLETED"), "{progress_log}");
-    assert!(progress_log.contains("task_end number=1"), "{progress_log}");
+    assert!(
+        progress_log.contains("task_end number=1 result=passed"),
+        "{progress_log}"
+    );
 
     let transcript_line = progress_log
         .lines()

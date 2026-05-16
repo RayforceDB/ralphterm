@@ -313,7 +313,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         }
         append_progress(
             &progress.log_path,
-            &format!("task_end number={}", task.number),
+            &format!("task_end number={} result=passed", task.number),
         )?;
         executed_tasks.push(ExecutedTask {
             number: task.number,
