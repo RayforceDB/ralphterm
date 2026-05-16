@@ -72,8 +72,9 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         };
         output.push_str(&format!("Task {}: {}\n", task.number, task.title));
         let prompt = build_task_prompt(plan_name, task, &plan.validation_commands);
-        let transcript = run_agent_command(&agent_command, &prompt)
+        let agent_run = run_agent_command(&agent_command, &prompt)
             .with_context(|| format!("run agent for task {}", task.number))?;
+        let transcript = agent_run.transcript;
         fs::write(&progress.transcript_path, &transcript)
             .with_context(|| format!("write transcript {}", progress.transcript_path.display()))?;
         append_progress(
@@ -87,6 +88,17 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         output.push_str(&transcript);
         if !transcript.ends_with('\n') {
             output.push('\n');
+        }
+        if agent_run.exit_code != 0 {
+            append_progress(
+                &progress.log_path,
+                &format!("task_end number={} result=failed", task.number),
+            )?;
+            bail!(
+                "agent command exited with {} for task {}",
+                agent_run.exit_code,
+                task.number
+            );
         }
         match run_validation_commands(&plan.validation_commands) {
             Ok(validation_output) => output.push_str(&validation_output),
@@ -154,6 +166,11 @@ struct ExecutedTask {
     number: usize,
     title: String,
     transcript_display: String,
+}
+
+struct AgentRun {
+    transcript: String,
+    exit_code: u32,
 }
 
 impl ProgressPaths {
@@ -392,7 +409,7 @@ fn run_validation_commands(commands: &[String]) -> Result<String> {
     Ok(output)
 }
 
-fn run_agent_command(agent_command: &str, prompt: &str) -> Result<String> {
+fn run_agent_command(agent_command: &str, prompt: &str) -> Result<AgentRun> {
     let mut parts = shlex::split(agent_command)
         .filter(|parts| !parts.is_empty())
         .ok_or_else(|| anyhow::anyhow!("invalid agent command"))?;
@@ -443,10 +460,8 @@ fn run_agent_command(agent_command: &str, prompt: &str) -> Result<String> {
     }
 
     let status = child.wait().context("wait for agent command")?;
-    let code = status.exit_code();
-    if code != 0 {
-        bail!("agent command exited with {code}: {transcript}");
-    }
-
-    Ok(transcript)
+    Ok(AgentRun {
+        transcript,
+        exit_code: status.exit_code(),
+    })
 }
