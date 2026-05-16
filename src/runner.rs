@@ -3,6 +3,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     os::unix::fs::symlink,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
@@ -46,7 +47,7 @@ impl RetryCleanupSnapshot {
         self.restore_existing_baseline_dir_permissions_shallow_to_deep(root)?;
 
         let mut current = Vec::new();
-        collect_retry_cleanup_paths(root, root, &mut current)?;
+        collect_retry_cleanup_paths(root, root, &self.dirs, &mut current)?;
         current.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
         for relative_path in current {
             let path = root.join(&relative_path);
@@ -58,6 +59,14 @@ impl RetryCleanupSnapshot {
                 .map(|metadata| metadata.is_dir())
                 .unwrap_or(false)
             {
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).with_context(
+                    || {
+                        format!(
+                            "make rejected directory removable before cleanup {}",
+                            path.display()
+                        )
+                    },
+                )?;
                 fs::remove_dir_all(&path)
                     .with_context(|| format!("remove rejected directory {}", path.display()))?;
             } else if path.symlink_metadata().is_ok() {
@@ -1402,7 +1411,12 @@ fn remove_path_for_restore(path: &Path) -> Result<()> {
     }
 }
 
-fn collect_retry_cleanup_paths(root: &Path, path: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_retry_cleanup_paths(
+    root: &Path,
+    path: &Path,
+    baseline_dirs: &BTreeMap<PathBuf, fs::Permissions>,
+    paths: &mut Vec<PathBuf>,
+) -> Result<()> {
     for entry in fs::read_dir(path).with_context(|| format!("read directory {}", path.display()))? {
         let entry = entry.with_context(|| format!("read directory entry in {}", path.display()))?;
         let entry_path = entry.path();
@@ -1417,8 +1431,9 @@ fn collect_retry_cleanup_paths(root: &Path, path: &Path, paths: &mut Vec<PathBuf
             .file_type()
             .with_context(|| format!("read file type {}", entry_path.display()))?
             .is_dir()
+            && baseline_dirs.contains_key(&relative_path)
         {
-            collect_retry_cleanup_paths(root, &entry_path, paths)?;
+            collect_retry_cleanup_paths(root, &entry_path, baseline_dirs, paths)?;
         }
         paths.push(relative_path);
     }

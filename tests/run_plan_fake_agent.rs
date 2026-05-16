@@ -4094,6 +4094,58 @@ fn review_retry_cleanup_restores_non_traversable_baseline_directory_before_retry
 }
 
 #[test]
+fn review_retry_cleanup_removes_new_non_traversable_rejected_directory() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env(
+            "RALPHTERM_RETRY_CLEANUP_SCENARIO",
+            "new-non-traversable-directory",
+        )
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-cleanup-mutator-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-once.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run should retry successfully after removing new non-traversable rejected directory\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !repo.path.join("rejected-dir").exists(),
+        "retry cleanup should remove rejected directory without recursing into it"
+    );
+}
+
+#[test]
 fn review_retry_cleanup_restores_baseline_file_replaced_by_directory() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");

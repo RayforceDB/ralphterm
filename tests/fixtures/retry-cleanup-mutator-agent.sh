@@ -32,6 +32,11 @@ if [ "$count" -eq 1 ]; then
       mkdir baseline-file
       printf 'rejected child\n' > baseline-file/rejected-child.txt
       ;;
+    new-non-traversable-directory)
+      mkdir rejected-dir
+      printf 'rejected child\n' > rejected-dir/rejected-child.txt
+      chmod 000 rejected-dir
+      ;;
     basic|symlink-survives)
       ;;
     *)
