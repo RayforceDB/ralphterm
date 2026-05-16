@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ralphterm.rayforcedb.com/sitemap.xml

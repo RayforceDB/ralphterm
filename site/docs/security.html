@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Security — RalphTerm Docs</title>
+  <meta name="description" content="RalphTerm security and compliance model." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#why">Why</a>
+        <a href="/#product">Product</a>
+        <a href="/#workflow">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> docs</div>
+      <h1>Security model</h1>
+      <p>RalphTerm automates terminals. The default posture is conservative.</p>
+      <h2>Hard rules</h2>
+      <ul>
+        <li>Do not store provider credentials.</li>
+        <li>Do not emulate private APIs.</li>
+        <li>Do not alter account identity.</li>
+        <li>Do not auto-approve interactive prompts unless the operator configured that policy.</li>
+        <li>Do not expose the API on a public interface without auth.</li>
+      </ul>
+      <h2>Local-first default</h2>
+      <p>The daemon binds to <code>127.0.0.1</code>. If a deployment binds elsewhere, it must add authentication and network controls.</p>
+      <h2>Credential boundary</h2>
+      <p>Claude Code, Codex, and future CLIs own auth. RalphTerm should only see terminal bytes.</p>
+      <h2>Audit trail</h2>
+      <p>Every meaningful run should preserve transcripts, event logs, approval decisions, final status, and artifacts.</p>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>
