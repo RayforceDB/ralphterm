@@ -19,7 +19,7 @@ mod signals;
 mod store;
 
 use pty_agent::{AgentKind, SessionConfig, SessionInput};
-use ralphterm::runner::{run_plan, RunOptions};
+use ralphterm::runner::{run_plan, run_smoke, RunOptions};
 use store::{SessionRecord, SessionStore};
 
 #[derive(Debug, Parser)]
@@ -46,6 +46,12 @@ enum Command {
         no_commit: bool,
         #[arg(long)]
         dry_run: bool,
+    },
+    Smoke {
+        #[arg(long, value_enum, conflicts_with = "agent_command")]
+        agent: Option<RunAgentKind>,
+        #[arg(long)]
+        agent_command: Option<String>,
     },
 }
 
@@ -138,6 +144,16 @@ async fn main() -> anyhow::Result<()> {
                 no_commit,
                 dry_run,
             })?;
+            print!("{output}");
+            Ok(())
+        }
+        Command::Smoke {
+            agent,
+            agent_command,
+        } => {
+            let agent_command =
+                agent_command.unwrap_or_else(|| agent.unwrap_or(RunAgentKind::Claude).command());
+            let output = run_smoke(&agent_command)?;
             print!("{output}");
             Ok(())
         }

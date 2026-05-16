@@ -84,14 +84,15 @@ curl http://127.0.0.1:7878/v1/sessions/$ID
 curl http://127.0.0.1:7878/v1/sessions/$ID/transcript
 ```
 
-Manual real CLI smoke test for `ralphterm run`:
+Manual real CLI smoke test and plan run:
 
 ```bash
+ralphterm smoke --agent claude
 ralphterm run docs/plans/example.md --dry-run
 ralphterm run docs/plans/example.md --agent claude
 ```
 
-Start with `--dry-run` to see the pending tasks and validation commands without starting an agent, editing the plan, writing progress logs, or committing. Run the real CLI command only after the official Claude Code CLI is installed, authenticated, and works interactively as `claude` in your shell. RalphTerm launches the interactive CLI in a PTY and sends terminal input; it does not use `claude -p`, `--print`, or any one-shot prompt mode. Use `--agent codex` to run the same workflow with an authenticated interactive `codex` CLI. The lower-level `--agent-command <cmd>` option remains available for tests and custom command wrappers.
+Start with `ralphterm smoke --agent claude` or `ralphterm smoke --agent codex` to verify the official CLI can start inside a real PTY, receive terminal input, print `COMPLETED`, and exit. Then use `--dry-run` to see the pending tasks and validation commands without starting an agent, editing the plan, writing progress logs, or committing. Run the real plan command only after the official Claude Code CLI is installed, authenticated, and works interactively as `claude` in your shell. RalphTerm launches the interactive CLI in a PTY and sends terminal input; it does not use `claude -p`, `--print`, or any one-shot prompt mode. Use `--agent codex` to run the same workflow with an authenticated interactive `codex` CLI. The lower-level `--agent-command <cmd>` option remains available for tests and custom command wrappers.
 
 ## Milestone 1
 

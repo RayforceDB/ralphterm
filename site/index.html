@@ -74,7 +74,12 @@
 
       <div class="terminal-card" aria-label="RalphTerm example">
         <div class="terminal-bar"><span></span><span></span><span></span><b>ralphterm.local</b></div>
-        <pre><code>$ ralphterm run docs/plans/example.md --dry-run
+        <pre><code>$ ralphterm smoke --agent claude
+Smoke: claude
+COMPLETED
+Signal: COMPLETED
+
+$ ralphterm run docs/plans/example.md --dry-run
 Dry run: example.md
 Validation: test -f docs/plans/example-output.txt
 Task 1: Create smoke-test output
@@ -125,6 +130,7 @@ $ ralphterm run docs/plans/example.md --agent claude
         <p>Use <code>ralphterm run</code> for task-by-task plan execution. The session API remains the lower-level control surface for custom orchestrators.</p>
       </div>
       <ul class="api-list">
+        <li><code>ralphterm smoke --agent claude</code><span>verify the real CLI can run inside a PTY and emit a completion signal</span></li>
         <li><code>ralphterm run PLAN --dry-run</code><span>preview pending tasks and validation without starting an agent</span></li>
         <li><code>ralphterm run PLAN --agent claude</code><span>execute pending plan tasks through Claude Code</span></li>
         <li><code>ralphterm run PLAN --agent codex</code><span>run the same loop through Codex</span></li>

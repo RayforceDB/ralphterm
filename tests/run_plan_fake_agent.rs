@@ -3,8 +3,113 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::{Command, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+#[test]
+fn smoke_command_runs_fake_agent_and_reports_completed_signal() {
+    let repo = TempRepo::new();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "smoke",
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm smoke");
+
+    assert!(
+        output.status.success(),
+        "ralphterm smoke failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Smoke:"), "{stdout}");
+    assert!(stdout.contains("Signal: COMPLETED"), "{stdout}");
+    assert!(stdout.contains("COMPLETED"), "{stdout}");
+}
+
+#[test]
+fn smoke_command_missing_completed_reports_agent_transcript_for_diagnostics() {
+    let repo = TempRepo::new();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "smoke",
+            "--agent-command",
+            fixture_path("fake-agent-no-completed.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm smoke");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm smoke unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let diagnostics = format!("{stdout}\n{stderr}");
+    assert!(diagnostics.contains("Smoke:"), "{diagnostics}");
+    assert!(diagnostics.contains("NOPE"), "{diagnostics}");
+    assert!(diagnostics.contains("Signal: NONE"), "{diagnostics}");
+}
+
+#[test]
+fn smoke_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
+    let repo = TempRepo::new();
+    let start = Instant::now();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("RALPHTERM_SMOKE_TIMEOUT_MS", "250")
+        .args([
+            "smoke",
+            "--agent-command",
+            fixture_path("hanging-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm smoke");
+
+    let elapsed = start.elapsed();
+    assert!(
+        !output.status.success(),
+        "ralphterm smoke unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "smoke timeout was not bounded: elapsed={elapsed:?}\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let diagnostics = format!("{stdout}\n{stderr}");
+    assert!(diagnostics.contains("timed out"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("still waiting for external input"),
+        "{diagnostics}"
+    );
+}
 
 #[test]
 fn run_command_marks_completed_tasks_and_commits() {

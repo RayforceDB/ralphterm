@@ -4,7 +4,9 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{bail, Context, Result};
@@ -141,6 +143,42 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     Ok(output)
 }
 
+pub fn run_smoke(agent_command: &str) -> Result<String> {
+    let prompt = "RalphTerm PTY smoke check. Print COMPLETED and exit after a minimal response.";
+    let agent_run = run_agent_command_with_timeout(agent_command, prompt, smoke_timeout())
+        .context("run smoke agent")?;
+    let mut output = format!("Smoke: {agent_command}\n");
+    output.push_str(&agent_run.transcript);
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    let signal = completion_signal(&agent_run.transcript, prompt);
+    output.push_str(&format!("Signal: {signal}\n"));
+    if agent_run.timed_out {
+        bail!("smoke timed out after {:?}\n{output}", smoke_timeout());
+    }
+    if agent_run.exit_code != 0 {
+        bail!(
+            "agent command exited with {} during smoke\n{output}",
+            agent_run.exit_code,
+        );
+    }
+    if signal != "COMPLETED" {
+        bail!("smoke transcript did not contain COMPLETED signal\n{output}");
+    }
+    Ok(output)
+}
+
+fn smoke_timeout() -> Duration {
+    const DEFAULT_SMOKE_TIMEOUT_MS: u64 = 30_000;
+    let timeout_ms = std::env::var("RALPHTERM_SMOKE_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SMOKE_TIMEOUT_MS);
+    Duration::from_millis(timeout_ms)
+}
+
 fn describe_dry_run(plan_name: &str, validation_commands: &[String], pending: &[&Task]) -> String {
     let mut output = format!("Dry run: {plan_name}\n");
     if validation_commands.is_empty() {
@@ -171,6 +209,7 @@ struct ExecutedTask {
 struct AgentRun {
     transcript: String,
     exit_code: u32,
+    timed_out: bool,
 }
 
 impl ProgressPaths {
@@ -410,6 +449,128 @@ fn run_validation_commands(commands: &[String]) -> Result<String> {
 }
 
 fn run_agent_command(agent_command: &str, prompt: &str) -> Result<AgentRun> {
+    let mut child = spawn_agent_command(agent_command, prompt)?;
+    let mut reader = child
+        .master
+        .try_clone_reader()
+        .context("clone pty reader")?;
+    let mut transcript = String::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => transcript.push_str(&String::from_utf8_lossy(&buf[..n])),
+            Err(err) => bail!("read pty: {err}"),
+        }
+    }
+
+    let status = child.child.wait().context("wait for agent command")?;
+    Ok(AgentRun {
+        transcript,
+        exit_code: status.exit_code(),
+        timed_out: false,
+    })
+}
+
+fn run_agent_command_with_timeout(
+    agent_command: &str,
+    prompt: &str,
+    timeout: Duration,
+) -> Result<AgentRun> {
+    enum ReaderEvent {
+        Chunk(String),
+        Error(String),
+        Done,
+    }
+
+    let mut agent = spawn_agent_command(agent_command, prompt)?;
+    let mut reader = agent
+        .master
+        .try_clone_reader()
+        .context("clone pty reader")?;
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => {
+                    let _ = tx.send(ReaderEvent::Done);
+                    break;
+                }
+                Ok(n) => {
+                    let _ = tx.send(ReaderEvent::Chunk(
+                        String::from_utf8_lossy(&buf[..n]).into_owned(),
+                    ));
+                }
+                Err(err) => {
+                    let _ = tx.send(ReaderEvent::Error(err.to_string()));
+                    break;
+                }
+            }
+        }
+    });
+
+    let deadline = Instant::now() + timeout;
+    let mut transcript = String::new();
+    let mut reader_done = false;
+    let mut read_error = None;
+    let mut timed_out = false;
+    let status = loop {
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                ReaderEvent::Chunk(chunk) => transcript.push_str(&chunk),
+                ReaderEvent::Error(err) => {
+                    read_error = Some(err);
+                    reader_done = true;
+                }
+                ReaderEvent::Done => reader_done = true,
+            }
+        }
+
+        if let Some(status) = agent.child.try_wait().context("poll agent command")? {
+            break status;
+        }
+
+        if Instant::now() >= deadline {
+            timed_out = true;
+            agent.child.kill().context("kill timed out smoke agent")?;
+            break agent.child.wait().context("wait for killed smoke agent")?;
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    let drain_deadline = Instant::now() + Duration::from_millis(200);
+    while !reader_done && Instant::now() < drain_deadline {
+        match rx.recv_timeout(Duration::from_millis(10)) {
+            Ok(ReaderEvent::Chunk(chunk)) => transcript.push_str(&chunk),
+            Ok(ReaderEvent::Error(err)) => {
+                read_error = Some(err);
+                reader_done = true;
+            }
+            Ok(ReaderEvent::Done) => reader_done = true,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    if let Some(err) = read_error.filter(|_| !timed_out) {
+        bail!("read pty: {err}");
+    }
+
+    Ok(AgentRun {
+        transcript,
+        exit_code: status.exit_code(),
+        timed_out,
+    })
+}
+
+struct SpawnedAgent {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    master: Box<dyn portable_pty::MasterPty + Send>,
+}
+
+fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent> {
     let mut parts = shlex::split(agent_command)
         .filter(|parts| !parts.is_empty())
         .ok_or_else(|| anyhow::anyhow!("invalid agent command"))?;
@@ -433,7 +594,7 @@ fn run_agent_command(agent_command: &str, prompt: &str) -> Result<AgentRun> {
         cmd.cwd(cwd);
     }
 
-    let mut child = pair
+    let child = pair
         .slave
         .spawn_command(cmd)
         .context("spawn agent command")?;
@@ -448,20 +609,8 @@ fn run_agent_command(agent_command: &str, prompt: &str) -> Result<AgentRun> {
         writer.flush().context("flush prompt")?;
     }
 
-    let mut reader = pair.master.try_clone_reader().context("clone pty reader")?;
-    let mut transcript = String::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => transcript.push_str(&String::from_utf8_lossy(&buf[..n])),
-            Err(err) => bail!("read pty: {err}"),
-        }
-    }
-
-    let status = child.wait().context("wait for agent command")?;
-    Ok(AgentRun {
-        transcript,
-        exit_code: status.exit_code(),
+    Ok(SpawnedAgent {
+        child,
+        master: pair.master,
     })
 }

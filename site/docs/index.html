@@ -79,6 +79,10 @@ ID=$(curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
 
 curl http://127.0.0.1:7878/v1/sessions/$ID
 curl http://127.0.0.1:7878/v1/sessions/$ID/transcript</code></pre>
+      <h2>Real agent smoke check</h2>
+      <p>After authenticating the official CLI, verify it can start in a real PTY, receive input, emit <code>COMPLETED</code>, and exit.</p>
+      <pre><code>ralphterm smoke --agent claude
+ralphterm smoke --agent codex</code></pre>
       <h2>Real agent sessions</h2>
       <p>Install and authenticate the official CLI first. RalphTerm does not own provider credentials.</p>
       <pre><code>claude auth login
