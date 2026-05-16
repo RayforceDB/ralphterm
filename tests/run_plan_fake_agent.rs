@@ -1420,6 +1420,197 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
 }
 
 #[test]
+fn review_command_runs_before_validation_commands() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f review-before-validation.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-pass-creates-validation-file.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "review should run before validation commands so reviewer-created verification artifacts are available\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    let review_index = progress_log
+        .find("review result=passed")
+        .expect("review pass logged");
+    let validation_index = progress_log
+        .find("validation result=passed")
+        .expect("validation pass logged");
+    assert!(
+        review_index < validation_index,
+        "review gate must be logged before validation commands:\n{progress_log}"
+    );
+
+    let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
+        .expect("review fixture should capture prompt");
+    assert!(
+        review_prompt.contains("Validation status:\nValidation commands have not run yet."),
+        "pre-validation review prompt should label validation as status, not output:\n{review_prompt}"
+    );
+    assert!(
+        review_prompt.contains("ready for validation"),
+        "pre-validation reviewer should approve readiness for validation:\n{review_prompt}"
+    );
+    assert!(
+        !review_prompt.contains("validation is trustworthy"),
+        "pre-validation reviewer cannot judge validation trustworthiness before commands run:\n{review_prompt}"
+    );
+}
+
+#[test]
+fn validation_commands_that_change_worktree_after_review_block_acceptance() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `printf validation-side-effect > sneaky.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "validation side effects after review must block task acceptance\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("validation changed the reviewed worktree"),
+        "{diagnostics}"
+    );
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+}
+
+#[test]
+fn validation_commands_that_change_reviewed_untracked_file_after_review_block_acceptance() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `printf validation-side-effect > first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "validation changes to reviewed untracked files must block task acceptance\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("validation changed the reviewed worktree"),
+        "{diagnostics}"
+    );
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+}
+
+#[test]
 fn require_review_without_review_command_refuses_to_run_agent() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
@@ -1590,8 +1781,8 @@ fn review_command_fail_blocks_marking_and_commit() {
     let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
         .expect("read progress log");
     assert!(
-        progress_log.contains("validation result=passed"),
-        "{progress_log}"
+        !progress_log.contains("validation result=passed"),
+        "validation must not run after a failed review gate:\n{progress_log}"
     );
     assert!(
         progress_log.contains("review result=failed"),
