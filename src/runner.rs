@@ -1,9 +1,10 @@
 use std::{
     collections::BTreeSet,
-    fs,
+    fs::{self, OpenOptions},
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{bail, Context, Result};
@@ -39,8 +40,14 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     let agent_command = options
         .agent_command
         .unwrap_or_else(|| "claude".to_string());
+    let plan_slug = plan_slug(&options.plan_path);
 
     for task in pending {
+        let progress = ProgressPaths::new(&plan_slug, task.number)?;
+        append_progress(
+            &progress.log_path,
+            &format!("task_start number={} title={}", task.number, task.title),
+        )?;
         let baseline_paths = if options.no_commit {
             BTreeSet::new()
         } else {
@@ -50,11 +57,22 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         let prompt = build_task_prompt(plan_name, task, &plan.validation_commands);
         let transcript = run_agent_command(&agent_command, &prompt)
             .with_context(|| format!("run agent for task {}", task.number))?;
+        fs::write(&progress.transcript_path, &transcript)
+            .with_context(|| format!("write transcript {}", progress.transcript_path.display()))?;
+        append_progress(
+            &progress.log_path,
+            &format!(
+                "signal={} transcript path={}",
+                completion_signal(&transcript),
+                progress.transcript_display
+            ),
+        )?;
         output.push_str(&transcript);
         if !transcript.ends_with('\n') {
             output.push('\n');
         }
         output.push_str(&run_validation_commands(&plan.validation_commands)?);
+        append_progress(&progress.log_path, "validation result=passed")?;
         plan_text = crate::plan::mark_task_complete(&plan_text, task.number)
             .with_context(|| format!("mark task {} complete", task.number))?;
         fs::write(&options.plan_path, &plan_text)
@@ -63,11 +81,83 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         if !options.no_commit {
             let commit = commit_task(&task.title, &baseline_paths)
                 .with_context(|| format!("commit task {}", task.number))?;
+            append_progress(&progress.log_path, &format!("commit hash={commit}"))?;
             output.push_str(&format!("Committed {commit}\n"));
+        } else {
+            append_progress(&progress.log_path, "commit no_commit=true")?;
         }
+        append_progress(
+            &progress.log_path,
+            &format!("task_end number={}", task.number),
+        )?;
     }
 
     Ok(output)
+}
+
+struct ProgressPaths {
+    log_path: PathBuf,
+    transcript_path: PathBuf,
+    transcript_display: String,
+}
+
+impl ProgressPaths {
+    fn new(plan_slug: &str, task_number: usize) -> Result<Self> {
+        let progress_dir = PathBuf::from(".ralphterm").join("progress");
+        fs::create_dir_all(&progress_dir).context("create progress directory")?;
+        let log_path = progress_dir.join(format!("{plan_slug}.log"));
+        let transcript_path =
+            progress_dir.join(format!("{plan_slug}-task-{task_number}.transcript"));
+        let transcript_display = transcript_path.to_string_lossy().into_owned();
+        Ok(Self {
+            log_path,
+            transcript_path,
+            transcript_display,
+        })
+    }
+}
+
+fn append_progress(path: &Path, event: &str) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open progress log {}", path.display()))?;
+    writeln!(file, "timestamp={} {event}", timestamp()).context("write progress log")
+}
+
+fn timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    seconds.to_string()
+}
+
+fn completion_signal(transcript: &str) -> &'static str {
+    if transcript.contains("COMPLETED") {
+        "COMPLETED"
+    } else {
+        "NONE"
+    }
+}
+
+fn plan_slug(plan_path: &Path) -> String {
+    let raw = plan_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let slug: String = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    slug.trim_matches('-').to_string()
 }
 
 fn commit_task(title: &str, baseline_paths: &BTreeSet<String>) -> Result<String> {

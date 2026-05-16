@@ -80,8 +80,38 @@ Literal example: `- [ ] do not mark`
     );
     assert_eq!(
         repo.git_output(["status", "--short"]),
-        "M  staged.txt\n M unrelated.txt\n"
+        "M  staged.txt\n M unrelated.txt\n?? .ralphterm/\n"
     );
+
+    let progress_log_path = repo.path.join(".ralphterm/progress/plan.log");
+    let progress_log = fs::read_to_string(&progress_log_path).expect("read progress log");
+    assert!(
+        progress_log.contains("task_start number=1 title=Create first file"),
+        "{progress_log}"
+    );
+    assert!(
+        progress_log.contains("validation result=passed"),
+        "{progress_log}"
+    );
+    let commit_hash = repo.git_output(["rev-parse", "--short", "HEAD"]);
+    assert!(
+        progress_log.contains(&format!("commit hash={}", commit_hash.trim())),
+        "{progress_log}"
+    );
+    assert!(progress_log.contains("signal=COMPLETED"), "{progress_log}");
+    assert!(progress_log.contains("task_end number=1"), "{progress_log}");
+
+    let transcript_line = progress_log
+        .lines()
+        .find(|line| line.contains("transcript path="))
+        .expect("transcript path logged");
+    let transcript_path = transcript_line
+        .split("transcript path=")
+        .nth(1)
+        .expect("transcript path value")
+        .trim();
+    let transcript = fs::read_to_string(repo.path.join(transcript_path)).expect("read transcript");
+    assert!(transcript.contains("COMPLETED"), "{transcript}");
 }
 
 #[test]
