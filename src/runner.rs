@@ -50,6 +50,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         .agent_command
         .unwrap_or_else(|| "claude".to_string());
     let plan_slug = plan_slug(&options.plan_path);
+    remove_stale_run_summary(&plan_slug)?;
     let mut executed_tasks = Vec::new();
 
     for task in pending {
@@ -180,10 +181,27 @@ fn append_progress(path: &Path, event: &str) -> Result<()> {
     writeln!(file, "timestamp={} {event}", timestamp()).context("write progress log")
 }
 
+fn run_summary_path(plan_slug: &str) -> PathBuf {
+    PathBuf::from(".ralphterm")
+        .join("progress")
+        .join(format!("{plan_slug}-summary.md"))
+}
+
+fn remove_stale_run_summary(plan_slug: &str) -> Result<()> {
+    let summary_path = run_summary_path(plan_slug);
+    match fs::remove_file(&summary_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => {
+            Err(err).with_context(|| format!("remove stale run summary {}", summary_path.display()))
+        }
+    }
+}
+
 fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -> Result<()> {
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
-    let summary_path = progress_dir.join(format!("{plan_slug}-summary.md"));
+    let summary_path = run_summary_path(plan_slug);
     let mut summary = format!("# Run Summary: {plan_name}\n\nResult: passed\n\n");
     for task in tasks {
         summary.push_str(&format!(

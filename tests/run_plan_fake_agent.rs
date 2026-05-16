@@ -556,6 +556,59 @@ fn validation_failure_is_logged_and_does_not_complete_task() {
 }
 
 #[test]
+fn failed_rerun_removes_pre_existing_passed_summary() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f missing.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let progress_dir = repo.path.join(".ralphterm/progress");
+    fs::create_dir_all(&progress_dir).expect("create progress dir");
+    let summary_path = progress_dir.join("plan-summary.md");
+    fs::write(
+        &summary_path,
+        "# Run Summary: plan.md\n\nResult: passed\n\n- stale passed run\n",
+    )
+    .expect("write stale summary");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !summary_path.exists(),
+        "failed rerun should remove stale passed summary"
+    );
+}
+
+#[test]
 fn resume_is_not_logged_when_marker_only_appears_in_task_title() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
