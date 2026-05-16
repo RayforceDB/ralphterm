@@ -24,7 +24,7 @@ struct NoCommitBaseline {
 
 #[derive(Debug, Default)]
 struct RetryCleanupSnapshot {
-    dirs: BTreeSet<PathBuf>,
+    dirs: BTreeMap<PathBuf, fs::Permissions>,
     files: BTreeMap<PathBuf, RetryCleanupFileSnapshot>,
     symlinks: BTreeMap<PathBuf, PathBuf>,
 }
@@ -63,7 +63,7 @@ impl RetryCleanupSnapshot {
                     .with_context(|| format!("remove rejected file {}", path.display()))?;
             }
         }
-        for relative_dir in &self.dirs {
+        for relative_dir in self.dirs.keys() {
             let path = root.join(relative_dir);
             fs::create_dir_all(&path)
                 .with_context(|| format!("restore baseline directory {}", path.display()))?;
@@ -99,11 +99,19 @@ impl RetryCleanupSnapshot {
             symlink(target, &path)
                 .with_context(|| format!("restore baseline symlink {}", path.display()))?;
         }
+        let mut dirs: Vec<_> = self.dirs.iter().collect();
+        dirs.sort_by_key(|(relative_dir, _)| std::cmp::Reverse(relative_dir.components().count()));
+        for (relative_dir, permissions) in dirs {
+            let path = root.join(relative_dir);
+            fs::set_permissions(&path, permissions.clone()).with_context(|| {
+                format!("restore baseline directory permissions {}", path.display())
+            })?;
+        }
         Ok(())
     }
 
     fn path_matches_baseline_kind(&self, root: &Path, relative_path: &Path) -> Result<bool> {
-        let is_baseline_dir = self.dirs.contains(relative_path);
+        let is_baseline_dir = self.dirs.contains_key(relative_path);
         let is_baseline_file = self.files.contains_key(relative_path);
         let is_baseline_symlink = self.symlinks.contains_key(relative_path);
         if !is_baseline_dir && !is_baseline_file && !is_baseline_symlink {
@@ -1329,7 +1337,12 @@ fn collect_retry_cleanup_snapshot(
             .file_type()
             .with_context(|| format!("read file type {}", entry_path.display()))?;
         if file_type.is_dir() {
-            snapshot.dirs.insert(relative_path.clone());
+            let metadata = entry_path
+                .symlink_metadata()
+                .with_context(|| format!("snapshot directory metadata {}", entry_path.display()))?;
+            snapshot
+                .dirs
+                .insert(relative_path.clone(), metadata.permissions());
             collect_retry_cleanup_snapshot(root, &entry_path, snapshot)?;
         } else if file_type.is_file() {
             let metadata = entry_path

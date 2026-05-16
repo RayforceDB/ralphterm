@@ -21,6 +21,9 @@ if [ "$count" -eq 1 ]; then
       printf 'changed by rejected attempt\n' > executable.sh
       chmod 0644 executable.sh
       ;;
+    chmod-directory)
+      chmod 0755 restricted-dir
+      ;;
     file-to-dir)
       rm -f baseline-file
       mkdir baseline-file
