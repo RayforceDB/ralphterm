@@ -25,18 +25,26 @@ Each phase is backed by one or more terminal sessions. Every phase gets a transc
 
 ## Review workflow
 
-A reviewer agent receives:
+Use `--review-command <cmd>` when a task should not be accepted just because the implementation agent printed `COMPLETED`.
+
+```bash
+ralphterm run docs/plans/example.md --agent claude \
+  --review-command "codex exec review-task"
+```
+
+RalphTerm starts the reviewer in a fresh PTY after validation. The prompt includes:
 
 - task text
-- implementation summary
-- git diff
-- relevant transcript excerpts
+- implementation transcript
+- validation output
+- current git diff and untracked file names
 
-The reviewer must produce either:
+The reviewer must print one exact decision line:
 
-- `REVIEW_DONE` with approval
-- `FAILED` with blockers
-- `QUESTION` for human input
+- `REVIEW_PASS` accepts the task
+- `REVIEW_FAIL` blocks `[x]`, commit, and run summary
+
+If no review command is configured, RalphTerm prints `Review: skipped`. That mode is useful for smoke tests, but it is not replacement-grade autonomy yet.
 
 ## Approval workflow
 

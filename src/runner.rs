@@ -18,6 +18,7 @@ use crate::plan::{parse_plan, Task};
 pub struct RunOptions {
     pub plan_path: PathBuf,
     pub agent_command: Option<String>,
+    pub review_command: Option<String>,
     pub no_commit: bool,
     pub dry_run: bool,
 }
@@ -102,8 +103,11 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 task.number
             );
         }
-        match run_validation_commands(&plan.validation_commands) {
-            Ok(validation_output) => output.push_str(&validation_output),
+        let validation_output = match run_validation_commands(&plan.validation_commands) {
+            Ok(validation_output) => {
+                output.push_str(&validation_output);
+                validation_output
+            }
             Err(err) => {
                 append_progress(&progress.log_path, "validation result=failed")?;
                 append_progress(
@@ -112,8 +116,34 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 )?;
                 return Err(err);
             }
-        }
+        };
         append_progress(&progress.log_path, "validation result=passed")?;
+        if let Some(review_command) = options.review_command.as_deref() {
+            match run_review_command(
+                review_command,
+                plan_name,
+                task,
+                &transcript,
+                &validation_output,
+                &progress,
+            ) {
+                Ok(review_output) => {
+                    output.push_str(&review_output);
+                    append_progress(&progress.log_path, "review result=passed")?;
+                }
+                Err(err) => {
+                    append_progress(&progress.log_path, "review result=failed")?;
+                    append_progress(
+                        &progress.log_path,
+                        &format!("task_end number={} result=failed", task.number),
+                    )?;
+                    return Err(err);
+                }
+            }
+        } else {
+            output.push_str("Review: skipped\n");
+            append_progress(&progress.log_path, "review result=skipped")?;
+        }
         plan_text = crate::plan::mark_task_complete(&plan_text, task.number)
             .with_context(|| format!("mark task {} complete", task.number))?;
         fs::write(&options.plan_path, &plan_text)
@@ -197,7 +227,9 @@ fn describe_dry_run(plan_name: &str, validation_commands: &[String], pending: &[
 struct ProgressPaths {
     log_path: PathBuf,
     transcript_path: PathBuf,
+    review_transcript_path: PathBuf,
     transcript_display: String,
+    review_transcript_display: String,
 }
 
 struct ExecutedTask {
@@ -214,16 +246,22 @@ struct AgentRun {
 
 impl ProgressPaths {
     fn new(plan_slug: &str, task_number: usize) -> Result<Self> {
+        ensure_ralphterm_git_excluded()?;
         let progress_dir = PathBuf::from(".ralphterm").join("progress");
         fs::create_dir_all(&progress_dir).context("create progress directory")?;
         let log_path = progress_dir.join(format!("{plan_slug}.log"));
         let transcript_path =
             progress_dir.join(format!("{plan_slug}-task-{task_number}.transcript"));
+        let review_transcript_path =
+            progress_dir.join(format!("{plan_slug}-task-{task_number}-review.transcript"));
         let transcript_display = transcript_path.to_string_lossy().into_owned();
+        let review_transcript_display = review_transcript_path.to_string_lossy().into_owned();
         Ok(Self {
             log_path,
             transcript_path,
+            review_transcript_path,
             transcript_display,
+            review_transcript_display,
         })
     }
 }
@@ -385,6 +423,40 @@ fn is_ralphterm_artifact(path: &str) -> bool {
     path == ".ralphterm" || path.starts_with(".ralphterm/")
 }
 
+fn ensure_ralphterm_git_excluded() -> Result<()> {
+    let git_path = Command::new("git")
+        .args(["rev-parse", "--git-path", "info/exclude"])
+        .output();
+    let Ok(output) = git_path else {
+        return Ok(());
+    };
+    if !output.status.success() {
+        return Ok(());
+    }
+
+    let exclude_path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    if exclude_path.as_os_str().is_empty() {
+        return Ok(());
+    }
+    let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
+    if existing.lines().any(|line| line.trim() == ".ralphterm/") {
+        return Ok(());
+    }
+
+    if let Some(parent) = exclude_path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&exclude_path)
+        .with_context(|| format!("open {}", exclude_path.display()))?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file).with_context(|| format!("write {}", exclude_path.display()))?;
+    }
+    writeln!(file, ".ralphterm/").with_context(|| format!("write {}", exclude_path.display()))
+}
+
 fn run_git(args: &[&str]) -> Result<String> {
     run_git_with_paths(args, &[])
 }
@@ -446,6 +518,156 @@ fn run_validation_commands(commands: &[String]) -> Result<String> {
         }
     }
     Ok(output)
+}
+
+fn run_review_command(
+    review_command: &str,
+    plan_name: &str,
+    task: &Task,
+    agent_transcript: &str,
+    validation_output: &str,
+    progress: &ProgressPaths,
+) -> Result<String> {
+    let prompt = build_review_prompt(
+        plan_name,
+        task,
+        agent_transcript,
+        validation_output,
+        &git_state_for_review(),
+    );
+    let review_run = run_agent_command(review_command, &prompt)
+        .with_context(|| format!("run review for task {}", task.number))?;
+    fs::write(&progress.review_transcript_path, &review_run.transcript).with_context(|| {
+        format!(
+            "write review transcript {}",
+            progress.review_transcript_path.display()
+        )
+    })?;
+    append_progress(
+        &progress.log_path,
+        &format!(
+            "review transcript path={}",
+            progress.review_transcript_display
+        ),
+    )?;
+
+    let mut output = review_run.transcript;
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    if review_run.exit_code != 0 {
+        bail!(
+            "review command exited with {} for task {}\n{}",
+            review_run.exit_code,
+            task.number,
+            output
+        );
+    }
+    if !review_output_passed(&output, &prompt) {
+        bail!("review failed for task {}\n{}", task.number, output);
+    }
+    output.push_str("Review passed\n");
+    Ok(output)
+}
+
+fn build_review_prompt(
+    plan_name: &str,
+    task: &Task,
+    agent_transcript: &str,
+    validation_output: &str,
+    git_diff: &str,
+) -> String {
+    format!(
+        "You are independently reviewing one RalphTerm plan task from {plan_name}.\n\nTask {}: {}\n\nTask body:\n{}\n\nAgent transcript:\n{}\n\nValidation output:\n{}\n\nCurrent git diff:\n{}\n\n{}\n",
+        task.number,
+        task.title,
+        task.body,
+        agent_transcript,
+        validation_output,
+        git_diff,
+        review_instruction()
+    )
+}
+
+fn review_instruction() -> &'static str {
+    "Print REVIEW_PASS only if the task matches the spec and validation is trustworthy. Print REVIEW_FAIL with the reason otherwise."
+}
+
+fn review_output_passed(transcript: &str, _prompt: &str) -> bool {
+    let normalized = transcript.replace("\r\n", "\n").replace('\r', "\n");
+    let reviewer_output = normalized
+        .rfind(review_instruction())
+        .map(|start| &normalized[start + review_instruction().len()..])
+        .unwrap_or(normalized.as_str());
+
+    reviewer_output
+        .lines()
+        .filter_map(|line| match line.trim() {
+            "REVIEW_PASS" => Some(true),
+            "REVIEW_FAIL" => Some(false),
+            _ => None,
+        })
+        .next_back()
+        .unwrap_or(false)
+}
+
+fn git_state_for_review() -> String {
+    let mut state = String::new();
+
+    append_git_output(&mut state, "Unstaged diff", &["diff", "--"]);
+    append_git_output(&mut state, "Staged diff", &["diff", "--cached", "--"]);
+
+    if let Ok(output) = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .output()
+    {
+        if output.status.success() {
+            let untracked: String = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|path| !is_ralphterm_artifact(path))
+                .map(|path| format!("{path}\n"))
+                .collect();
+            if !untracked.trim().is_empty() {
+                if !state.ends_with('\n') && !state.is_empty() {
+                    state.push('\n');
+                }
+                state.push_str("Untracked files:\n");
+                state.push_str(&untracked);
+            }
+        }
+    }
+
+    state
+}
+
+fn append_git_output(state: &mut String, label: &str, args: &[&str]) {
+    match Command::new("git").args(args).output() {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !stdout.trim().is_empty() {
+                if !state.ends_with('\n') && !state.is_empty() {
+                    state.push('\n');
+                }
+                state.push_str(label);
+                state.push_str(":\n");
+                state.push_str(&stdout);
+            }
+        }
+        Ok(output) => {
+            if !state.ends_with('\n') && !state.is_empty() {
+                state.push('\n');
+            }
+            state.push_str(label);
+            state.push_str(" unavailable:\n");
+            state.push_str(&String::from_utf8_lossy(&output.stderr));
+        }
+        Err(err) => {
+            if !state.ends_with('\n') && !state.is_empty() {
+                state.push('\n');
+            }
+            state.push_str(&format!("{label} unavailable: {err}\n"));
+        }
+    }
 }
 
 fn run_agent_command(agent_command: &str, prompt: &str) -> Result<AgentRun> {

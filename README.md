@@ -89,8 +89,11 @@ Manual real CLI smoke test and plan run:
 ```bash
 ralphterm smoke --agent claude
 ralphterm run docs/plans/example.md --dry-run
-ralphterm run docs/plans/example.md --agent claude
+ralphterm run docs/plans/example.md --agent claude \
+  --review-command "codex exec review-task"
 ```
+
+`--review-command` starts a separate PTY after validation. The reviewer sees the task text, implementation transcript, validation output, and current git state. It must print `REVIEW_PASS` before RalphTerm marks the task `[x]` or commits; `REVIEW_FAIL` blocks acceptance.
 
 Start with `ralphterm smoke --agent claude` or `ralphterm smoke --agent codex` to verify the official CLI can start inside a real PTY, receive terminal input, print `COMPLETED`, and exit. Then use `--dry-run` to see the pending tasks and validation commands without starting an agent, editing the plan, writing progress logs, or committing. Run the real plan command only after the official Claude Code CLI is installed, authenticated, and works interactively as `claude` in your shell. RalphTerm launches the interactive CLI in a PTY and sends terminal input; it does not use `claude -p`, `--print`, or any one-shot prompt mode. Use `--agent codex` to run the same workflow with an authenticated interactive `codex` CLI. The lower-level `--agent-command <cmd>` option remains available for tests and custom command wrappers.
 

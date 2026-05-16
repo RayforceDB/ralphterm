@@ -83,6 +83,11 @@ curl http://127.0.0.1:7878/v1/sessions/$ID/transcript</code></pre>
       <p>After authenticating the official CLI, verify it can start in a real PTY, receive input, emit <code>COMPLETED</code>, and exit.</p>
       <pre><code>ralphterm smoke --agent claude
 ralphterm smoke --agent codex</code></pre>
+      <h2>Plan run with review</h2>
+      <p>Use a reviewer command for real plan runs. RalphTerm starts it after validation and accepts only an exact <code>REVIEW_PASS</code> line.</p>
+      <pre><code>ralphterm run docs/plans/example.md --agent claude \
+  --review-command "codex exec review-task"</code></pre>
+      <p><code>REVIEW_FAIL</code> leaves the task unchecked and prevents the commit.</p>
       <h2>Real agent sessions</h2>
       <p>Install and authenticate the official CLI first. RalphTerm does not own provider credentials.</p>
       <pre><code>claude auth login

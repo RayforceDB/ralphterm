@@ -186,7 +186,7 @@ Literal example: `- [ ] do not mark`
     );
     assert_eq!(
         repo.git_output(["status", "--short"]),
-        "M  staged.txt\n M unrelated.txt\n?? .ralphterm/\n"
+        "M  staged.txt\n M unrelated.txt\n"
     );
 
     let progress_log_path = repo.path.join(".ralphterm/progress/plan.log");
@@ -718,6 +718,214 @@ fn agent_command_failure_writes_transcript_and_failed_task_end() {
     assert!(
         transcript.contains("agent failure output before exit"),
         "{transcript}"
+    );
+}
+
+#[test]
+fn review_command_pass_allows_task_acceptance_after_validation() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Review: pass"), "{stdout}");
+    assert!(stdout.contains("Review passed"), "{stdout}");
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("review result=passed"),
+        "{progress_log}"
+    );
+    assert!(
+        progress_log
+            .contains("review transcript path=.ralphterm/progress/plan-task-1-review.transcript"),
+        "{progress_log}"
+    );
+    let review_transcript = fs::read_to_string(
+        repo.path
+            .join(".ralphterm/progress/plan-task-1-review.transcript"),
+    )
+    .expect("read review transcript");
+    assert!(
+        review_transcript.contains("REVIEW_PASS"),
+        "{review_transcript}"
+    );
+    let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
+        .expect("review fixture should capture prompt");
+    assert!(
+        review_prompt.contains("\nfirst.txt\n"),
+        "review prompt should expose newly-created files for review:\n{review_prompt}"
+    );
+}
+
+#[test]
+fn review_command_ignores_agent_transcript_review_pass_noise() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent-review-pass-noise.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-silent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "silent reviewer must not pass from echoed agent transcript noise\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("review result=failed"),
+        "{progress_log}"
+    );
+}
+
+#[test]
+fn review_command_fail_blocks_marking_and_commit() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    let original_head = repo.git_output(["rev-parse", "HEAD"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostics.contains("REVIEW_FAIL"), "{diagnostics}");
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+    assert_eq!(repo.git_output(["rev-parse", "HEAD"]), original_head);
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("validation result=passed"),
+        "{progress_log}"
+    );
+    assert!(
+        progress_log.contains("review result=failed"),
+        "{progress_log}"
+    );
+    assert!(
+        progress_log.contains("task_end number=1 result=failed"),
+        "{progress_log}"
     );
 }
 

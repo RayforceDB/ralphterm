@@ -43,6 +43,8 @@ enum Command {
         #[arg(long)]
         agent_command: Option<String>,
         #[arg(long)]
+        review_command: Option<String>,
+        #[arg(long)]
         no_commit: bool,
         #[arg(long)]
         dry_run: bool,
@@ -135,12 +137,14 @@ async fn main() -> anyhow::Result<()> {
             plan,
             agent,
             agent_command,
+            review_command,
             no_commit,
             dry_run,
         } => {
             let output = run_plan(RunOptions {
                 plan_path: plan,
                 agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
+                review_command,
                 no_commit,
                 dry_run,
             })?;

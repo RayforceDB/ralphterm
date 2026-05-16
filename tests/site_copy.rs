@@ -18,6 +18,10 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
         "landing page should show the plan runner command"
     );
     assert!(
+        site_index.contains("--review-command"),
+        "landing page should show that plan runs can require an independent review gate"
+    );
+    assert!(
         site_index.contains("without <code>claude -p</code>"),
         "landing page should state that RalphTerm does not use Claude prompt mode"
     );

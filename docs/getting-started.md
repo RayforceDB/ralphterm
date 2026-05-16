@@ -72,8 +72,11 @@ That prints pending tasks and validation commands only. It does not start an age
 After the official Claude Code CLI is installed, authenticated, and works interactively as `claude` in your shell, run:
 
 ```bash
-ralphterm run docs/plans/example.md --agent claude
+ralphterm run docs/plans/example.md --agent claude \
+  --review-command "codex exec review-task"
 ```
+
+`--review-command` is optional but is the safer path for real plan runs. RalphTerm starts it in a fresh PTY after validation, passes the task, agent transcript, validation output, and git state, and accepts only an exact `REVIEW_PASS` line. `REVIEW_FAIL` leaves the task unchecked and prevents the commit.
 
 RalphTerm launches the interactive CLI in a PTY and sends the task prompt as terminal input. It does not use `claude -p`, `--print`, or any one-shot prompt mode. Use `--agent codex` for an authenticated interactive Codex CLI, or `--agent-command <cmd>` for tests and custom wrappers.
 
