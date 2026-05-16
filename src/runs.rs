@@ -307,16 +307,15 @@ impl RunStore {
         }
 
         let dir = run_dir(base_dir.as_ref(), id);
-        if let Some(summary_markdown) = summary_markdown {
-            let summary_path = dir.join("summary.md");
-            fs::write(&summary_path, summary_markdown)
-                .with_context(|| format!("write {}", summary_path.display()))?;
-        }
-        if let Some(diff_patch) = diff_patch {
-            let diff_path = dir.join("diff.patch");
-            fs::write(&diff_path, diff_patch)
-                .with_context(|| format!("write {}", diff_path.display()))?;
-        }
+        let summary_path = dir.join("summary.md");
+        fs::write(
+            &summary_path,
+            summary_markdown.unwrap_or_else(|| default_failure_summary(&record)),
+        )
+        .with_context(|| format!("write {}", summary_path.display()))?;
+        let diff_path = dir.join("diff.patch");
+        fs::write(&diff_path, diff_patch.unwrap_or_default())
+            .with_context(|| format!("write {}", diff_path.display()))?;
 
         record.phase = RunPhase::Complete;
         record.status = RunStatus::Failed;
@@ -402,6 +401,11 @@ fn append_event(base_dir: &Path, id: Uuid, event: RunEvent) -> Result<()> {
         .open(&path)
         .with_context(|| format!("open {}", path.display()))?;
     writeln!(events, "{event_json}").context("append run event")
+}
+
+fn default_failure_summary(record: &CreatedRunRecord) -> String {
+    let plan = record.plan_path.as_deref().unwrap_or("unknown plan");
+    format!("# Run Summary\n\nResult: failed\n\nPlan: {plan}\n")
 }
 
 fn timestamp() -> String {
@@ -621,6 +625,43 @@ mod tests {
         assert_eq!(event["type"], "run_succeeded");
         assert_eq!(event["status"], "succeeded");
         assert!(!event["timestamp"].as_str().unwrap().is_empty());
+
+        remove_dir_all_if_exists(&temp);
+    }
+
+    #[test]
+    fn write_failure_without_artifacts_still_writes_auditable_summary_and_diff() {
+        let temp = std::env::temp_dir().join(format!(
+            "ralphterm-run-failure-artifacts-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp).unwrap();
+
+        let record = RunStore::create(
+            &temp,
+            RunRecord {
+                phase: RunPhase::Executing,
+                status: RunStatus::Running,
+                plan_path: Some("plans/task.md".into()),
+                workspace_path: None,
+            },
+        )
+        .unwrap();
+
+        let updated = RunStore::write_failure(&temp, record.id, None, None)
+            .unwrap()
+            .expect("existing run should be updated");
+
+        assert_eq!(updated.phase, RunPhase::Complete);
+        assert_eq!(updated.status, RunStatus::Failed);
+        let run_dir = temp
+            .join(".ralphterm")
+            .join("runs")
+            .join(record.id.to_string());
+        let summary = fs::read_to_string(run_dir.join("summary.md")).unwrap();
+        assert!(summary.contains("# Run Summary"));
+        assert!(summary.contains("Result: failed"));
+        assert_eq!(fs::read_to_string(run_dir.join("diff.patch")).unwrap(), "");
 
         remove_dir_all_if_exists(&temp);
     }
