@@ -106,6 +106,16 @@ impl SessionStore {
             .map(|r| r.clone())
     }
 
+    pub fn list(&self) -> Vec<SessionRecord> {
+        let mut records: Vec<_> = self
+            .sessions
+            .iter()
+            .filter_map(|entry| entry.record.lock().ok().map(|record| record.clone()))
+            .collect();
+        records.sort_by_key(|record| record.id);
+        records
+    }
+
     pub async fn send(&self, id: Uuid, input: SessionInput) -> anyhow::Result<()> {
         self.sessions
             .get(&id)

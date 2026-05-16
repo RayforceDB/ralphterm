@@ -300,7 +300,7 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
         .route("/v1/runs/:id/diff", get(get_run_diff))
         .route("/v1/runs/:id/events", get(get_run_events))
         .route("/v1/runs/:id/cancel", post(cancel_run))
-        .route("/v1/sessions", post(create_session))
+        .route("/v1/sessions", post(create_session).get(list_sessions))
         .route("/v1/sessions/:id", get(get_session))
         .route("/v1/sessions/:id/input", post(send_input))
         .route("/v1/sessions/:id/resize", post(resize_session))
@@ -532,6 +532,10 @@ async fn create_session(
         })
         .await?;
     Ok(Json(CreateSessionResponse { id }))
+}
+
+async fn list_sessions(State(state): State<AppState>) -> Json<Vec<SessionRecord>> {
+    Json(state.store.list())
 }
 
 async fn get_session(

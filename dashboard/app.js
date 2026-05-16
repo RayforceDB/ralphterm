@@ -1,5 +1,7 @@
 const runsBody = document.querySelector('#runs-body');
 const runsStatus = document.querySelector('#runs-status');
+const sessionsBody = document.querySelector('#sessions-body');
+const sessionsStatus = document.querySelector('#sessions-status');
 
 function cell(text) {
   const td = document.createElement('td');
@@ -7,17 +9,30 @@ function cell(text) {
   return td;
 }
 
+function renderEmptyRow(body, message) {
+  const row = document.createElement('tr');
+  const empty = document.createElement('td');
+  empty.colSpan = 4;
+  empty.className = 'empty-state';
+  empty.textContent = message;
+  row.append(empty);
+  body.append(row);
+}
+
+function renderErrorRow(body, message) {
+  const row = document.createElement('tr');
+  const cellElement = document.createElement('td');
+  cellElement.colSpan = 4;
+  cellElement.textContent = message;
+  row.append(cellElement);
+  body.append(row);
+}
+
 function renderRunRows(runs) {
   runsBody.replaceChildren();
 
   if (!runs.length) {
-    const row = document.createElement('tr');
-    const empty = document.createElement('td');
-    empty.colSpan = 4;
-    empty.className = 'empty-state';
-    empty.textContent = 'No runs yet.';
-    row.append(empty);
-    runsBody.append(row);
+    renderEmptyRow(runsBody, 'No runs yet.');
     return;
   }
 
@@ -30,6 +45,26 @@ function renderRunRows(runs) {
       cell(run.plan_path),
     );
     runsBody.append(row);
+  }
+}
+
+function renderSessionRows(sessions) {
+  sessionsBody.replaceChildren();
+
+  if (!sessions.length) {
+    renderEmptyRow(sessionsBody, 'No sessions yet.');
+    return;
+  }
+
+  for (const session of sessions) {
+    const row = document.createElement('tr');
+    row.append(
+      cell(session.id),
+      cell(session.agent),
+      cell(session.status),
+      cell(session.signal),
+    );
+    sessionsBody.append(row);
   }
 }
 
@@ -46,13 +81,26 @@ async function loadRuns() {
   } catch (error) {
     runsStatus.textContent = 'Error';
     runsBody.replaceChildren();
-    const row = document.createElement('tr');
-    const message = document.createElement('td');
-    message.colSpan = 4;
-    message.textContent = error.message;
-    row.append(message);
-    runsBody.append(row);
+    renderErrorRow(runsBody, error.message);
+  }
+}
+
+async function loadSessions() {
+  try {
+    sessionsStatus.textContent = 'Loading…';
+    const response = await fetch('/v1/sessions');
+    if (!response.ok) {
+      throw new Error(`GET /v1/sessions failed with ${response.status}`);
+    }
+    const sessions = await response.json();
+    renderSessionRows(sessions);
+    sessionsStatus.textContent = `${sessions.length} session${sessions.length === 1 ? '' : 's'}`;
+  } catch (error) {
+    sessionsStatus.textContent = 'Error';
+    sessionsBody.replaceChildren();
+    renderErrorRow(sessionsBody, error.message);
   }
 }
 
 loadRuns();
+loadSessions();

@@ -26,6 +26,11 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
 
     let html = request_json(port, "GET /dashboard HTTP/1.1", None);
     assert_eq!(html.status, 200, "{}", html.body);
+    assert!(
+        html.content_type.starts_with("text/html"),
+        "{}",
+        html.content_type
+    );
     assert!(html.body.contains("RalphTerm Dashboard"), "{}", html.body);
     assert!(html.body.contains("Runs"), "{}", html.body);
     assert!(html.body.contains("Sessions"), "{}", html.body);
@@ -34,12 +39,74 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
 
     let css = request_json(port, "GET /dashboard/styles.css HTTP/1.1", None);
     assert_eq!(css.status, 200, "{}", css.body);
+    assert!(
+        css.content_type.starts_with("text/css"),
+        "{}",
+        css.content_type
+    );
     assert!(css.body.contains("RalphTerm Dashboard"), "{}", css.body);
 
     let js = request_json(port, "GET /dashboard/app.js HTTP/1.1", None);
     assert_eq!(js.status, 200, "{}", js.body);
+    assert!(
+        js.content_type.starts_with("application/javascript"),
+        "{}",
+        js.content_type
+    );
     assert!(js.body.contains("fetch('/v1/runs')"), "{}", js.body);
     assert!(js.body.contains("renderRunRows"), "{}", js.body);
+}
+
+#[test]
+fn dashboard_lists_active_sessions_and_javascript_renders_them() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let js = request_json(port, "GET /dashboard/app.js HTTP/1.1", None);
+    assert_eq!(js.status, 200, "{}", js.body);
+    assert!(js.body.contains("fetch('/v1/sessions')"), "{}", js.body);
+    assert!(js.body.contains("renderSessionRows"), "{}", js.body);
+
+    let create_body = serde_json::json!({
+        "agent": "codex",
+        "prompt": "hello from dashboard test",
+        "command": "/bin/sh",
+        "args": ["-c", "printf 'PLAN_READY\\n'; sleep 30"]
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/sessions HTTP/1.1", Some(&create_body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created session json");
+    let id = created_json["id"].as_str().expect("session id");
+
+    let listed = wait_for_json(port, "GET /v1/sessions HTTP/1.1", |json| {
+        json.as_array()
+            .and_then(|sessions| sessions.iter().find(|session| session["id"] == id))
+            .and_then(|session| {
+                (session["agent"] == "codex"
+                    && session["status"] == "running"
+                    && session["signal"] == "PLAN_READY")
+                    .then(|| json.clone())
+            })
+    });
+    let sessions = listed.as_array().expect("session list");
+    assert_eq!(sessions.len(), 1, "{listed}");
+    assert_eq!(sessions[0]["id"], id);
+    assert_eq!(sessions[0]["agent"], "codex");
+    assert_eq!(sessions[0]["status"], "running");
+    assert_eq!(sessions[0]["signal"], "PLAN_READY");
 }
 
 #[test]
@@ -574,6 +641,7 @@ impl Drop for TempDir {
 
 struct Response {
     status: u16,
+    content_type: String,
     body: String,
 }
 
@@ -647,8 +715,43 @@ fn request_json(port: u16, request_line: &str, body: Option<&str>) -> Response {
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse::<u16>().ok())
         .expect("status code");
+    let content_type = headers
+        .lines()
+        .find_map(|line| {
+            line.split_once(':').and_then(|(name, value)| {
+                name.eq_ignore_ascii_case("content-type")
+                    .then(|| value.trim().to_string())
+            })
+        })
+        .unwrap_or_default();
     Response {
         status,
+        content_type,
         body: body.to_string(),
     }
+}
+
+fn wait_for_json(
+    port: u16,
+    request_line: &str,
+    predicate: impl Fn(&serde_json::Value) -> Option<serde_json::Value>,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut last_response = String::new();
+    while Instant::now() < deadline {
+        let response = request_json(port, request_line, None);
+        assert_eq!(response.status, 200, "{}", response.body);
+        assert!(
+            response.content_type.starts_with("application/json"),
+            "{}",
+            response.content_type
+        );
+        last_response = response.body;
+        let json: serde_json::Value = serde_json::from_str(&last_response).expect("json response");
+        if let Some(value) = predicate(&json) {
+            return value;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    panic!("timed out waiting for JSON predicate; last response: {last_response}");
 }

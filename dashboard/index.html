@@ -17,7 +17,7 @@
       <section class="panel" aria-labelledby="runs-title">
         <div class="panel-heading">
           <h2 id="runs-title">Runs</h2>
-          <span id="runs-status" class="status">Loading…</span>
+          <span id="runs-status" class="status" aria-live="polite">Loading…</span>
         </div>
         <div class="table-wrap">
           <table>
@@ -37,8 +37,25 @@
       </section>
 
       <section class="panel" aria-labelledby="sessions-title">
-        <h2 id="sessions-title">Sessions</h2>
-        <p>Interactive session activity will appear here as the dashboard grows.</p>
+        <div class="panel-heading">
+          <h2 id="sessions-title">Sessions</h2>
+          <span id="sessions-status" class="status" aria-live="polite">Loading…</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">ID</th>
+                <th scope="col">Agent</th>
+                <th scope="col">Status</th>
+                <th scope="col">Signal</th>
+              </tr>
+            </thead>
+            <tbody id="sessions-body">
+              <tr><td colspan="4">Loading sessions…</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
 
