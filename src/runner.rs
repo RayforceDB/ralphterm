@@ -189,11 +189,12 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             } else {
                 attempt_progress.transcript_display.clone()
             };
+            let signal = completion_signal(&transcript, &prompt);
             append_progress(
                 &progress.log_path,
                 &format!(
                     "signal={} transcript path={}",
-                    completion_signal(&transcript, &prompt),
+                    signal.as_str(),
                     current_transcript_display
                 ),
             )?;
@@ -244,6 +245,32 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     "agent command exited with {} for task {}",
                     agent_run.exit_code,
                     task.number
+                );
+                return Err(failed_run_error(err, summary_result));
+            }
+            if signal != CompletionSignal::Completed {
+                append_progress(
+                    &progress.log_path,
+                    &format!("task_end number={} result=failed", task.number),
+                )?;
+                let detail = format!(
+                    "missing required COMPLETED signal from agent (detected signal={})",
+                    signal.as_str()
+                );
+                let summary_result = write_failed_run_summary(
+                    plan_name,
+                    &plan_slug,
+                    &executed_tasks,
+                    task,
+                    "agent completion",
+                    &detail,
+                    &progress,
+                    Some(&attempt_progress),
+                );
+                let err = anyhow::anyhow!(
+                    "agent for task {} did not emit required COMPLETED signal (detected signal={})",
+                    task.number,
+                    signal.as_str()
                 );
                 return Err(failed_run_error(err, summary_result));
             }
@@ -386,7 +413,7 @@ pub fn run_smoke(agent_command: &str) -> Result<String> {
         output.push('\n');
     }
     let signal = completion_signal(&agent_run.transcript, prompt);
-    output.push_str(&format!("Signal: {signal}\n"));
+    output.push_str(&format!("Signal: {}\n", signal.as_str()));
     if agent_run.timed_out {
         bail!("smoke timed out after {timeout:?}\n{output}");
     }
@@ -396,7 +423,7 @@ pub fn run_smoke(agent_command: &str) -> Result<String> {
             agent_run.exit_code,
         );
     }
-    if signal != "COMPLETED" {
+    if signal != CompletionSignal::Completed {
         bail!("smoke transcript did not contain COMPLETED signal\n{output}");
     }
     Ok(output)
@@ -962,12 +989,27 @@ fn timestamp() -> String {
     seconds.to_string()
 }
 
-fn completion_signal(transcript: &str, prompt: &str) -> &'static str {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompletionSignal {
+    Completed,
+    None,
+}
+
+impl CompletionSignal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "COMPLETED",
+            Self::None => "NONE",
+        }
+    }
+}
+
+fn completion_signal(transcript: &str, prompt: &str) -> CompletionSignal {
     let output = transcript_without_prompt_echo(transcript, prompt);
-    if output.contains("COMPLETED") {
-        "COMPLETED"
+    if output.lines().any(|line| line == "COMPLETED") {
+        CompletionSignal::Completed
     } else {
-        "NONE"
+        CompletionSignal::None
     }
 }
 

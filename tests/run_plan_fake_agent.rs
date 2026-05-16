@@ -438,6 +438,104 @@ Literal example: `- [ ] do not mark`
 }
 
 #[test]
+fn run_command_requires_completed_signal_before_validation_review_completion_or_commit() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    let initial_head = repo.git_output(["rev-parse", "HEAD"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent-no-completed.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded without COMPLETED\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostics.contains("COMPLETED"), "{diagnostics}");
+    assert!(diagnostics.contains("signal"), "{diagnostics}");
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan after failed run");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+    assert!(!plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(progress_log.contains("signal=NONE"), "{progress_log}");
+    assert!(
+        progress_log.contains("task_end number=1 result=failed"),
+        "{progress_log}"
+    );
+    assert!(
+        !progress_log.contains("validation result="),
+        "validation must not run before COMPLETED:\n{progress_log}"
+    );
+    assert!(
+        !progress_log.contains("review result="),
+        "review must not run before COMPLETED:\n{progress_log}"
+    );
+    assert!(
+        !progress_log.contains("commit hash="),
+        "commit must not happen before COMPLETED:\n{progress_log}"
+    );
+    assert!(
+        !progress_log.contains("task_end number=1 result=passed"),
+        "task must not pass before COMPLETED:\n{progress_log}"
+    );
+    assert!(
+        !repo
+            .path
+            .join(".ralphterm/progress/plan-task-1-validation.txt")
+            .exists(),
+        "validation artifact must not be written before COMPLETED"
+    );
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("agent completion"), "{summary}");
+    assert!(summary.contains("COMPLETED"), "{summary}");
+
+    let current_head = repo.git_output(["rev-parse", "HEAD"]);
+    assert_eq!(
+        current_head, initial_head,
+        "must not commit before COMPLETED"
+    );
+}
+
+#[test]
 fn run_command_validation_failure_overwrites_artifact_and_links_failed_summary() {
     let repo = TempRepo::new();
     repo.init_git();
@@ -1642,8 +1740,8 @@ fn progress_signal_ignores_prompt_echo() {
         .expect("run ralphterm");
 
     assert!(
-        output.status.success(),
-        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded without COMPLETED\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1652,6 +1750,14 @@ fn progress_signal_ignores_prompt_echo() {
         .expect("read progress log");
     assert!(progress_log.contains("signal=NONE"), "{progress_log}");
     assert!(!progress_log.contains("signal=COMPLETED"), "{progress_log}");
+    assert!(
+        !progress_log.contains("validation result="),
+        "validation must not run when only the prompt echo contains COMPLETED:\n{progress_log}"
+    );
+    assert!(
+        progress_log.contains("task_end number=1 result=failed"),
+        "{progress_log}"
+    );
 }
 
 #[test]
