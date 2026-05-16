@@ -1361,6 +1361,176 @@ fn dry_run_lists_work_without_starting_agent_or_editing_files() {
 }
 
 #[test]
+fn dry_run_with_required_review_refuses_missing_review_config() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let original_plan = fs::read_to_string(&plan_path).expect("read original plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--dry-run",
+            "--require-review",
+            "--agent-command",
+            "definitely-not-a-real-agent-command",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm dry run");
+
+    assert!(
+        !output.status.success(),
+        "dry run should reject required review with no reviewer\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !repo.path.join(".ralphterm").exists(),
+        "failed dry run should not write progress logs"
+    );
+    assert_eq!(
+        fs::read_to_string(&plan_path).expect("read plan after dry run"),
+        original_plan
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("--require-review needs --review-command or --review-agent"),
+        "{diagnostics}"
+    );
+}
+
+#[test]
+fn dry_run_with_required_review_rejects_same_implementation_and_review_command() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--dry-run",
+            "--require-review",
+            "--agent",
+            "claude",
+            "--review-agent",
+            "claude",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm dry run");
+
+    assert!(
+        !output.status.success(),
+        "dry run should reject non-independent review config\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !repo.path.join(".ralphterm").exists(),
+        "failed dry run should not write progress logs"
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        diagnostics.contains("independent review command must differ from agent command"),
+        "{diagnostics}"
+    );
+}
+
+#[test]
+fn dry_run_enforces_review_gate_even_when_no_tasks_are_pending() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+### Task 1: Already done
+- [x] Nothing left
+"#,
+    )
+    .expect("write plan");
+
+    let missing_reviewer = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--dry-run",
+            "--require-review",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm dry run");
+    assert!(
+        !missing_reviewer.status.success(),
+        "no-pending dry run should still reject missing reviewer\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&missing_reviewer.stdout),
+        String::from_utf8_lossy(&missing_reviewer.stderr)
+    );
+
+    let same_command = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--dry-run",
+            "--require-review",
+            "--agent",
+            "claude",
+            "--review-agent",
+            "claude",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm dry run");
+    assert!(
+        !same_command.status.success(),
+        "no-pending dry run should still reject non-independent review config\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&same_command.stdout),
+        String::from_utf8_lossy(&same_command.stderr)
+    );
+    assert!(
+        !repo.path.join(".ralphterm").exists(),
+        "failed dry run should not write progress logs"
+    );
+}
+
+#[test]
 fn agent_shortcut_codex_uses_interactive_codex_from_path() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");

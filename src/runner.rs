@@ -44,6 +44,20 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         .and_then(|name| name.to_str())
         .unwrap_or("plan");
 
+    let review_command = options.review_command.clone();
+    let agent_command = options
+        .agent_command
+        .clone()
+        .unwrap_or_else(|| "claude".to_string());
+    if options.require_review && review_command.is_none() {
+        bail!("--require-review needs --review-command or --review-agent");
+    }
+    if let Some(review_command) = review_command.as_deref() {
+        if parse_agent_command(review_command)? == parse_agent_command(&agent_command)? {
+            bail!("independent review command must differ from agent command");
+        }
+    }
+
     let mut output = format!("Executing {plan_name}\n");
     if pending.is_empty() {
         output.push_str("No pending tasks.\n");
@@ -58,7 +72,6 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         return Ok(output);
     }
 
-    let review_command = options.review_command.clone();
     if options.dry_run {
         return Ok(describe_dry_run(
             plan_name,
@@ -68,18 +81,9 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         ));
     }
 
-    let agent_command = options
-        .agent_command
-        .unwrap_or_else(|| "claude".to_string());
     validate_interactive_agent_command(&agent_command)?;
-    if options.require_review && review_command.is_none() {
-        bail!("--require-review needs --review-command or --review-agent");
-    }
     if let Some(review_command) = options.review_command.as_deref() {
         validate_interactive_agent_command(review_command)?;
-        if parse_agent_command(review_command)? == parse_agent_command(&agent_command)? {
-            bail!("independent review command must differ from agent command");
-        }
     }
     let plan_slug = plan_slug(&options.plan_path);
     remove_stale_run_summary(&plan_slug)?;

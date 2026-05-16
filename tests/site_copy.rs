@@ -27,6 +27,8 @@ fn docs_site_exposes_reviewed_plan_workflow_page() {
         "transcripts",
         "commit progress",
         "Plan-level validation commands",
+        "dry run fails before agent execution",
+        "same command is rejected in dry-run too",
     ] {
         assert!(
             workflows.contains(expected),

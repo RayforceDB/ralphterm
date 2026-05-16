@@ -37,7 +37,7 @@ ralphterm run docs/plans/example.md --agent claude \
   --review-command "codex exec review-task"
 ```
 
-`--require-review` is a gate for plan runs. If it is set without `--review-command` or `--review-agent`, RalphTerm fails before starting the implementation agent. With review configured, RalphTerm starts the reviewer in a fresh PTY after validation. The prompt includes:
+`--require-review` is a gate for plan runs. If it is set without `--review-command` or `--review-agent`, RalphTerm fails before starting the implementation agent. That includes `--dry-run`, so a safe preview catches a missing review gate before any real run can accept unreviewed work. The implementation and review commands must also be different; the same command is rejected in dry-run too. With review configured, RalphTerm starts the reviewer in a fresh PTY after validation. The prompt includes:
 
 - task text
 - implementation transcript

@@ -62,7 +62,7 @@
 ralphterm run docs/plans/example.md --agent claude \
   --require-review \
   --review-command "codex exec review-task"</code></pre>
-      <p><code>--require-review</code> is a hard gate. If it is used without <code>--review-command</code> or <code>--review-agent</code>, RalphTerm fails before starting implementation. With review configured, the implementation agent runs in one PTY and the reviewer runs later in a separate PTY.</p>
+      <p><code>--require-review</code> is a hard gate. If it is used without <code>--review-command</code> or <code>--review-agent</code>, RalphTerm fails before starting implementation. That includes <code>--dry-run</code>: a dry run fails before agent execution when the review gate is required but not configured. The implementation and review commands must also be different; the same command is rejected in dry-run too. With review configured, the implementation agent runs in one PTY and the reviewer runs later in a separate PTY.</p>
 
       <h2>Validation before acceptance</h2>
       <p>Plan-level validation commands from the <code>## Validation Commands</code> section run after each implementation attempt. RalphTerm includes the validation output in the reviewer prompt. A task is not checked off until validation succeeds and review passes.</p>
