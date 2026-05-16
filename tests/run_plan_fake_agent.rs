@@ -254,6 +254,67 @@ Literal example: `- [ ] do not mark`
 }
 
 #[test]
+fn run_command_writes_validation_artifact_and_links_summary() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `printf 'validation stdout\n'; printf 'validation stderr\n' >&2; test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let validation_path = ".ralphterm/progress/plan-task-1-validation.txt";
+    let validation = fs::read_to_string(repo.path.join(validation_path))
+        .expect("read validation output artifact");
+    assert!(
+        validation.contains("Validation: printf 'validation stdout\\n'; printf 'validation stderr\\n' >&2; test -f first.txt"),
+        "{validation}"
+    );
+    assert!(validation.contains("validation stdout"), "{validation}");
+    assert!(validation.contains("validation stderr"), "{validation}");
+    assert!(validation.contains("Validation passed"), "{validation}");
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read run summary");
+    assert!(
+        summary.contains(&format!("Validation: {validation_path}")),
+        "run summary should link validation output artifact:\n{summary}"
+    );
+}
+
+#[test]
 fn run_command_no_commit_writes_working_tree_diff_patch() {
     let repo = TempRepo::new();
     repo.init_git();

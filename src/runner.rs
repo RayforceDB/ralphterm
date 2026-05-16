@@ -201,7 +201,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         } else {
             None
         };
-        match run_validation_commands(&plan.validation_commands) {
+        match run_validation_commands(&plan.validation_commands, &progress.validation_output_path) {
             Ok(validation_output) => {
                 output.push_str(&validation_output);
             }
@@ -267,6 +267,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             number: task.number,
             title: task.title.clone(),
             transcript_display: progress.transcript_display,
+            validation_output_display: progress.validation_output_display,
             review_transcript_display: options
                 .review_command
                 .as_ref()
@@ -340,14 +341,17 @@ struct ProgressPaths {
     log_path: PathBuf,
     transcript_path: PathBuf,
     review_transcript_path: PathBuf,
+    validation_output_path: PathBuf,
     transcript_display: String,
     review_transcript_display: String,
+    validation_output_display: String,
 }
 
 struct ExecutedTask {
     number: usize,
     title: String,
     transcript_display: String,
+    validation_output_display: String,
     review_transcript_display: Option<String>,
 }
 
@@ -367,14 +371,19 @@ impl ProgressPaths {
             progress_dir.join(format!("{plan_slug}-task-{task_number}.transcript"));
         let review_transcript_path =
             progress_dir.join(format!("{plan_slug}-task-{task_number}-review.transcript"));
+        let validation_output_path =
+            progress_dir.join(format!("{plan_slug}-task-{task_number}-validation.txt"));
         let transcript_display = transcript_path.to_string_lossy().into_owned();
         let review_transcript_display = review_transcript_path.to_string_lossy().into_owned();
+        let validation_output_display = validation_output_path.to_string_lossy().into_owned();
         Ok(Self {
             log_path,
             transcript_path,
             review_transcript_path,
+            validation_output_path,
             transcript_display,
             review_transcript_display,
+            validation_output_display,
         })
     }
 }
@@ -412,8 +421,8 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
     let mut summary = format!("# Run Summary: {plan_name}\n\nResult: passed\n\n");
     for task in tasks {
         summary.push_str(&format!(
-            "- Task {}: {} — passed\n  - Transcript: {}\n",
-            task.number, task.title, task.transcript_display
+            "- Task {}: {} — passed\n  - Transcript: {}\n  - Validation: {}\n",
+            task.number, task.title, task.transcript_display, task.validation_output_display
         ));
         if let Some(review_transcript_display) = &task.review_transcript_display {
             summary.push_str(&format!(
@@ -440,8 +449,11 @@ fn write_failed_run_summary(
     let mut summary = format!("# Run Summary: {plan_name}\n\nResult: failed\n\n");
     for passed_task in passed_tasks {
         summary.push_str(&format!(
-            "- Task {}: {} — passed\n  - Transcript: {}\n",
-            passed_task.number, passed_task.title, passed_task.transcript_display
+            "- Task {}: {} — passed\n  - Transcript: {}\n  - Validation: {}\n",
+            passed_task.number,
+            passed_task.title,
+            passed_task.transcript_display,
+            passed_task.validation_output_display
         ));
         if let Some(review_transcript_display) = &passed_task.review_transcript_display {
             summary.push_str(&format!(
@@ -885,7 +897,7 @@ fn build_task_prompt(plan_name: &str, task: &Task, validation_commands: &[String
     prompt
 }
 
-fn run_validation_commands(commands: &[String]) -> Result<String> {
+fn run_validation_commands(commands: &[String], output_path: &Path) -> Result<String> {
     let mut output = String::new();
     for command in commands {
         output.push_str(&format!("Validation: {command}\n"));
@@ -894,11 +906,17 @@ fn run_validation_commands(commands: &[String]) -> Result<String> {
             .arg(command)
             .output()
             .with_context(|| format!("run validation command `{command}`"))?;
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        if !stdout.is_empty() {
+            output.push_str(&stdout);
+        }
+        if !stderr.is_empty() {
+            output.push_str(&stderr);
+        }
         if result.status.success() {
             output.push_str("Validation passed\n");
         } else {
-            let stdout = String::from_utf8_lossy(&result.stdout);
-            let stderr = String::from_utf8_lossy(&result.stderr);
             bail!(
                 "validation command failed `{command}` with {}\nstdout:\n{}\nstderr:\n{}",
                 result.status,
@@ -907,6 +925,8 @@ fn run_validation_commands(commands: &[String]) -> Result<String> {
             );
         }
     }
+    fs::write(output_path, &output)
+        .with_context(|| format!("write validation output {}", output_path.display()))?;
     Ok(output)
 }
 
