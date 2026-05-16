@@ -4,7 +4,7 @@
 
 **Goal:** Given a markdown plan, RalphTerm executes tasks one by one through real terminal-backed AI CLI sessions, validates results, commits progress, and produces an auditable transcript.
 
-**Current truth:** RalphTerm is not equivalent yet. It currently has a local PTY session API and signal detection. It does not parse plans, execute task loops, run validation commands, commit changes, or perform review phases.
+**Current truth:** RalphTerm now has the first replacement-grade plan loop: parse a markdown plan, execute pending tasks through fresh PTY-backed agent sessions, run validation commands, mark completed checkboxes, commit task progress, and write transcripts under `.ralphterm/progress/`. It is not equivalent yet because review phases, approval queues, stronger isolation, restart controls, and final summary artifacts are still missing.
 
 **Architecture:** Keep the PTY session layer as the foundation. Add a CLI subcommand and library modules for plan parsing, task execution, validation commands, git commits, and run logs. Build with strict TDD: parser first, then dry-run planner, then real task execution with a fake agent command, then Claude/Codex smoke tests.
 

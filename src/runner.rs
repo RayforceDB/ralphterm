@@ -17,6 +17,7 @@ pub struct RunOptions {
     pub plan_path: PathBuf,
     pub agent_command: Option<String>,
     pub no_commit: bool,
+    pub dry_run: bool,
 }
 
 pub fn run_plan(options: RunOptions) -> Result<String> {
@@ -35,6 +36,14 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     if pending.is_empty() {
         output.push_str("No pending tasks.\n");
         return Ok(output);
+    }
+
+    if options.dry_run {
+        return Ok(describe_dry_run(
+            plan_name,
+            &plan.validation_commands,
+            &pending,
+        ));
     }
 
     let agent_command = options
@@ -109,6 +118,21 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     }
 
     Ok(output)
+}
+
+fn describe_dry_run(plan_name: &str, validation_commands: &[String], pending: &[&Task]) -> String {
+    let mut output = format!("Dry run: {plan_name}\n");
+    if validation_commands.is_empty() {
+        output.push_str("Validation: none\n");
+    } else {
+        for command in validation_commands {
+            output.push_str(&format!("Validation: {command}\n"));
+        }
+    }
+    for task in pending {
+        output.push_str(&format!("Task {}: {}\n", task.number, task.title));
+    }
+    output
 }
 
 struct ProgressPaths {

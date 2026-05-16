@@ -182,6 +182,66 @@ The agent should create first.txt.
 }
 
 #[test]
+fn dry_run_lists_work_without_starting_agent_or_editing_files() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+
+### Task 2: Done already
+- [x] Nothing left here
+
+### Task 3: Create second file
+- [ ] Write second.txt
+"#,
+    )
+    .expect("write plan");
+    let original_plan = fs::read_to_string(&plan_path).expect("read original plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--dry-run",
+            "--agent-command",
+            "definitely-not-a-real-agent-command",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm dry run");
+
+    assert!(
+        output.status.success(),
+        "ralphterm dry run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Dry run: plan.md"), "{stdout}");
+    assert!(stdout.contains("Validation: test -f first.txt"), "{stdout}");
+    assert!(stdout.contains("Task 1: Create first file"), "{stdout}");
+    assert!(stdout.contains("Task 3: Create second file"), "{stdout}");
+    assert!(!stdout.contains("Done already"), "{stdout}");
+    assert!(
+        !repo.path.join(".ralphterm").exists(),
+        "dry run should not write progress logs"
+    );
+    assert_eq!(
+        fs::read_to_string(&plan_path).expect("read plan after dry run"),
+        original_plan
+    );
+}
+
+#[test]
 fn agent_shortcut_codex_uses_interactive_codex_from_path() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
