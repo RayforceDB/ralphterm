@@ -2163,6 +2163,87 @@ fn review_command_ignores_agent_transcript_review_pass_noise() {
 }
 
 #[test]
+fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-after-review-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-once.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run should retry implementation after one failed review\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        fs::read_to_string(repo.path.join("first.txt")).expect("read fixed file"),
+        "fixed after review\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("agent-count.txt")).expect("read agent count"),
+        "2\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("review-count.txt")).expect("read review count"),
+        "2\n"
+    );
+    let retry_prompt =
+        fs::read_to_string(repo.path.join("agent-prompt-2.txt")).expect("read retry prompt");
+    assert!(
+        retry_prompt.contains("Previous review failed"),
+        "retry prompt should include review failure feedback:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains("REVIEW_FAIL"),
+        "retry prompt should include the reviewer transcript:\n{retry_prompt}"
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("review result=failed"),
+        "{progress_log}"
+    );
+    assert!(
+        progress_log.contains("review result=passed"),
+        "{progress_log}"
+    );
+}
+
+#[test]
 fn review_command_fail_blocks_marking_and_commit() {
     let repo = TempRepo::new();
     repo.init_git();

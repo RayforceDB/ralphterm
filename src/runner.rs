@@ -14,6 +14,8 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 use crate::plan::{parse_plan, Task};
 
+const MAX_REVIEW_ATTEMPTS: usize = 2;
+
 #[derive(Debug, Default)]
 struct NoCommitBaseline {
     paths: BTreeSet<String>,
@@ -103,12 +105,59 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             git_status_paths().context("snapshot git status before task")?
         };
         output.push_str(&format!("Task {}: {}\n", task.number, task.title));
-        let prompt = build_task_prompt(plan_name, task, &plan.validation_commands);
-        let agent_run = match run_agent_command(&agent_command, &prompt)
-            .with_context(|| format!("run agent for task {}", task.number))
-        {
-            Ok(agent_run) => agent_run,
-            Err(err) => {
+        let mut review_feedback = None;
+        let mut attempt = 1;
+        let (_transcript, _validation_output) = loop {
+            if attempt > 1 {
+                append_progress(
+                    &progress.log_path,
+                    &format!("agent_retry attempt={attempt} reason=review_failed"),
+                )?;
+            }
+            let prompt = build_task_prompt(
+                plan_name,
+                task,
+                &plan.validation_commands,
+                review_feedback.as_deref(),
+            );
+            let agent_run = match run_agent_command(&agent_command, &prompt)
+                .with_context(|| format!("run agent for task {}", task.number))
+            {
+                Ok(agent_run) => agent_run,
+                Err(err) => {
+                    append_progress(
+                        &progress.log_path,
+                        &format!("task_end number={} result=failed", task.number),
+                    )?;
+                    let summary_result = write_failed_run_summary(
+                        plan_name,
+                        &plan_slug,
+                        &executed_tasks,
+                        task,
+                        "agent execution",
+                        &format!("{err:#}"),
+                        &progress,
+                    );
+                    return Err(failed_run_error(err, summary_result));
+                }
+            };
+            let transcript = agent_run.transcript;
+            fs::write(&progress.transcript_path, &transcript).with_context(|| {
+                format!("write transcript {}", progress.transcript_path.display())
+            })?;
+            append_progress(
+                &progress.log_path,
+                &format!(
+                    "signal={} transcript path={}",
+                    completion_signal(&transcript, &prompt),
+                    progress.transcript_display
+                ),
+            )?;
+            output.push_str(&transcript);
+            if !transcript.ends_with('\n') {
+                output.push('\n');
+            }
+            if agent_run.exit_code != 0 {
                 append_progress(
                     &progress.log_path,
                     &format!("task_end number={} result=failed", task.number),
@@ -119,90 +168,26 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &executed_tasks,
                     task,
                     "agent execution",
-                    &format!("{err:#}"),
+                    &format!("agent command exited with {}", agent_run.exit_code),
                     &progress,
+                );
+                let err = anyhow::anyhow!(
+                    "agent command exited with {} for task {}",
+                    agent_run.exit_code,
+                    task.number
                 );
                 return Err(failed_run_error(err, summary_result));
             }
-        };
-        let transcript = agent_run.transcript;
-        fs::write(&progress.transcript_path, &transcript)
-            .with_context(|| format!("write transcript {}", progress.transcript_path.display()))?;
-        append_progress(
-            &progress.log_path,
-            &format!(
-                "signal={} transcript path={}",
-                completion_signal(&transcript, &prompt),
-                progress.transcript_display
-            ),
-        )?;
-        output.push_str(&transcript);
-        if !transcript.ends_with('\n') {
-            output.push('\n');
-        }
-        if agent_run.exit_code != 0 {
-            append_progress(
-                &progress.log_path,
-                &format!("task_end number={} result=failed", task.number),
-            )?;
-            let summary_result = write_failed_run_summary(
-                plan_name,
-                &plan_slug,
-                &executed_tasks,
-                task,
-                "agent execution",
-                &format!("agent command exited with {}", agent_run.exit_code),
-                &progress,
-            );
-            let err = anyhow::anyhow!(
-                "agent command exited with {} for task {}",
-                agent_run.exit_code,
-                task.number
-            );
-            return Err(failed_run_error(err, summary_result));
-        }
-        let validation_output = match run_validation_commands(
-            &plan.validation_commands,
-            &progress.validation_output_path,
-        ) {
-            Ok(validation_output) => {
-                output.push_str(&validation_output);
-                validation_output
-            }
-            Err(err) => {
-                append_progress(&progress.log_path, "validation result=failed")?;
-                append_progress(
-                    &progress.log_path,
-                    &format!("task_end number={} result=failed", task.number),
-                )?;
-                let summary_result = write_failed_run_summary(
-                    plan_name,
-                    &plan_slug,
-                    &executed_tasks,
-                    task,
-                    "validation",
-                    &err.to_string(),
-                    &progress,
-                );
-                return Err(failed_run_error(err, summary_result));
-            }
-        };
-        append_progress(&progress.log_path, "validation result=passed")?;
-        if let Some(review_command) = options.review_command.as_deref() {
-            match run_review_command(
-                review_command,
-                plan_name,
-                task,
-                &transcript,
-                &validation_output,
-                &progress,
+            let validation_output = match run_validation_commands(
+                &plan.validation_commands,
+                &progress.validation_output_path,
             ) {
-                Ok(review_output) => {
-                    output.push_str(&review_output);
-                    append_progress(&progress.log_path, "review result=passed")?;
+                Ok(validation_output) => {
+                    output.push_str(&validation_output);
+                    validation_output
                 }
                 Err(err) => {
-                    append_progress(&progress.log_path, "review result=failed")?;
+                    append_progress(&progress.log_path, "validation result=failed")?;
                     append_progress(
                         &progress.log_path,
                         &format!("task_end number={} result=failed", task.number),
@@ -212,17 +197,61 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &plan_slug,
                         &executed_tasks,
                         task,
-                        "review",
+                        "validation",
                         &err.to_string(),
                         &progress,
                     );
                     return Err(failed_run_error(err, summary_result));
                 }
+            };
+            append_progress(&progress.log_path, "validation result=passed")?;
+            if let Some(review_command) = options.review_command.as_deref() {
+                match run_review_command(
+                    review_command,
+                    plan_name,
+                    task,
+                    &transcript,
+                    &validation_output,
+                    &progress,
+                ) {
+                    Ok(review_output) => {
+                        output.push_str(&review_output);
+                        append_progress(&progress.log_path, "review result=passed")?;
+                        break (transcript, validation_output);
+                    }
+                    Err(err) => {
+                        append_progress(&progress.log_path, "review result=failed")?;
+                        if attempt < MAX_REVIEW_ATTEMPTS {
+                            let feedback = err.to_string();
+                            output.push_str(&format!(
+                                "Review failed on attempt {attempt}; retrying implementation.\n"
+                            ));
+                            review_feedback = Some(feedback);
+                            attempt += 1;
+                            continue;
+                        }
+                        append_progress(
+                            &progress.log_path,
+                            &format!("task_end number={} result=failed", task.number),
+                        )?;
+                        let summary_result = write_failed_run_summary(
+                            plan_name,
+                            &plan_slug,
+                            &executed_tasks,
+                            task,
+                            "review",
+                            &err.to_string(),
+                            &progress,
+                        );
+                        return Err(failed_run_error(err, summary_result));
+                    }
+                }
+            } else {
+                output.push_str("Review: skipped\n");
+                append_progress(&progress.log_path, "review result=skipped")?;
+                break (transcript, validation_output);
             }
-        } else {
-            output.push_str("Review: skipped\n");
-            append_progress(&progress.log_path, "review result=skipped")?;
-        }
+        };
         plan_text = crate::plan::mark_task_complete(&plan_text, task.number)
             .with_context(|| format!("mark task {} complete", task.number))?;
         fs::write(&options.plan_path, &plan_text)
@@ -863,7 +892,12 @@ fn run_git_with_paths(args: &[&str], paths: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&result.stdout).into_owned())
 }
 
-fn build_task_prompt(plan_name: &str, task: &Task, validation_commands: &[String]) -> String {
+fn build_task_prompt(
+    plan_name: &str,
+    task: &Task,
+    validation_commands: &[String],
+    review_feedback: Option<&str>,
+) -> String {
     let mut prompt = format!(
         "You are executing one task from {plan_name}.\n\nTask {}: {}\n\n{}",
         task.number, task.title, task.body
@@ -873,6 +907,13 @@ fn build_task_prompt(plan_name: &str, task: &Task, validation_commands: &[String
         for command in validation_commands {
             prompt.push_str("- ");
             prompt.push_str(command);
+            prompt.push('\n');
+        }
+    }
+    if let Some(review_feedback) = review_feedback {
+        prompt.push_str("\nPrevious review failed. Fix the task using this independent reviewer feedback before printing COMPLETED:\n");
+        prompt.push_str(review_feedback);
+        if !review_feedback.ends_with('\n') {
             prompt.push('\n');
         }
     }
