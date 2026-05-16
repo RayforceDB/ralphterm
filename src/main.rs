@@ -176,6 +176,7 @@ struct CreateRunRequest {
     require_review: Option<bool>,
     max_review_retries: Option<usize>,
     no_commit: Option<bool>,
+    dry_run: Option<bool>,
 }
 
 #[tokio::main]
@@ -468,6 +469,7 @@ async fn create_run(
     let require_review = req.require_review.unwrap_or(false);
     let max_review_retries = req.max_review_retries.unwrap_or(1);
     let no_commit = req.no_commit.unwrap_or(false);
+    let dry_run = req.dry_run.unwrap_or(false);
     let slug = plan_slug_for_artifacts(&plan_path);
 
     let started = RunStore::start(&base_dir, run_id)?.context("run disappeared before start")?;
@@ -510,28 +512,51 @@ async fn create_run(
                 )?;
                 Ok(())
             });
-            if let Err(err) = run_plan(RunOptions {
+            let run_output = match run_plan(RunOptions {
                 plan_path,
                 agent_command: Some(agent_command),
                 review_command,
                 require_review,
                 max_review_retries,
                 no_commit,
-                dry_run: false,
+                dry_run,
                 event_sink: Some(event_sink),
             }) {
-                let summary_markdown = fs::read_to_string(&summary_path).ok();
-                let diff_patch = fs::read_to_string(&diff_path).ok();
-                match RunStore::write_failure(&base_dir, run_id, summary_markdown, diff_patch) {
+                Ok(output) => output,
+                Err(err) => {
+                    let summary_markdown = fs::read_to_string(&summary_path).ok();
+                    let diff_patch = fs::read_to_string(&diff_path).ok();
+                    match RunStore::write_failure(&base_dir, run_id, summary_markdown, diff_patch) {
+                        Ok(Some(_)) => {}
+                        Ok(None) => {
+                            tracing::error!(%run_id, "run disappeared before failure could be written")
+                        }
+                        Err(write_err) => {
+                            tracing::error!(%run_id, error = %write_err, "failed to write failed run record")
+                        }
+                    }
+                    tracing::error!(%run_id, error = %err, "background plan run failed");
+                    return;
+                }
+            };
+
+            if dry_run {
+                match RunStore::write_result(
+                    &base_dir,
+                    run_id,
+                    RunResultArtifacts {
+                        summary_markdown: run_output,
+                        diff_patch: String::new(),
+                    },
+                ) {
                     Ok(Some(_)) => {}
                     Ok(None) => {
-                        tracing::error!(%run_id, "run disappeared before failure could be written")
+                        tracing::error!(%run_id, "run disappeared before result could be written")
                     }
-                    Err(write_err) => {
-                        tracing::error!(%run_id, error = %write_err, "failed to write failed run record")
+                    Err(err) => {
+                        tracing::error!(%run_id, error = %err, "failed to write successful run record")
                     }
                 }
-                tracing::error!(%run_id, error = %err, "background plan run failed");
                 return;
             }
 
