@@ -63,7 +63,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             &progress.log_path,
             &format!(
                 "signal={} transcript path={}",
-                completion_signal(&transcript),
+                completion_signal(&transcript, &prompt),
                 progress.transcript_display
             ),
         )?;
@@ -71,7 +71,17 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         if !transcript.ends_with('\n') {
             output.push('\n');
         }
-        output.push_str(&run_validation_commands(&plan.validation_commands)?);
+        match run_validation_commands(&plan.validation_commands) {
+            Ok(validation_output) => output.push_str(&validation_output),
+            Err(err) => {
+                append_progress(&progress.log_path, "validation result=failed")?;
+                append_progress(
+                    &progress.log_path,
+                    &format!("task_end number={} result=failed", task.number),
+                )?;
+                return Err(err);
+            }
+        }
         append_progress(&progress.log_path, "validation result=passed")?;
         plan_text = crate::plan::mark_task_complete(&plan_text, task.number)
             .with_context(|| format!("mark task {} complete", task.number))?;
@@ -134,12 +144,23 @@ fn timestamp() -> String {
     seconds.to_string()
 }
 
-fn completion_signal(transcript: &str) -> &'static str {
-    if transcript.contains("COMPLETED") {
+fn completion_signal(transcript: &str, prompt: &str) -> &'static str {
+    let output = transcript_without_prompt_echo(transcript, prompt);
+    if output.contains("COMPLETED") {
         "COMPLETED"
     } else {
         "NONE"
     }
+}
+
+fn transcript_without_prompt_echo(transcript: &str, prompt: &str) -> String {
+    let mut normalized = transcript.replace("\r\n", "\n").replace('\r', "\n");
+    let prompt = prompt.replace("\r\n", "\n").replace('\r', "\n");
+    if let Some(start) = normalized.find(&prompt) {
+        let end = start + prompt.len();
+        normalized.replace_range(start..end, "");
+    }
+    normalized
 }
 
 fn plan_slug(plan_path: &Path) -> String {
@@ -157,13 +178,19 @@ fn plan_slug(plan_path: &Path) -> String {
             }
         })
         .collect();
-    slug.trim_matches('-').to_string()
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "plan".to_string()
+    } else {
+        slug
+    }
 }
 
 fn commit_task(title: &str, baseline_paths: &BTreeSet<String>) -> Result<String> {
     let current_paths = git_status_paths().context("snapshot git status after task")?;
     let paths_to_stage: Vec<&str> = current_paths
         .difference(baseline_paths)
+        .filter(|path| !is_ralphterm_artifact(path))
         .map(String::as_str)
         .collect();
     if paths_to_stage.is_empty() {
@@ -187,6 +214,10 @@ fn git_status_paths() -> Result<BTreeSet<String>> {
         }
     }
     Ok(paths)
+}
+
+fn is_ralphterm_artifact(path: &str) -> bool {
+    path == ".ralphterm" || path.starts_with(".ralphterm/")
 }
 
 fn run_git(args: &[&str]) -> Result<String> {
