@@ -108,26 +108,7 @@ impl WorkspaceManager {
     }
 
     pub fn cleanup(&self, workspace: &Workspace) -> Result<()> {
-        self.validate_workspace(workspace)?;
-
-        let expected_ref = format!("refs/heads/{}", workspace.branch);
-        match self.worktree_branch(&workspace.path)? {
-            Some(branch) if branch == expected_ref => {}
-            Some(branch) => bail!(
-                "workspace worktree at {} has branch mismatch: expected {}, found {}",
-                workspace.path.display(),
-                expected_ref,
-                if branch.is_empty() {
-                    "<none>".to_string()
-                } else {
-                    branch
-                }
-            ),
-            None => bail!(
-                "no managed workspace worktree found at {}",
-                workspace.path.display()
-            ),
-        }
+        self.validate_existing_workspace(workspace)?;
 
         self.git_checked([
             "worktree",
@@ -148,7 +129,32 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    fn validate_workspace(&self, workspace: &Workspace) -> Result<()> {
+    pub fn validate_existing_workspace(&self, workspace: &Workspace) -> Result<()> {
+        self.validate_workspace_metadata(workspace)?;
+
+        let expected_ref = format!("refs/heads/{}", workspace.branch);
+        match self.worktree_branch(&workspace.path)? {
+            Some(branch) if branch == expected_ref => {}
+            Some(branch) => bail!(
+                "workspace worktree at {} has branch mismatch: expected {}, found {}",
+                workspace.path.display(),
+                expected_ref,
+                if branch.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    branch
+                }
+            ),
+            None => bail!(
+                "no managed workspace worktree found at {}",
+                workspace.path.display()
+            ),
+        }
+
+        Ok(())
+    }
+
+    fn validate_workspace_metadata(&self, workspace: &Workspace) -> Result<()> {
         let id = sanitize_id(&workspace.id)?;
         if workspace.repo_root != self.repo_root {
             bail!(

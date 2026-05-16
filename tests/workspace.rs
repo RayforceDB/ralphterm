@@ -381,6 +381,27 @@ fn cleanup_rejects_workspace_values_that_do_not_match_manager_and_id() {
     manager.cleanup(&workspace).unwrap();
 }
 
+#[test]
+fn validate_existing_workspace_rejects_plain_directory_at_expected_path() {
+    let repo = TestRepo::new();
+    let manager = WorkspaceManager::discover(repo.path()).unwrap();
+    let workspace = manager.workspace("plain-dir").unwrap();
+    fs::create_dir_all(&workspace.path).unwrap();
+    fs::write(
+        workspace.path.join("sentinel.txt"),
+        "must not execute here\n",
+    )
+    .unwrap();
+
+    let error = manager
+        .validate_existing_workspace(&workspace)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("managed workspace worktree"), "{error}");
+    assert!(workspace.path.join("sentinel.txt").exists());
+}
+
 struct TestDir {
     path: std::path::PathBuf,
 }

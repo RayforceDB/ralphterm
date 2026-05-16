@@ -656,6 +656,144 @@ fn run_api_workspace_id_executes_plan_in_isolated_workspace_and_persists_result_
 }
 
 #[test]
+fn run_api_rejects_preexisting_plain_workspace_directory_without_creating_run() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+    std::fs::write(
+        repo.path.join("plan.md"),
+        "# Example plan\n\n### Task 1: Write first file\n- [ ] Write first.txt\n",
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let plain_workspace_path = repo
+        .path
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("api-isolated");
+    std::fs::create_dir_all(&plain_workspace_path).expect("create plain workspace dir");
+    std::fs::write(
+        plain_workspace_path.join("sentinel.txt"),
+        "must not execute here\n",
+    )
+    .expect("write sentinel");
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "workspace_id": "api-isolated",
+        "plan_path": "plan.md",
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+    assert!(plain_workspace_path.join("sentinel.txt").exists());
+    assert!(!plain_workspace_path.join("first.txt").exists());
+}
+
+#[test]
+fn session_without_cwd_uses_server_base_dir_while_workspace_run_changes_process_cwd() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let workspace_path = repo
+        .path
+        .join(".ralphterm")
+        .join("workspaces")
+        .join("api-cwd-race");
+    let body = serde_json::json!({
+        "workspace_id": "api-cwd-race",
+        "plan_path": "plan.md",
+        "agent_command": fixture_path("slow-fake-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+
+    wait_for_file(workspace_path.join("slow-fake-agent-last-prompt.txt"));
+
+    let session_body = serde_json::json!({
+        "agent": "codex",
+        "prompt": "ignored",
+        "command": "/bin/pwd",
+        "args": []
+    })
+    .to_string();
+    let created_session = request_json(port, "POST /v1/sessions HTTP/1.1", Some(&session_body));
+    assert_eq!(created_session.status, 200, "{}", created_session.body);
+    let created_session_json: serde_json::Value =
+        serde_json::from_str(&created_session.body).expect("created session json");
+    let session_id = created_session_json["id"].as_str().expect("session id");
+
+    let transcript = wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{session_id}/transcript HTTP/1.1"),
+        |text| text.contains(repo.path.to_string_lossy().as_ref()),
+    );
+    assert!(
+        transcript.contains(repo.path.to_string_lossy().as_ref()),
+        "{transcript}"
+    );
+    assert!(
+        !transcript.contains(workspace_path.to_string_lossy().as_ref()),
+        "{transcript}"
+    );
+}
+
+#[test]
 fn run_api_executes_plan_with_review_command_and_persists_review_transcript() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
@@ -1185,4 +1323,30 @@ fn wait_for_json(
         thread::sleep(Duration::from_millis(25));
     }
     panic!("timed out waiting for JSON predicate; last response: {last_response}");
+}
+
+fn wait_for_text(port: u16, request_line: &str, predicate: impl Fn(&str) -> bool) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut last_response = String::new();
+    while Instant::now() < deadline {
+        let response = request_json(port, request_line, None);
+        assert_eq!(response.status, 200, "{}", response.body);
+        last_response = response.body;
+        if predicate(&last_response) {
+            return last_response;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    panic!("timed out waiting for text predicate; last response: {last_response}");
+}
+
+fn wait_for_file(path: PathBuf) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if path.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    panic!("timed out waiting for file {}", path.display());
 }

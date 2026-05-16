@@ -405,6 +405,9 @@ async fn create_run(
                 .workspace(workspace_id)
                 .map_err(|err| ApiError::bad_request(err.to_string()))?;
             let workspace = if candidate.path.exists() {
+                manager
+                    .validate_existing_workspace(&candidate)
+                    .map_err(|err| ApiError::bad_request(err.to_string()))?;
                 candidate
             } else {
                 manager.create(workspace_id)?
@@ -639,12 +642,15 @@ async fn create_session(
     State(state): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
+    let cwd = req
+        .cwd
+        .unwrap_or_else(|| state.run_base_dir.to_string_lossy().to_string());
     let id = state
         .store
         .spawn(SessionConfig {
             agent: req.agent.into(),
             prompt: req.prompt,
-            cwd: req.cwd,
+            cwd: Some(cwd),
             command: req.command,
             args: req.args.unwrap_or_default(),
             cols: req.cols.unwrap_or(120),
