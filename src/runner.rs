@@ -69,7 +69,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         .agent_command
         .unwrap_or_else(|| "claude".to_string());
     if options.require_review && options.review_command.is_none() {
-        bail!("--require-review needs --review-command");
+        bail!("--require-review needs --review-command or --review-agent");
     }
     let plan_slug = plan_slug(&options.plan_path);
     remove_stale_run_summary(&plan_slug)?;

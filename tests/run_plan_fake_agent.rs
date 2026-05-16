@@ -1703,7 +1703,7 @@ fn validation_commands_that_change_reviewed_untracked_file_after_review_block_ac
 }
 
 #[test]
-fn require_review_without_review_command_refuses_to_run_agent() {
+fn require_review_without_review_command_or_agent_refuses_to_run_agent() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
     fs::write(
@@ -1743,7 +1743,7 @@ fn require_review_without_review_command_refuses_to_run_agent() {
     );
     assert!(
         !repo.path.join("first.txt").exists(),
-        "agent should not run when review is required without a review command"
+        "agent should not run when review is required without a review command or agent"
     );
     let plan = fs::read_to_string(&plan_path).expect("read plan");
     assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
@@ -1754,9 +1754,63 @@ fn require_review_without_review_command_refuses_to_run_agent() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        diagnostics.contains("--require-review needs --review-command"),
+        diagnostics.contains("--require-review needs --review-command or --review-agent"),
         "{diagnostics}"
     );
+}
+
+#[test]
+fn review_agent_conflicts_with_review_command() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `true`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-agent",
+            "codex",
+            "--review-command",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostics.contains("--review-agent"), "{diagnostics}");
+    assert!(diagnostics.contains("--review-command"), "{diagnostics}");
 }
 
 #[test]
