@@ -1420,6 +1420,98 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
 }
 
 #[test]
+fn review_agent_codex_uses_codex_from_path_and_satisfies_required_review() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let bin_dir = repo.path.join("bin");
+    fs::create_dir(&bin_dir).expect("create bin dir");
+    let codex_path = bin_dir.join("codex");
+    fs::write(
+        &codex_path,
+        r#"#!/usr/bin/env sh
+set -eu
+printf '%s\n' "$#" > review-codex-argc.txt
+printf '%s\n' "$*" > review-codex-argv.txt
+prompt=$(cat)
+printf '%s\n' "$prompt" > review-codex-prompt.txt
+printf 'REVIEW_PASS\n'
+"#,
+    )
+    .expect("write fake codex");
+    fs::set_permissions(&codex_path, fs::Permissions::from_mode(0o755)).expect("chmod fake codex");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH is set")
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("PATH", path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-agent",
+            "codex",
+            "--require-review",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        fs::read_to_string(repo.path.join("review-codex-argc.txt")).expect("read argc"),
+        "0\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("review-codex-argv.txt")).expect("read argv"),
+        "\n"
+    );
+    let review_prompt =
+        fs::read_to_string(repo.path.join("review-codex-prompt.txt")).expect("read review prompt");
+    assert!(
+        review_prompt.contains("Task 1: Create first file"),
+        "{review_prompt}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Review passed"), "{stdout}");
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("review result=passed"),
+        "{progress_log}"
+    );
+}
+
+#[test]
 fn review_command_runs_before_validation_commands() {
     let repo = TempRepo::new();
     repo.init_git();

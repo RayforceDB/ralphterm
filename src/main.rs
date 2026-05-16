@@ -42,6 +42,8 @@ enum Command {
         agent: Option<RunAgentKind>,
         #[arg(long)]
         agent_command: Option<String>,
+        #[arg(long, value_enum, conflicts_with = "review_command")]
+        review_agent: Option<RunAgentKind>,
         #[arg(long)]
         review_command: Option<String>,
         #[arg(long)]
@@ -139,6 +141,7 @@ async fn main() -> anyhow::Result<()> {
             plan,
             agent,
             agent_command,
+            review_agent,
             review_command,
             require_review,
             no_commit,
@@ -147,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
             let output = run_plan(RunOptions {
                 plan_path: plan,
                 agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
-                review_command,
+                review_command: review_command.or_else(|| review_agent.map(RunAgentKind::command)),
                 require_review,
                 no_commit,
                 dry_run,
