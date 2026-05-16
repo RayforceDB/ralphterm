@@ -57,14 +57,25 @@ fn run_api_creates_lists_reads_events_and_cancels_run_records() {
 
     let missing_summary = request_json(port, &format!("GET /v1/runs/{id}/summary HTTP/1.1"), None);
     assert_eq!(missing_summary.status, 404, "{}", missing_summary.body);
+    let missing_summary_json: serde_json::Value =
+        serde_json::from_str(&missing_summary.body).expect("missing summary error json");
+    assert_eq!(missing_summary_json["error"], "summary artifact not found");
+
     let missing_diff = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
     assert_eq!(missing_diff.status, 404, "{}", missing_diff.body);
+    let missing_diff_json: serde_json::Value =
+        serde_json::from_str(&missing_diff.body).expect("missing diff error json");
+    assert_eq!(missing_diff_json["error"], "diff artifact not found");
+
     let unknown_summary = request_json(
         port,
         "GET /v1/runs/00000000-0000-0000-0000-000000000000/summary HTTP/1.1",
         None,
     );
     assert_eq!(unknown_summary.status, 404, "{}", unknown_summary.body);
+    let unknown_summary_json: serde_json::Value =
+        serde_json::from_str(&unknown_summary.body).expect("unknown summary error json");
+    assert_eq!(unknown_summary_json["error"], "run not found");
 
     let cancelled = request_json(
         port,

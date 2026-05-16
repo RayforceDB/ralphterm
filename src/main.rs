@@ -396,14 +396,30 @@ async fn get_run_summary(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<String, ApiError> {
-    RunStore::summary(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())
+    let path =
+        RunStore::summary_path(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?;
+    read_run_artifact(path, "summary").await
 }
 
 async fn get_run_diff(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<String, ApiError> {
-    RunStore::diff(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())
+    let path =
+        RunStore::diff_path(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?;
+    read_run_artifact(path, "diff").await
+}
+
+async fn read_run_artifact(path: PathBuf, name: &'static str) -> Result<String, ApiError> {
+    match tokio::fs::read_to_string(&path).await {
+        Ok(content) => Ok(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(ApiError::artifact_not_found(name))
+        }
+        Err(error) => Err(anyhow::Error::new(error)
+            .context(format!("read {}", path.display()))
+            .into()),
+    }
 }
 
 async fn get_run_events(
@@ -531,6 +547,13 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: "run not found".into(),
+        }
+    }
+
+    fn artifact_not_found(name: &str) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: format!("{name} artifact not found"),
         }
     }
 

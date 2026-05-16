@@ -1,7 +1,7 @@
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -146,27 +146,20 @@ impl RunStore {
         Ok(Some(events))
     }
 
-    pub fn summary(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<String>> {
-        Self::artifact(base_dir, id, "summary.md")
+    pub fn summary_path(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<PathBuf>> {
+        Self::artifact_path(base_dir, id, "summary.md")
     }
 
-    pub fn diff(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<String>> {
-        Self::artifact(base_dir, id, "diff.patch")
+    pub fn diff_path(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<PathBuf>> {
+        Self::artifact_path(base_dir, id, "diff.patch")
     }
 
-    fn artifact(base_dir: impl AsRef<Path>, id: Uuid, name: &str) -> Result<Option<String>> {
+    fn artifact_path(base_dir: impl AsRef<Path>, id: Uuid, name: &str) -> Result<Option<PathBuf>> {
         if Self::get(base_dir.as_ref(), id)?.is_none() {
             return Ok(None);
         }
 
-        let artifact_path = run_dir(base_dir.as_ref(), id).join(name);
-        if !artifact_path.exists() {
-            return Ok(None);
-        }
-
-        fs::read_to_string(&artifact_path)
-            .with_context(|| format!("read {}", artifact_path.display()))
-            .map(Some)
+        Ok(Some(run_dir(base_dir.as_ref(), id).join(name)))
     }
 
     pub fn cancel(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<CreatedRunRecord>> {
