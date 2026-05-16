@@ -113,6 +113,16 @@ Literal example: `- [ ] do not mark`
         .trim();
     let transcript = fs::read_to_string(repo.path.join(transcript_path)).expect("read transcript");
     assert!(transcript.contains("COMPLETED"), "{transcript}");
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read run summary");
+    assert!(summary.contains("# Run Summary: plan.md"), "{summary}");
+    assert!(summary.contains("Result: passed"), "{summary}");
+    assert!(
+        summary.contains("- Task 1: Create first file — passed"),
+        "{summary}"
+    );
+    assert!(summary.contains(transcript_path), "{summary}");
 }
 
 #[test]
@@ -179,6 +189,78 @@ The agent should create first.txt.
         fs::read_to_string(repo.path.join("second.txt")).expect("second file created"),
         "created by fake agent\n"
     );
+}
+
+#[test]
+fn run_command_writes_passed_summary_with_transcripts_after_success() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt || test -f second.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+
+### Task 2: Already done
+- [x] Nothing left here
+
+### Task 3: Create second file
+- [ ] Write second.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    let transcript_paths: Vec<&str> = progress_log
+        .lines()
+        .filter_map(|line| line.split("transcript path=").nth(1))
+        .map(str::trim)
+        .collect();
+    assert_eq!(transcript_paths.len(), 2, "{progress_log}");
+
+    let summary_path = repo.path.join(".ralphterm/progress/plan-summary.md");
+    let summary = fs::read_to_string(&summary_path).expect("read run summary");
+    assert!(summary.contains("# Run Summary: plan.md"), "{summary}");
+    assert!(summary.contains("Result: passed"), "{summary}");
+    assert!(
+        summary.contains("- Task 1: Create first file — passed"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("- Task 3: Create second file — passed"),
+        "{summary}"
+    );
+    assert!(!summary.contains("Already done"), "{summary}");
+    for transcript_path in transcript_paths {
+        assert!(summary.contains(transcript_path), "{summary}");
+    }
 }
 
 #[test]
@@ -464,6 +546,13 @@ fn validation_failure_is_logged_and_does_not_complete_task() {
     );
     assert!(progress_log.contains("task_end number=1"), "{progress_log}");
     assert!(progress_log.contains("result=failed"), "{progress_log}");
+    assert!(
+        !repo
+            .path
+            .join(".ralphterm/progress/plan-summary.md")
+            .exists(),
+        "failed run should not write passed summary"
+    );
 }
 
 #[test]

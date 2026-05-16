@@ -50,6 +50,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         .agent_command
         .unwrap_or_else(|| "claude".to_string());
     let plan_slug = plan_slug(&options.plan_path);
+    let mut executed_tasks = Vec::new();
 
     for task in pending {
         let progress = ProgressPaths::new(&plan_slug, task.number)?;
@@ -115,7 +116,14 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             &progress.log_path,
             &format!("task_end number={}", task.number),
         )?;
+        executed_tasks.push(ExecutedTask {
+            number: task.number,
+            title: task.title.clone(),
+            transcript_display: progress.transcript_display,
+        });
     }
+
+    write_run_summary(plan_name, &plan_slug, &executed_tasks)?;
 
     Ok(output)
 }
@@ -138,6 +146,12 @@ fn describe_dry_run(plan_name: &str, validation_commands: &[String], pending: &[
 struct ProgressPaths {
     log_path: PathBuf,
     transcript_path: PathBuf,
+    transcript_display: String,
+}
+
+struct ExecutedTask {
+    number: usize,
+    title: String,
     transcript_display: String,
 }
 
@@ -164,6 +178,21 @@ fn append_progress(path: &Path, event: &str) -> Result<()> {
         .open(path)
         .with_context(|| format!("open progress log {}", path.display()))?;
     writeln!(file, "timestamp={} {event}", timestamp()).context("write progress log")
+}
+
+fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -> Result<()> {
+    let progress_dir = PathBuf::from(".ralphterm").join("progress");
+    fs::create_dir_all(&progress_dir).context("create progress directory")?;
+    let summary_path = progress_dir.join(format!("{plan_slug}-summary.md"));
+    let mut summary = format!("# Run Summary: {plan_name}\n\nResult: passed\n\n");
+    for task in tasks {
+        summary.push_str(&format!(
+            "- Task {}: {} — passed\n  - Transcript: {}\n",
+            task.number, task.title, task.transcript_display
+        ));
+    }
+    fs::write(&summary_path, summary)
+        .with_context(|| format!("write run summary {}", summary_path.display()))
 }
 
 fn last_task_end_failed(path: &Path, task_number: usize) -> Result<bool> {
