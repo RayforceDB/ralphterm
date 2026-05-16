@@ -666,6 +666,23 @@ fn cancelling_run_blocks_later_tasks_from_starting() {
     wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
         (json["status"] == "failed").then(|| json.clone())
     });
+
+    let summary = request_json(port, &format!("GET /v1/runs/{id}/summary HTTP/1.1"), None);
+    assert_eq!(summary.status, 200, "{}", summary.body);
+    assert!(summary.body.contains("Result: failed"), "{}", summary.body);
+    assert!(summary.body.contains("cancelled"), "{}", summary.body);
+    assert!(
+        summary
+            .body
+            .contains(&plan_path.to_string_lossy().to_string()),
+        "{}",
+        summary.body
+    );
+
+    let diff = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
+    assert_eq!(diff.status, 200, "{}", diff.body);
+    assert_eq!(diff.body, "");
+
     thread::sleep(Duration::from_millis(1200));
 
     assert!(repo.path.join("first.txt").exists());
