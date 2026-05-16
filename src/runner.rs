@@ -59,18 +59,20 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         return Ok(output);
     }
 
+    let review_command = options.review_command.clone();
     if options.dry_run {
         return Ok(describe_dry_run(
             plan_name,
             &plan.validation_commands,
             &pending,
+            review_command.as_deref(),
         ));
     }
 
     let agent_command = options
         .agent_command
         .unwrap_or_else(|| "claude".to_string());
-    if options.require_review && options.review_command.is_none() {
+    if options.require_review && review_command.is_none() {
         bail!("--require-review needs --review-command or --review-agent");
     }
     if let Some(review_command) = options.review_command.as_deref() {
@@ -393,8 +395,17 @@ fn smoke_timeout() -> Duration {
     Duration::from_millis(timeout_ms)
 }
 
-fn describe_dry_run(plan_name: &str, validation_commands: &[String], pending: &[&Task]) -> String {
+fn describe_dry_run(
+    plan_name: &str,
+    validation_commands: &[String],
+    pending: &[&Task],
+    review_command: Option<&str>,
+) -> String {
     let mut output = format!("Dry run: {plan_name}\n");
+    match review_command {
+        Some(command) => output.push_str(&format!("Review: {command}\n")),
+        None => output.push_str("Review: skipped\n"),
+    }
     if validation_commands.is_empty() {
         output.push_str("Validation: none\n");
     } else {

@@ -1164,6 +1164,7 @@ fn dry_run_lists_work_without_starting_agent_or_editing_files() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Dry run: plan.md"), "{stdout}");
+    assert!(stdout.contains("Review: skipped"), "{stdout}");
     assert!(stdout.contains("Validation: test -f first.txt"), "{stdout}");
     assert!(stdout.contains("Task 1: Create first file"), "{stdout}");
     assert!(stdout.contains("Task 3: Create second file"), "{stdout}");

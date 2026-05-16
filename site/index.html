@@ -81,6 +81,7 @@ Signal: COMPLETED
 
 $ ralphterm run docs/plans/example.md --dry-run
 Dry run: example.md
+Review: skipped
 Validation: test -f docs/plans/example-output.txt
 Task 1: Create smoke-test output
 
@@ -134,7 +135,7 @@ $ ralphterm run docs/plans/example.md --agent claude \
       </div>
       <ul class="api-list">
         <li><code>ralphterm smoke --agent claude</code><span>verify the real CLI can run inside a PTY and emit a completion signal</span></li>
-        <li><code>ralphterm run PLAN --dry-run</code><span>preview pending tasks and validation without starting an agent</span></li>
+        <li><code>ralphterm run PLAN --dry-run</code><span>preview pending tasks, review mode, and validation without starting an agent</span></li>
         <li><code>ralphterm run PLAN --agent claude --require-review --review-agent codex</code><span>fail before agent execution unless an independent reviewer is configured</span></li>
         <li><code>ralphterm run PLAN --agent codex</code><span>run the same loop through Codex</span></li>
         <li><code>POST /v1/sessions</code><span>start Claude, Codex, or a custom command in a PTY</span></li>

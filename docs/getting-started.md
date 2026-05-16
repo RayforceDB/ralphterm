@@ -67,7 +67,7 @@ Preview the plan first:
 ralphterm run docs/plans/example.md --dry-run
 ```
 
-That prints pending tasks and validation commands only. It does not start an agent, edit the plan, write `.ralphterm/progress/`, or commit.
+That prints pending tasks, review mode, and validation commands only. It does not start an agent, edit the plan, write `.ralphterm/progress/`, or commit.
 
 After the official Claude Code CLI is installed, authenticated, and works interactively as `claude` in your shell, run:
 
