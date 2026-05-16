@@ -393,43 +393,81 @@ async fn create_run(
     let no_commit = req.no_commit.unwrap_or(false);
     let slug = plan_slug_for_artifacts(&plan_path);
 
-    tokio::task::spawn_blocking(move || {
-        let progress_dir = base_dir.join(".ralphterm").join("progress");
-        let summary_path = progress_dir.join(format!("{slug}-summary.md"));
-        let diff_path = progress_dir.join(format!("{slug}-diff.patch"));
-        if let Err(err) = run_plan(RunOptions {
-            plan_path,
-            agent_command: Some(agent_command),
-            review_command,
-            require_review,
-            max_review_retries,
-            no_commit,
-            dry_run: false,
-        }) {
-            let summary_markdown = fs::read_to_string(&summary_path).ok();
-            let diff_patch = fs::read_to_string(&diff_path).ok();
-            RunStore::write_failure(&base_dir, run_id, summary_markdown, diff_patch)?
-                .context("run disappeared before failure could be written")?;
-            return Err(err);
-        }
+    let started = RunStore::start(&base_dir, run_id)?.context("run disappeared before start")?;
 
-        let summary_markdown =
-            fs::read_to_string(&summary_path).context("read run summary artifact")?;
-        let diff_patch = fs::read_to_string(&diff_path).context("read run diff artifact")?;
-        RunStore::write_result(
-            &base_dir,
-            run_id,
-            RunResultArtifacts {
-                summary_markdown,
-                diff_patch,
-            },
-        )?
-        .context("run disappeared before result could be written")
-    })
-    .await
-    .context("join run executor")?
-    .map(Json)
-    .map_err(ApiError::from)
+    let executor_base_dir = base_dir.clone();
+    tokio::spawn(async move {
+        let supervisor_base_dir = base_dir;
+        let result = tokio::task::spawn_blocking(move || {
+            let base_dir = executor_base_dir;
+            let progress_dir = base_dir.join(".ralphterm").join("progress");
+            let summary_path = progress_dir.join(format!("{slug}-summary.md"));
+            let diff_path = progress_dir.join(format!("{slug}-diff.patch"));
+            if let Err(err) = run_plan(RunOptions {
+                plan_path,
+                agent_command: Some(agent_command),
+                review_command,
+                require_review,
+                max_review_retries,
+                no_commit,
+                dry_run: false,
+            }) {
+                let summary_markdown = fs::read_to_string(&summary_path).ok();
+                let diff_patch = fs::read_to_string(&diff_path).ok();
+                match RunStore::write_failure(&base_dir, run_id, summary_markdown, diff_patch) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        tracing::error!(%run_id, "run disappeared before failure could be written")
+                    }
+                    Err(write_err) => {
+                        tracing::error!(%run_id, error = %write_err, "failed to write failed run record")
+                    }
+                }
+                tracing::error!(%run_id, error = %err, "background plan run failed");
+                return;
+            }
+
+            let summary_markdown = match fs::read_to_string(&summary_path) {
+                Ok(summary_markdown) => summary_markdown,
+                Err(err) => {
+                    let error = anyhow::Error::new(err).context("read run summary artifact");
+                    let _ = RunStore::write_failure(&base_dir, run_id, None, None);
+                    tracing::error!(%run_id, error = %error, "background plan run failed");
+                    return;
+                }
+            };
+            let diff_patch = match fs::read_to_string(&diff_path) {
+                Ok(diff_patch) => diff_patch,
+                Err(err) => {
+                    let error = anyhow::Error::new(err).context("read run diff artifact");
+                    let _ = RunStore::write_failure(&base_dir, run_id, Some(summary_markdown), None);
+                    tracing::error!(%run_id, error = %error, "background plan run failed");
+                    return;
+                }
+            };
+            match RunStore::write_result(
+                &base_dir,
+                run_id,
+                RunResultArtifacts {
+                    summary_markdown,
+                    diff_patch,
+                },
+            ) {
+                Ok(Some(_)) => {}
+                Ok(None) => tracing::error!(%run_id, "run disappeared before result could be written"),
+                Err(err) => {
+                    tracing::error!(%run_id, error = %err, "failed to write successful run record")
+                }
+            }
+        })
+        .await;
+        if let Err(err) = result {
+            let _ = RunStore::write_failure(&supervisor_base_dir, run_id, None, None);
+            tracing::error!(%run_id, error = %err, "background plan worker failed to join");
+        }
+    });
+
+    Ok(Json(started))
 }
 
 fn plan_slug_for_artifacts(plan_path: &FsPath) -> String {

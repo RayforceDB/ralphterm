@@ -2,6 +2,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -162,7 +163,32 @@ impl RunStore {
         Ok(Some(run_dir(base_dir.as_ref(), id).join(name)))
     }
 
+    pub fn start(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<CreatedRunRecord>> {
+        let _guard = record_mutation_lock()
+            .lock()
+            .expect("run record lock poisoned");
+        let Some(mut record) = Self::get(base_dir.as_ref(), id)? else {
+            return Ok(None);
+        };
+        record.phase = RunPhase::Executing;
+        record.status = RunStatus::Running;
+        write_record(base_dir.as_ref(), &record)?;
+        append_event(
+            base_dir.as_ref(),
+            id,
+            RunEvent {
+                event_type: "run_started".to_string(),
+                status: record.status.clone(),
+                timestamp: timestamp(),
+            },
+        )?;
+        Ok(Some(record))
+    }
+
     pub fn cancel(base_dir: impl AsRef<Path>, id: Uuid) -> Result<Option<CreatedRunRecord>> {
+        let _guard = record_mutation_lock()
+            .lock()
+            .expect("run record lock poisoned");
         let Some(mut record) = Self::get(base_dir.as_ref(), id)? else {
             return Ok(None);
         };
@@ -186,9 +212,15 @@ impl RunStore {
         id: Uuid,
         artifacts: RunResultArtifacts,
     ) -> Result<Option<CreatedRunRecord>> {
+        let _guard = record_mutation_lock()
+            .lock()
+            .expect("run record lock poisoned");
         let Some(mut record) = Self::get(base_dir.as_ref(), id)? else {
             return Ok(None);
         };
+        if record.status != RunStatus::Running {
+            return Ok(Some(record));
+        }
 
         let dir = run_dir(base_dir.as_ref(), id);
         let summary_path = dir.join("summary.md");
@@ -219,9 +251,15 @@ impl RunStore {
         summary_markdown: Option<String>,
         diff_patch: Option<String>,
     ) -> Result<Option<CreatedRunRecord>> {
+        let _guard = record_mutation_lock()
+            .lock()
+            .expect("run record lock poisoned");
         let Some(mut record) = Self::get(base_dir.as_ref(), id)? else {
             return Ok(None);
         };
+        if record.status != RunStatus::Running {
+            return Ok(Some(record));
+        }
 
         let dir = run_dir(base_dir.as_ref(), id);
         if let Some(summary_markdown) = summary_markdown {
@@ -249,6 +287,11 @@ impl RunStore {
         )?;
         Ok(Some(record))
     }
+}
+
+fn record_mutation_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn run_dir(base_dir: &Path, id: Uuid) -> std::path::PathBuf {
@@ -338,6 +381,49 @@ mod tests {
             missing_events.is_empty(),
             "missing event log for an existing run should return an empty event list"
         );
+
+        remove_dir_all_if_exists(&temp);
+    }
+
+    #[test]
+    fn start_marks_run_running_executing_and_appends_event() {
+        let temp =
+            std::env::temp_dir().join(format!("ralphterm-run-start-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp).unwrap();
+
+        let record = RunStore::create(
+            &temp,
+            RunRecord {
+                phase: RunPhase::Planning,
+                status: RunStatus::Created,
+                plan_path: Some("plans/task.md".into()),
+            },
+        )
+        .unwrap();
+
+        let updated = RunStore::start(&temp, record.id)
+            .unwrap()
+            .expect("existing run should be updated");
+
+        assert_eq!(updated.id, record.id);
+        assert_eq!(updated.phase, RunPhase::Executing);
+        assert_eq!(updated.status, RunStatus::Running);
+
+        let run_dir = temp
+            .join(".ralphterm")
+            .join("runs")
+            .join(record.id.to_string());
+        let run_json = fs::read_to_string(run_dir.join("run.json")).unwrap();
+        let persisted: Value = serde_json::from_str(&run_json).unwrap();
+        assert_eq!(persisted["phase"], "executing");
+        assert_eq!(persisted["status"], "running");
+
+        let events = fs::read_to_string(run_dir.join("events.jsonl")).unwrap();
+        let lines: Vec<_> = events.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let event: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(event["type"], "run_started");
+        assert_eq!(event["status"], "running");
 
         remove_dir_all_if_exists(&temp);
     }
