@@ -16,6 +16,8 @@ pub mod notify;
 #[doc(hidden)]
 pub mod plan;
 #[doc(hidden)]
+pub mod prompts;
+#[doc(hidden)]
 pub mod pty_agent;
 #[doc(hidden)]
 pub mod runner;
