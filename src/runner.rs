@@ -210,6 +210,10 @@ pub struct RunOptions {
     pub dry_run: bool,
     pub event_sink: Option<RunEventSink>,
     pub cancellation_check: Option<RunCancellationCheck>,
+    /// Maximum number of consecutive identical review failure categories
+    /// (matched on the first line of the REVIEW_FAIL reason) before the run
+    /// aborts with a stalemate error. `None` disables the guard.
+    pub review_patience: Option<usize>,
 }
 
 pub fn run_plan(options: RunOptions) -> Result<String> {
@@ -348,6 +352,10 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         let mut review_feedback = None;
         let mut attempt = 1;
         let mut completed_review_attempts = 0;
+        // Track consecutive identical review failure categories to support
+        // --review-patience stalemate detection.
+        let mut last_review_failure_category: Option<String> = None;
+        let mut consecutive_same_category: usize = 0;
         let final_transcript_display: String;
         let final_review_transcript_display: String;
         let (_transcript, _validation_output) = loop {
@@ -623,6 +631,49 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                                 .with_artifact(attempt_progress.review_transcript_display.clone());
                         }
                         emit_plan_event(&options, review_failed_event)?;
+                        if err.explicit_fail() {
+                            let category = review_failure_category(&feedback);
+                            if last_review_failure_category.as_deref() == Some(&category) {
+                                consecutive_same_category += 1;
+                            } else {
+                                consecutive_same_category = 1;
+                                last_review_failure_category = Some(category);
+                            }
+                            if let Some(patience) = options.review_patience {
+                                if patience > 0 && consecutive_same_category >= patience {
+                                    append_progress(
+                                        &progress.log_path,
+                                        &format!("task_end number={} result=failed", task.number),
+                                    )?;
+                                    let stalemate_message = format!(
+                                        "review stalemate detected after {consecutive_same_category} consecutive identical failure(s) for task {}",
+                                        task.number
+                                    );
+                                    emit_plan_event(
+                                        &options,
+                                        PlanRunEvent::for_task("task_failed", task, Some(attempt))
+                                            .with_message(stalemate_message.clone()),
+                                    )?;
+                                    let summary_result = write_failed_run_summary(
+                                        plan_name,
+                                        &plan_slug,
+                                        &executed_tasks,
+                                        task,
+                                        attempt,
+                                        completed_review_attempts,
+                                        "review",
+                                        &stalemate_message,
+                                        &progress,
+                                        Some(&attempt_progress),
+                                        true,
+                                        err.transcript_written(),
+                                    );
+                                    let stalemate_err =
+                                        anyhow::anyhow!("{stalemate_message}\n{feedback}");
+                                    return Err(failed_run_error(stalemate_err, summary_result));
+                                }
+                            }
+                        }
                         let review_retries_used = attempt - 1;
                         if err.explicit_fail() && review_retries_used < options.max_review_retries {
                             output.push_str(&format!(
@@ -2300,6 +2351,34 @@ fn review_output_decision(transcript: &str, _prompt: &str) -> Option<bool> {
             }
         })
         .next_back()
+}
+
+/// Extract a stable "category" string from a reviewer failure message so the
+/// retry loop can detect stalemates (the same failure recurring). The category
+/// is the trimmed reason text after the first REVIEW_FAIL signal line; if the
+/// reviewer only emitted the bare signal, the category is empty so all bare
+/// REVIEW_FAIL responses count as the same category.
+fn review_failure_category(feedback: &str) -> String {
+    let normalized = feedback.replace("\r\n", "\n").replace('\r', "\n");
+    for line in normalized.lines() {
+        let trimmed = line.trim();
+        if let Some(reason) = trimmed.strip_prefix("REVIEW_FAIL:") {
+            return reason.trim().to_string();
+        }
+        if let Some(reason) = trimmed.strip_prefix("REVIEW_FAIL ") {
+            return reason.trim().to_string();
+        }
+        if trimmed == "REVIEW_FAIL" {
+            return String::new();
+        }
+    }
+    // Fall back to the first non-empty line.
+    normalized
+        .lines()
+        .map(|line| line.trim())
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn git_state_for_review() -> String {

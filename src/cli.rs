@@ -355,6 +355,7 @@ pub async fn run() -> anyhow::Result<()> {
             no_commit,
             dry_run,
             workspace_id,
+            review_patience: None,
         }),
         Some(Command::Smoke {
             agent,
@@ -383,6 +384,7 @@ struct RunCliOptions {
     no_commit: bool,
     dry_run: bool,
     workspace_id: Option<String>,
+    review_patience: Option<usize>,
 }
 
 fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
@@ -398,6 +400,7 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
         no_commit,
         dry_run,
         workspace_id,
+        review_patience,
     } = options;
 
     if let Some(id) = workspace_id {
@@ -445,6 +448,7 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
         dry_run,
         event_sink: None,
         cancellation_check: None,
+        review_patience,
     })?;
     print!("{output}");
     Ok(())
@@ -627,14 +631,14 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
     if cli.compat_external_only || cli.compat_codex_only {
         eprintln!("[warning] --external-only/--codex-only accepted but mode is pending");
     }
-    // max-iterations / review-patience are stored on the future RunOptions; reading
-    // here keeps the option live until later tasks wire it in.
+    // max-iterations is stored on the future RunOptions; reading here keeps the
+    // option live until later tasks wire it into the retry budget.
     let _ = if cli_provided("compat_max_iterations") {
         cli.compat_max_iterations
     } else {
         config.max_iterations.unwrap_or(cli.compat_max_iterations)
     };
-    let _ = if cli_provided("compat_review_patience") {
+    let review_patience_value = if cli_provided("compat_review_patience") {
         cli.compat_review_patience
     } else {
         config.review_patience.unwrap_or(cli.compat_review_patience)
@@ -652,6 +656,7 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         no_commit: cli.compat_no_commit,
         dry_run: false,
         workspace_id: None,
+        review_patience: Some(review_patience_value),
     })
 }
 
@@ -1083,6 +1088,7 @@ async fn create_run(
                 dry_run,
                 event_sink: Some(event_sink),
                 cancellation_check: Some(cancellation_check),
+                review_patience: None,
             }) {
                 Ok(output) => output,
                 Err(err) => {
