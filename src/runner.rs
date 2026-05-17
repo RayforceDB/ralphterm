@@ -277,12 +277,15 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         no_commit,
         dry_run,
         agent_timeout,
+        review_command,
         ..
     } = options;
 
     let agent_cmd = agent_command.unwrap_or_else(|| DEFAULT_PLAN_AGENT_COMMAND.to_string());
+    let review_override = review_command.as_deref();
     let repo_root = std::env::current_dir()?;
     let plan_path = plan_path.canonicalize()?;
+    let plan_display = relpath_from(&repo_root, &plan_path);
 
     let max_iterations: usize = std::env::var("RALPHTERM_MAX_ITERATIONS")
         .ok()
@@ -298,6 +301,7 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
     }
     .check()?;
 
+    fmt::print_version_banner();
     if preflight.created_branch {
         fmt::print_branch_creating(&preflight.branch);
     }
@@ -308,18 +312,19 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         matches!(mode, RunMode::ReviewOnly),
         matches!(mode, RunMode::ExternalOnly),
     );
+    let progress_display = relpath_from(&repo_root, progress.path());
     fmt::print_run_header(
         max_iterations,
         mode_label,
-        &plan_path,
+        &plan_display,
         &preflight.branch,
-        progress.path(),
+        &progress_display,
     );
     progress.write_control(&format!("creating branch: {}", preflight.branch))?;
     progress.write_control(&format!(
         "starting ralphex loop (max {max_iterations} iterations) ({mode_label})"
     ))?;
-    progress.write_control(&format!("plan: {}", plan_path.display()))?;
+    progress.write_control(&format!("plan: {}", plan_display.display()))?;
     progress.write_control(&format!("branch: {}", preflight.branch))?;
 
     fmt::print_task_phase_start();
@@ -351,16 +356,39 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         let run = run_agent_command_with_timeout(&agent_cmd, &prompt, timeout)?;
 
         let cleaned = strip_ansi_escapes(&run.transcript);
-        for line in cleaned.lines() {
+        // Strip the prompt echo so signal detection only looks at the
+        // agent's actual output. Real PTY-driven CLIs (claude --print,
+        // codex exec) emit the user prompt back as part of their
+        // transcript framing; the prompt itself contains
+        // `<<<RALPHEX:ALL_TASKS_DONE>>>` literally, which would otherwise
+        // false-positive on iteration 1 before the agent does any work.
+        let agent_output = transcript_without_prompt_echo(&cleaned, &prompt);
+        for line in agent_output.lines() {
             let trimmed = line.trim_end();
             if trimmed.is_empty() {
                 continue;
             }
-            println!("{trimmed}");
+            // Suppress the literal completion signal from user-facing
+            // stdout — ralphex does the same, treating the signal as
+            // internal protocol.
+            let uppered = trimmed.to_ascii_uppercase();
+            if uppered.contains("<<<RALPHEX:ALL_TASKS_DONE>>>")
+                || uppered.contains("RALPHEX:ALL_TASKS_DONE")
+            {
+                let _ = progress.write_narration(trimmed);
+                continue;
+            }
+            // Match ralphex: every agent-emitted line gets a
+            // `[YYYY-MM-DD HH:MM:SS] ` prefix on stdout, matching the
+            // format of the progress log.
+            let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            println!("[{ts}] {trimmed}");
             let _ = progress.write_narration(trimmed);
         }
 
-        if crate::signals::detect_signal(&cleaned) == Some(crate::signals::AgentSignal::Completed) {
+        if crate::signals::detect_signal(&agent_output)
+            == Some(crate::signals::AgentSignal::Completed)
+        {
             break;
         }
         if run.exit_code != 0 {
@@ -372,11 +400,27 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         anyhow::bail!("hit max iterations ({max_iterations}) without ALL_TASKS_DONE");
     }
 
-    if !matches!(mode, RunMode::TasksOnly) {
-        crate::output_format::print_all_tasks_completed();
-        progress.write_control("all tasks completed, starting code review...")?;
+    // Blank line separates agent narration from the wrap-up control lines,
+    // matching ralphex's output.
+    println!();
 
-        let reviewer_cmd = derive_reviewer_command(&repo_root)?;
+    // Ralphex prints "all tasks completed, starting code review..." even in
+    // --tasks-only mode (the wording is a leftover from full mode but
+    // matches their actual behaviour). We mirror it. The "task execution
+    // completed successfully" wrap-up comes after the review phases (or
+    // immediately, in tasks-only mode).
+    crate::output_format::print_all_tasks_completed();
+    progress.write_control("all tasks completed, starting code review...")?;
+
+    if matches!(mode, RunMode::TasksOnly) {
+        crate::output_format::print_task_execution_completed();
+        progress.write_control("task execution completed successfully")?;
+    }
+
+    if !matches!(mode, RunMode::TasksOnly) {
+        // Below: review pipeline (phases 1-3) only in non-tasks-only modes.
+
+        let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
 
         let outcome = crate::review_phases::first_review(crate::review_phases::FirstReviewArgs {
             prompts: &prompts,
@@ -395,7 +439,7 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
     }
 
     if !matches!(mode, RunMode::TasksOnly | RunMode::ReviewOnly) {
-        let reviewer_cmd = derive_reviewer_command(&repo_root)?;
+        let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
         let outcome =
             crate::review_phases::external_review(crate::review_phases::ExternalReviewArgs {
                 prompts: &prompts,
@@ -419,7 +463,7 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         mode,
         RunMode::TasksOnly | RunMode::ReviewOnly | RunMode::ExternalOnly
     ) {
-        let reviewer_cmd = derive_reviewer_command(&repo_root)?;
+        let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
         let outcome = crate::review_phases::second_review(crate::review_phases::FirstReviewArgs {
             prompts: &prompts,
             reviewer_command: &reviewer_cmd,
@@ -452,6 +496,11 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         )?;
     }
 
+    if !matches!(mode, RunMode::TasksOnly) {
+        crate::output_format::print_task_execution_completed();
+        progress.write_control("task execution completed successfully")?;
+    }
+
     let elapsed = start.elapsed();
     let (files, additions, deletions) = git_shortstat(&repo_root, &preflight.default_branch)?;
 
@@ -460,7 +509,9 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
     } else {
         move_plan_to_completed(&plan_path)?
     };
+    let plan_dest_display = relpath_from(&repo_root, &plan_dest);
     if plan_dest != plan_path {
+        // print_moved_plan: ralphex uses absolute here.
         fmt::print_moved_plan(&plan_dest);
         progress.write_control(&format!("moved plan to {}", plan_dest.display()))?;
     }
@@ -470,9 +521,9 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         files,
         additions,
         deletions,
-        &plan_dest,
+        &plan_dest_display,
         &preflight.branch,
-        progress.path(),
+        &progress_display,
     );
 
     Ok(String::new())
@@ -486,8 +537,10 @@ fn run_plan_review_only(options: RunOptions) -> Result<String> {
     let RunOptions {
         plan_path,
         agent_timeout,
+        review_command,
         ..
     } = options;
+    let review_override = review_command.as_deref();
     let repo_root = std::env::current_dir()?;
     let plan_path = plan_path.canonicalize()?;
     let preflight = Preflight {
@@ -500,7 +553,7 @@ fn run_plan_review_only(options: RunOptions) -> Result<String> {
     .check()?;
     let progress = ProgressLog::open(&repo_root, &preflight.plan_slug)?;
     let prompts = Prompts::load(&repo_root, None);
-    let reviewer_cmd = derive_reviewer_command(&repo_root)?;
+    let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
     let args = crate::review_phases::FirstReviewArgs {
         prompts: &prompts,
         reviewer_command: &reviewer_cmd,
@@ -2347,6 +2400,42 @@ fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent
     let mut parts = parse_agent_command(agent_command)?;
     let command = parts.remove(0);
 
+    // Match ralphex's documented default invocation for Claude Code:
+    //   --print                          → non-interactive mode; required to
+    //                                      skip Claude Code's first-launch
+    //                                      "trust this folder?" dialog (per
+    //                                      `claude --help`: trust dialog is
+    //                                      only skipped in non-interactive
+    //                                      mode).
+    //   --dangerously-skip-permissions   → skip per-tool approval prompts
+    //                                      that would otherwise block every
+    //                                      file edit or shell command.
+    // Users who pass --claude-command pointing at a wrapper script (anything
+    // not literally `claude`) or who already include these flags via
+    // --claude-args are left untouched. Tests can opt out via the
+    // RALPHTERM_NO_CLAUDE_AUTOFLAGS env var.
+    let claude_autoflags_disabled =
+        std::env::var_os("RALPHTERM_NO_CLAUDE_AUTOFLAGS").is_some_and(|v| !v.is_empty());
+    let command_basename = std::path::Path::new(&command)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| command.clone());
+    let invoking_bare_claude = command_basename == "claude" && !claude_autoflags_disabled;
+    if invoking_bare_claude {
+        if !parts.iter().any(|a| a == "-p" || a == "--print") {
+            parts.push("--print".to_string());
+        }
+        if !parts.iter().any(|a| a == "--dangerously-skip-permissions") {
+            parts.push("--dangerously-skip-permissions".to_string());
+        }
+        // In --print mode Claude reads the prompt from stdin OR a trailing
+        // argv argument. Writing to the PTY writer after spawn races
+        // against Claude's initial stdin read; the race-loser case (we
+        // lose) shows up as "Input must be provided either through stdin
+        // or as a prompt argument". Pass the prompt as final argv.
+        parts.push(prompt.to_string());
+    }
+
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -2371,7 +2460,7 @@ fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent
         .context("spawn agent command")?;
     drop(pair.slave);
 
-    {
+    if !invoking_bare_claude {
         let mut writer = pair.master.take_writer().context("take pty writer")?;
         writer
             .write_all(prompt.as_bytes())
@@ -2416,10 +2505,27 @@ fn plan_first_h1(plan_path: &std::path::Path) -> Option<String> {
         .find_map(|l| l.strip_prefix("# ").map(|s| s.trim().to_string()))
 }
 
-fn derive_reviewer_command(_repo_root: &std::path::Path) -> Result<String> {
-    // Default reviewer: bundled codex wrapper script. Same precedence the
-    // compat CLI uses today; centralised here so the new pipeline can call
-    // it without touching cli.rs.
+/// Compute a relative path of `target` against `base` for user-facing
+/// display. Falls back to the absolute `target` when it does not live
+/// inside `base`. Matches ralphex's habit of printing repo-relative
+/// paths in stdout.
+fn relpath_from(base: &std::path::Path, target: &std::path::Path) -> std::path::PathBuf {
+    target
+        .strip_prefix(base)
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|_| target.to_path_buf())
+}
+
+fn derive_reviewer_command(explicit: Option<&str>, _repo_root: &std::path::Path) -> Result<String> {
+    // CLI/config-provided reviewer wins. `--external-review-tool=custom
+    // --custom-review-script <cmd>` and the `review_command =` config keys
+    // both land here as `explicit`.
+    if let Some(cmd) = explicit {
+        if !cmd.trim().is_empty() {
+            return Ok(cmd.to_string());
+        }
+    }
+    // Default: bundled codex wrapper script.
     if let Some(path) = crate::config::locate_wrapper_script("codex") {
         return Ok(path.to_string_lossy().into_owned());
     }

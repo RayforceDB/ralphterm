@@ -34,7 +34,15 @@ fn smoke_command_runs_fake_agent_and_reports_completed_signal() {
 }
 
 #[test]
-fn smoke_command_with_builtin_claude_uses_path_cli_without_one_shot_args() {
+fn smoke_command_with_builtin_claude_autoflags_print_and_skip_permissions() {
+    // The previous version of this test asserted the bare `claude` smoke
+    // ran without --print or argv flags. That was wrong: Claude Code's
+    // workspace-trust dialog only skips in non-interactive mode (per
+    // `claude --help`), so PTY-only invocation hangs forever on the
+    // trust prompt in a fresh dir. The new contract: when ralphterm
+    // spawns bare `claude`, it auto-appends `--print
+    // --dangerously-skip-permissions` and passes the prompt as the final
+    // argv argument. This test pins that contract.
     use std::os::unix::fs::PermissionsExt;
 
     let repo = TempRepo::new();
@@ -44,14 +52,8 @@ fn smoke_command_with_builtin_claude_uses_path_cli_without_one_shot_args() {
     fs::write(
         &claude_shim,
         r#"#!/bin/sh
-if [ -t 0 ]; then
-  printf 'tty\n' > claude-stdin-kind.txt
-else
-  printf 'not-tty\n' > claude-stdin-kind.txt
-fi
 printf '%s\n' "$@" > claude-argv.txt
-cat > claude-stdin.txt
-printf 'fake claude interactive session\nCOMPLETED\n'
+printf 'fake claude print-mode response\nCOMPLETED\n'
 "#,
     )
     .expect("write fake claude shim");
@@ -82,19 +84,17 @@ printf 'fake claude interactive session\nCOMPLETED\n'
     );
 
     let argv = fs::read_to_string(repo.path.join("claude-argv.txt")).expect("read argv capture");
-    assert_eq!(argv, "\n", "built-in claude smoke must not add argv flags");
-    assert!(!argv.contains("--print"), "{argv}");
-    assert!(!argv.contains("-p"), "{argv}");
-
-    let stdin_kind = fs::read_to_string(repo.path.join("claude-stdin-kind.txt"))
-        .expect("read stdin kind capture");
-    assert_eq!(stdin_kind, "tty\n", "built-in claude smoke must use a PTY");
-
-    let stdin_prompt =
-        fs::read_to_string(repo.path.join("claude-stdin.txt")).expect("read stdin capture");
     assert!(
-        stdin_prompt.contains("RalphTerm PTY smoke check"),
-        "{stdin_prompt}"
+        argv.contains("--print"),
+        "built-in claude smoke must auto-append --print:\n{argv}"
+    );
+    assert!(
+        argv.contains("--dangerously-skip-permissions"),
+        "built-in claude smoke must auto-append --dangerously-skip-permissions:\n{argv}"
+    );
+    assert!(
+        argv.contains("RalphTerm PTY smoke check"),
+        "built-in claude smoke must pass the prompt as argv:\n{argv}"
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);

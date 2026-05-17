@@ -5,13 +5,14 @@
 # Auth env:
 #   OPENAI_API_KEY - required for codex to authenticate against OpenAI APIs
 # Optional env:
-#   CLAUDE_MODEL  - forwarded as `--model <value>` so plans authored for
-#                   ralphex's model selection knob keep working.
+#   CLAUDE_MODEL      - forwarded as `--model <value>` so plans authored for
+#                       ralphex's model selection knob keep working.
 #   PROVIDER_OVERRIDE - override the binary name (mostly for tests).
 #
-# Behaviour: reads a single prompt from stdin, invokes codex in plain
-# interactive mode (no --print / -p / --non-interactive), then emits the
-# COMPLETED marker on success or FAILED on a non-zero exit.
+# Behaviour: reads the prompt from stdin and invokes `codex exec
+# "<prompt>"` (codex's non-interactive subcommand). Bare `codex` requires
+# a TTY and refuses to read piped stdin, so the wrapper must use `exec`.
+# Emits COMPLETED on success or FAILED on a non-zero exit.
 set -eu
 
 PROVIDER_CMD="${PROVIDER_OVERRIDE:-codex}"
@@ -22,19 +23,26 @@ if [ -z "${prompt}" ]; then
   exit 1
 fi
 
-tmpfile=$(mktemp)
-trap 'rm -f "$tmpfile"' EXIT
 trap 'kill "${child:-0}" 2>/dev/null || true; exit 130' INT TERM
-
-printf '%s\n' "$prompt" > "$tmpfile"
 
 model_arg=""
 if [ -n "${CLAUDE_MODEL:-}" ]; then
   model_arg="--model ${CLAUDE_MODEL}"
 fi
 
-# shellcheck disable=SC2086
-"$PROVIDER_CMD" $model_arg < "$tmpfile" &
+# If PROVIDER_OVERRIDE is set, the test shim expects the prompt on stdin —
+# stream it through instead of passing as argv so the shim's
+# `prompt=$(cat)` pattern keeps working. Otherwise drive the real codex
+# via its non-interactive `exec` subcommand with the prompt as the final
+# argv, and close stdin so codex doesn't block waiting for input that
+# never comes (the PTY stdin stays open otherwise).
+if [ -n "${PROVIDER_OVERRIDE:-}" ]; then
+  # shellcheck disable=SC2086
+  printf '%s\n' "$prompt" | "$PROVIDER_CMD" $model_arg &
+else
+  # shellcheck disable=SC2086
+  "$PROVIDER_CMD" exec $model_arg "$prompt" </dev/null &
+fi
 child=$!
 set +e
 wait "$child"

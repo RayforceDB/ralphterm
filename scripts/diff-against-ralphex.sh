@@ -75,13 +75,22 @@ RT_EXIT=$?
 # Normalise: drop ANSI escapes, timestamps, version banners, commit hashes,
 # and tmp paths so the structural diff is meaningful.
 normalise() {
+  # Strip ANSI escapes, normalise timestamps + hashes + the repo path,
+  # collapse the version banner and the run-duration string. Then collapse
+  # ANY timestamped agent narration line ("[TS] <content>") to the
+  # placeholder "[TS] <agent-narration>" so per-run LLM output variance
+  # (different agents emit different numbers of lines, different phrasing)
+  # doesn't show as structural divergence. Finally drop consecutive
+  # duplicate narration placeholders.
   sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' \
-      -e 's/\[20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]\]/[TS]/g' \
+      -e 's/\[[0-9]\{2,4\}-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]\]/[TS]/g' \
       -e 's/^ralph[a-z]* v[^ ]*/<VERSION-BANNER>/' \
       -e 's/[0-9a-f]\{7,40\}/<HASH>/g' \
       -e "s|$1|<REPO>|g" \
       -e 's/completed in [0-9]\+s/completed in <SECS>s/' \
-    "$2"
+      -e 's/^\[TS\] .*/[TS] <agent-narration>/' \
+      "$2" \
+    | awk 'BEGIN{prev=""} { if ($0 == "[TS] <agent-narration>" && prev == "[TS] <agent-narration>") next; print; prev=$0 }'
 }
 
 normalise "$RX_REPO" "$scratch/rx.out" > "$scratch/rx.norm"

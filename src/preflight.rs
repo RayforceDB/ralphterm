@@ -141,14 +141,22 @@ fn format_dirty_message(paths: &[String], plan_path: &Path) -> String {
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<()> {
-    let status = Command::new("git")
+    // Use `output()` not `status()` so git's stderr (e.g. "Switched to a
+    // new branch 'hello'") doesn't leak into our stdout/stderr — ralphex
+    // suppresses these messages and our verification harness diffs the
+    // user-visible output.
+    let output = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(args)
-        .status()
+        .output()
         .with_context(|| format!("git {}", args.join(" ")))?;
-    if !status.success() {
-        bail!("git {} failed", args.join(" "));
+    if !output.status.success() {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
     Ok(())
 }

@@ -1,8 +1,19 @@
 use std::path::Path;
 use std::time::Duration;
 
+pub fn print_version_banner() {
+    println!("ralphterm v{}", env!("CARGO_PKG_VERSION"));
+}
+
 pub fn print_branch_creating(branch: &str) {
     println!("creating branch: {branch}");
+}
+
+pub fn print_task_execution_completed() {
+    // Ralphex prefixes this line with its agent-narration timestamp; we
+    // mirror the format so the side-by-side diff stays clean.
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    println!("[{ts}] task execution completed successfully");
 }
 
 pub fn print_run_header(
