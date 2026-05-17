@@ -685,7 +685,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         fs::write(&options.plan_path, &plan_text)
             .with_context(|| format!("write plan {}", options.plan_path.display()))?;
         output.push_str(&format!("Marked task {} complete\n", task.number));
-        if !options.no_commit {
+        let commit = if !options.no_commit {
             let commit = match commit_task(&task.title, &baseline_paths) {
                 Ok(commit) => commit,
                 Err(err) => {
@@ -744,9 +744,11 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     .with_message(format!("{commit} task: {}", task.title)),
             )?;
             output.push_str(&format!("Committed {commit}\n"));
+            Some(commit)
         } else {
             append_progress(&progress.log_path, "commit no_commit=true")?;
-        }
+            None
+        };
         append_progress(
             &progress.log_path,
             &format!("task_end number={} result=passed", task.number),
@@ -764,6 +766,12 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 .review_command
                 .as_ref()
                 .map(|_| final_review_transcript_display),
+            commit_status: if commit.is_some() {
+                "committed"
+            } else {
+                "skipped"
+            },
+            commit,
         });
     }
 
@@ -885,6 +893,8 @@ struct ExecutedTask {
     transcript_display: String,
     validation_output_display: String,
     review_transcript_display: Option<String>,
+    commit: Option<String>,
+    commit_status: &'static str,
 }
 
 struct AttemptProgressPaths {
@@ -1063,6 +1073,7 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
                 "  - Review transcript: {review_transcript_display}\n"
             ));
         }
+        summary.push_str(&format!("  - Commit: {}\n", task_commit_display(task)));
     }
     fs::write(&summary_path, summary)
         .with_context(|| format!("write run summary {}", summary_path.display()))?;
@@ -1079,6 +1090,8 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
                 "validation": task.validation_output_display,
                 "review_status": passed_task_review_status(&task.review_transcript_display),
                 "review_transcript": task.review_transcript_display,
+                "commit": task.commit,
+                "commit_status": task.commit_status,
             })
         })
         .collect();
@@ -1147,6 +1160,10 @@ fn write_failed_run_summary(
                 "  - Review transcript: {review_transcript_display}\n"
             ));
         }
+        summary.push_str(&format!(
+            "  - Commit: {}\n",
+            task_commit_display(passed_task)
+        ));
     }
     summary.push_str(&format!(
         "- Task {}: {} — failed\n  - Phase: {phase}\n  - Reason: {reason}\n",
@@ -1225,6 +1242,8 @@ fn write_failed_run_summary(
                 "validation": task.validation_output_display,
                 "review_status": passed_task_review_status(&task.review_transcript_display),
                 "review_transcript": task.review_transcript_display,
+                "commit": task.commit,
+                "commit_status": task.commit_status,
             })
         })
         .collect();
@@ -1238,6 +1257,8 @@ fn write_failed_run_summary(
         "validation": link_validation_output.then(|| progress.validation_output_display.clone()),
         "review_status": failed_task_review_status(phase, link_review_transcript),
         "review_transcript": failed_review_transcript_display,
+        "commit": null,
+        "commit_status": "skipped",
     });
     let summary_json = json!({
         "plan": plan_name,
@@ -1265,6 +1286,10 @@ fn failed_run_error(original: anyhow::Error, summary_result: Result<()>) -> anyh
             "{original}; additionally failed to write failed run artifacts: {summary_err}"
         ),
     }
+}
+
+fn task_commit_display(task: &ExecutedTask) -> &str {
+    task.commit.as_deref().unwrap_or("skipped (--no-commit)")
 }
 
 fn passed_task_review_status(review_transcript_display: &Option<String>) -> &'static str {
