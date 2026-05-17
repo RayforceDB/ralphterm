@@ -704,6 +704,70 @@ fn run_api_creates_lists_reads_events_and_cancels_run_records() {
 }
 
 #[test]
+fn run_api_lists_newest_runs_first() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let older = request_json(
+        port,
+        "POST /v1/runs HTTP/1.1",
+        Some(r#"{"plan_path":"docs/older.md"}"#),
+    );
+    assert_eq!(older.status, 200, "{}", older.body);
+    let older_json: serde_json::Value = serde_json::from_str(&older.body).expect("older run json");
+    let older_id = older_json["id"].as_str().expect("older run id");
+    let older_created_at = older_json["created_at"]
+        .as_str()
+        .expect("older created_at")
+        .to_string();
+
+    let mut newest_json = None;
+    for attempt in 0..20 {
+        std::thread::sleep(Duration::from_millis(1));
+        let created = request_json(
+            port,
+            "POST /v1/runs HTTP/1.1",
+            Some(&format!(r#"{{"plan_path":"docs/newer-{attempt}.md"}}"#)),
+        );
+        assert_eq!(created.status, 200, "{}", created.body);
+        let created_json: serde_json::Value =
+            serde_json::from_str(&created.body).expect("newer run json");
+        let created_at = created_json["created_at"]
+            .as_str()
+            .expect("newer created_at");
+        if created_at > older_created_at.as_str() {
+            newest_json = Some(created_json);
+            break;
+        }
+    }
+    let newest_json = newest_json.expect("newer run timestamp should advance");
+    let newest_id = newest_json["id"].as_str().expect("newer run id");
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    let runs = listed_json.as_array().expect("run list");
+    assert!(runs.len() >= 2, "{listed_json}");
+    assert_eq!(runs[0]["id"], newest_id, "{listed_json}");
+    assert_eq!(
+        runs.last().expect("oldest run")["id"],
+        older_id,
+        "{listed_json}"
+    );
+}
+
+#[test]
 fn cancelling_run_blocks_later_tasks_from_starting() {
     let _guard = server_test_lock();
     let repo = TempDir::new();

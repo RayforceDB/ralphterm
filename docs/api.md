@@ -71,6 +71,8 @@ Run phase values are `planning`, `executing`, `reviewing`, and `complete`: `plan
 
 Run endpoints:
 
+`GET /v1/runs` returns newest runs first so dashboards and watchdogs see the active work before older records.
+
 ```http
 GET  /v1/runs
 GET  /v1/runs/:id

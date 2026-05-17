@@ -148,7 +148,7 @@ impl RunStore {
             }
             records.push(read_record(&run_json_path)?);
         }
-        records.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        records.sort_by(|left, right| right.created_at.cmp(&left.created_at));
         Ok(records)
     }
 
