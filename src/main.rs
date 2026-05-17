@@ -465,20 +465,23 @@ async fn create_run(
         validate_workspace_plan_path(cwd_relative, &plan)
             .map_err(|err| ApiError::bad_request(err.to_string()))?;
 
-        if agent_command.is_some() && !dry_run {
+        if agent_command.is_some() || dry_run {
             let candidate = manager
                 .workspace(workspace_id)
                 .map_err(|err| ApiError::bad_request(err.to_string()))?;
-            let workspace = if candidate.path.exists() {
-                manager
-                    .validate_existing_workspace(&candidate)
-                    .map_err(|err| ApiError::bad_request(err.to_string()))?;
-                candidate
-            } else {
-                manager.create(workspace_id)?
-            };
-            workspace_execution_dir = Some(workspace.path.join(cwd_relative));
-            workspace_path = Some(workspace.path.to_string_lossy().to_string());
+            workspace_path = Some(candidate.path.to_string_lossy().to_string());
+
+            if !dry_run {
+                let workspace = if candidate.path.exists() {
+                    manager
+                        .validate_existing_workspace(&candidate)
+                        .map_err(|err| ApiError::bad_request(err.to_string()))?;
+                    candidate
+                } else {
+                    manager.create(workspace_id)?
+                };
+                workspace_execution_dir = Some(workspace.path.join(cwd_relative));
+            }
         }
     }
     let record = RunStore::create(

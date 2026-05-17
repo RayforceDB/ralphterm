@@ -326,6 +326,10 @@ fn docs_describe_run_api_as_asynchronous_and_expose_artifacts() {
             text.contains("reviewing means the independent review command or agent is active"),
             "{name} should explain the reviewing phase as the independent review command/agent being active"
         );
+        assert!(
+            text.contains("workspace_path") && text.contains("dry_run"),
+            "{name} should document that API dry runs with workspace_id preview workspace_path"
+        );
     }
 }
 

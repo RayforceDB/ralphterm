@@ -52,6 +52,8 @@ Fields:
 - `require_review`: rejects the request unless `review_agent` or `review_command` is set
 - `max_review_retries`: number of review failures allowed before the task blocks
 - `no_commit`: marks accepted tasks and writes artifacts without creating git commits
+- `workspace_id`: optional managed worktree id for isolated execution; with `dry_run: true`, the run record previews `workspace_path` without creating the worktree or running the agent
+- `dry_run`: previews pending work, review configuration, retry budget, and validation commands without side effects
 
 Response when execution starts:
 

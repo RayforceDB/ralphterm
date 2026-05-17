@@ -2214,6 +2214,15 @@ fn run_api_dry_run_with_workspace_id_does_not_create_workspace() {
     .to_string();
 
     let id = create_and_wait_for_dry_run(port, &body);
+    let run_response = request_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), None);
+    assert_eq!(run_response.status, 200, "{}", run_response.body);
+    let run_json: serde_json::Value =
+        serde_json::from_str(&run_response.body).expect("run response json");
+    assert_eq!(
+        run_json["workspace_path"],
+        workspace_path.to_string_lossy().as_ref(),
+        "API dry-run should preview the managed workspace path without creating it"
+    );
     assert_api_dry_run_artifacts_and_clean_repo(port, id, &repo, &plan_path);
     assert!(
         !workspace_path.exists(),

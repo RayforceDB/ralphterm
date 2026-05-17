@@ -86,7 +86,7 @@ content-type: application/json
   "max_review_retries": 1,
   "no_commit": false
 }</code></pre>
-      <p><code>review_command</code> starts an independent reviewer after validation. <code>require_review</code> rejects the request if that reviewer is missing.</p>
+      <p><code>review_command</code> starts an independent reviewer after validation. <code>require_review</code> rejects the request if that reviewer is missing. <code>workspace_id</code> runs the plan in a managed worktree; with <code>dry_run</code>, the run record previews <code>workspace_path</code> without creating the worktree or running the agent.</p>
       <p><code>POST /v1/runs</code> returns as soon as the run has started:</p>
       <pre><code>{
   "id": "00000000-0000-0000-0000-000000000000",
