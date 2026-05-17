@@ -619,6 +619,279 @@ fn run_command_with_workspace_id_rejects_absolute_plan_path() {
 }
 
 #[test]
+fn commit_failure_keeps_task_unchecked_and_records_failed_commit_phase() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    fs::write(repo.path.join("staged.txt"), "original\n").expect("write staged baseline");
+    repo.git(["add", "plan.md", "staged.txt"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    let head_before = repo.git_output(["rev-parse", "HEAD"]);
+    fs::write(repo.path.join("staged.txt"), "pre-existing staged change\n")
+        .expect("write pre-existing staged change");
+    repo.git(["add", "staged.txt"]);
+    let cached_plan_diff_before = repo.git_output(["diff", "--cached", "--", "plan.md"]);
+    assert_eq!(cached_plan_diff_before, "");
+    let cached_paths_before = repo.git_output(["diff", "--cached", "--name-only"]);
+    assert_eq!(cached_paths_before, "staged.txt\n");
+
+    let hook_path = repo.path.join(".git/hooks/pre-commit");
+    fs::write(
+        &hook_path,
+        "#!/bin/sh\necho failing pre-commit >&2\nexit 1\n",
+    )
+    .expect("write failing pre-commit hook");
+    let mut permissions = fs::metadata(&hook_path)
+        .expect("stat pre-commit hook")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook_path, permissions).expect("chmod pre-commit hook");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostics.contains("failing pre-commit"), "{diagnostics}");
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan after failed commit");
+    assert!(plan.contains("- [ ] Write first.txt"), "{plan}");
+    assert!(!plan.contains("- [x] Write first.txt"), "{plan}");
+    let indexed_plan = repo.git_output(["show", ":plan.md"]);
+    assert!(
+        indexed_plan.contains("- [ ] Write first.txt"),
+        "index must keep the task unchecked after failed commit:\n{indexed_plan}"
+    );
+    assert!(
+        !indexed_plan.contains("- [x] Write first.txt"),
+        "index must not retain the checked task after failed commit:\n{indexed_plan}"
+    );
+    assert_eq!(
+        repo.git_output(["diff", "--cached", "--", "plan.md"]),
+        cached_plan_diff_before
+    );
+    let cached_paths_after_failure = repo.git_output(["diff", "--cached", "--name-only"]);
+    assert_eq!(
+        cached_paths_after_failure, cached_paths_before,
+        "failed task commit must restore the entire pre-run index and not leave task outputs staged"
+    );
+    assert!(
+        !cached_paths_after_failure
+            .lines()
+            .any(|path| path == "first.txt"),
+        "first.txt must not be left staged after failed commit:\n{cached_paths_after_failure}"
+    );
+    assert!(
+        !cached_paths_after_failure
+            .lines()
+            .any(|path| path == "fake-agent-last-prompt.txt"),
+        "fake-agent-last-prompt.txt must not be left staged after failed commit:\n{cached_paths_after_failure}"
+    );
+    assert_eq!(repo.git_output(["rev-parse", "HEAD"]), head_before);
+
+    let progress_log = fs::read_to_string(repo.path.join(".ralphterm/progress/plan.log"))
+        .expect("read progress log");
+    assert!(
+        progress_log.contains("task_end number=1 result=failed"),
+        "{progress_log}"
+    );
+    assert!(
+        !progress_log.contains("task_end number=1 result=passed"),
+        "{progress_log}"
+    );
+    assert!(!progress_log.contains("commit hash="), "{progress_log}");
+
+    let summary = fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.md"))
+        .expect("read failed run summary");
+    assert!(summary.contains("Result: failed"), "{summary}");
+    assert!(summary.contains("Phase: commit"), "{summary}");
+    assert!(summary.contains("failing pre-commit"), "{summary}");
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed machine-readable run summary"),
+    )
+    .expect("parse failed machine-readable run summary");
+    assert_eq!(summary_json["result"], "failed");
+    assert_eq!(summary_json["failed_task"]["number"], 1);
+    assert_eq!(summary_json["failed_task"]["phase"], "commit");
+    assert!(
+        summary_json["failed_task"]["reason"]
+            .as_str()
+            .expect("commit failure reason string")
+            .contains("failing pre-commit"),
+        "{summary_json:#}"
+    );
+
+    fs::remove_file(&hook_path).expect("remove failing pre-commit hook");
+    let retry_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("rerun ralphterm");
+
+    assert!(
+        retry_output.status.success(),
+        "ralphterm retry failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&retry_output.stdout),
+        String::from_utf8_lossy(&retry_output.stderr)
+    );
+    let retry_plan = fs::read_to_string(&plan_path).expect("read plan after retry");
+    assert!(retry_plan.contains("- [x] Write first.txt"), "{retry_plan}");
+    let committed_files = repo.git_output(["show", "--name-only", "--format=", "HEAD"]);
+    assert!(committed_files.contains("plan.md"), "{committed_files}");
+    assert!(committed_files.contains("first.txt"), "{committed_files}");
+    assert!(
+        committed_files.contains("fake-agent-last-prompt.txt"),
+        "{committed_files}"
+    );
+    assert!(
+        !committed_files.contains("staged.txt"),
+        "pre-existing staged changes must not be included in the retry task commit: {committed_files}"
+    );
+    assert_eq!(
+        repo.git_output(["status", "--short", "--", "staged.txt"]),
+        "M  staged.txt\n"
+    );
+}
+
+#[test]
+fn commit_failure_restores_index_when_agent_staged_task_outputs() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f generated.txt`
+
+### Task 1: Create generated file
+- [ ] Stage generated.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+    let cached_paths_before = repo.git_output(["diff", "--cached", "--name-only"]);
+    assert_eq!(cached_paths_before, "");
+
+    let hook_path = repo.path.join(".git/hooks/pre-commit");
+    fs::write(
+        &hook_path,
+        "#!/bin/sh\necho failing pre-commit >&2\nexit 1\n",
+    )
+    .expect("write failing pre-commit hook");
+    let mut permissions = fs::metadata(&hook_path)
+        .expect("stat pre-commit hook")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook_path, permissions).expect("chmod pre-commit hook");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("staging-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cached_paths_after_failure = repo.git_output(["diff", "--cached", "--name-only"]);
+    assert_eq!(
+        cached_paths_after_failure, cached_paths_before,
+        "failed commit must restore the index from before the agent staged task outputs"
+    );
+    assert!(!repo.path.join("generated.txt").exists());
+    let plan = fs::read_to_string(&plan_path).expect("read plan after failed commit");
+    assert!(plan.contains("- [ ] Stage generated.txt"), "{plan}");
+
+    fs::remove_file(&hook_path).expect("remove failing pre-commit hook");
+    let retry_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("staging-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("rerun ralphterm");
+
+    assert!(
+        retry_output.status.success(),
+        "ralphterm retry failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&retry_output.stdout),
+        String::from_utf8_lossy(&retry_output.stderr)
+    );
+    let committed_files = repo.git_output(["show", "--name-only", "--format=", "HEAD"]);
+    assert!(committed_files.contains("plan.md"), "{committed_files}");
+    assert!(
+        committed_files.contains("generated.txt"),
+        "{committed_files}"
+    );
+    assert!(
+        committed_files.contains("staging-agent-last-prompt.txt"),
+        "{committed_files}"
+    );
+}
+
+#[test]
 fn run_command_marks_completed_tasks_and_commits() {
     let repo = TempRepo::new();
     repo.init_git();

@@ -310,6 +310,19 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         } else {
             git_status_paths().context("snapshot git status before task")?
         };
+        let commit_failure_worktree_snapshot = if options.no_commit {
+            None
+        } else {
+            Some(
+                RetryCleanupSnapshot::capture(Path::new("."))
+                    .context("snapshot task baseline before commit rollback")?,
+            )
+        };
+        let commit_failure_index_snapshot = if options.no_commit {
+            None
+        } else {
+            Some(git_index_snapshot().context("snapshot git index before task starts")?)
+        };
         let review_retry_cleanup_baseline =
             if options.review_command.is_some() && options.max_review_retries > 0 {
                 Some(
@@ -665,14 +678,65 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 break (transcript, validation_output);
             }
         };
+        let unchecked_plan_text = plan_text.clone();
+        let index_snapshot = commit_failure_index_snapshot.as_ref();
         plan_text = crate::plan::mark_task_complete(&plan_text, task.number)
             .with_context(|| format!("mark task {} complete", task.number))?;
         fs::write(&options.plan_path, &plan_text)
             .with_context(|| format!("write plan {}", options.plan_path.display()))?;
         output.push_str(&format!("Marked task {} complete\n", task.number));
         if !options.no_commit {
-            let commit = commit_task(&task.title, &baseline_paths)
-                .with_context(|| format!("commit task {}", task.number))?;
+            let commit = match commit_task(&task.title, &baseline_paths) {
+                Ok(commit) => commit,
+                Err(err) => {
+                    let err = err.context(format!("commit task {}", task.number));
+                    let reason = format!("{err:#}");
+                    if let Err(restore_err) = fs::write(&options.plan_path, &unchecked_plan_text) {
+                        append_progress(
+                            &progress.log_path,
+                            &format!("plan_restore result=failed reason={restore_err}"),
+                        )?;
+                    }
+                    if let Some(snapshot) = &index_snapshot {
+                        if let Err(restore_err) = restore_git_index_snapshot(snapshot) {
+                            append_progress(
+                                &progress.log_path,
+                                &format!("git_index_restore result=failed reason={restore_err:#}"),
+                            )?;
+                        }
+                    }
+                    if let Some(snapshot) = &commit_failure_worktree_snapshot {
+                        if let Err(restore_err) = snapshot
+                            .restore(Path::new("."))
+                            .context("restore task worktree after failed commit")
+                        {
+                            append_progress(
+                                &progress.log_path,
+                                &format!(
+                                    "task_worktree_restore result=failed reason={restore_err:#}"
+                                ),
+                            )?;
+                        }
+                    }
+                    append_progress(
+                        &progress.log_path,
+                        &format!("task_end number={} result=failed", task.number),
+                    )?;
+                    let summary_result = write_failed_run_summary(
+                        plan_name,
+                        &plan_slug,
+                        &executed_tasks,
+                        task,
+                        "commit",
+                        &reason,
+                        &progress,
+                        None,
+                        true,
+                        options.review_command.is_some(),
+                    );
+                    return Err(failed_run_error(err, summary_result));
+                }
+            };
             append_progress(&progress.log_path, &format!("commit hash={commit}"))?;
             emit_plan_event(
                 &options,
@@ -1525,6 +1589,27 @@ fn commit_task(title: &str, baseline_paths: &BTreeSet<String>) -> Result<String>
     )?;
     let hash = run_git(&["rev-parse", "--short", "HEAD"])?;
     Ok(hash.trim().to_string())
+}
+
+#[derive(Debug, Clone)]
+struct GitIndexSnapshot {
+    tree: String,
+}
+
+fn git_index_snapshot() -> Result<GitIndexSnapshot> {
+    let tree = run_git(&["write-tree"])
+        .context("write current git index to tree")?
+        .trim()
+        .to_string();
+    if tree.is_empty() {
+        bail!("git write-tree returned an empty tree id");
+    }
+    Ok(GitIndexSnapshot { tree })
+}
+
+fn restore_git_index_snapshot(snapshot: &GitIndexSnapshot) -> Result<()> {
+    run_git(&["read-tree", &snapshot.tree]).context("restore git index from tree snapshot")?;
+    Ok(())
 }
 
 fn git_run_baseline() -> Result<NoCommitBaseline> {
