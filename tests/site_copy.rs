@@ -44,10 +44,9 @@ fn docs_site_exposes_reviewed_plan_workflow_page() {
 #[test]
 fn milestone_docs_name_the_real_acceptance_gate() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let milestone_md = std::fs::read_to_string(
-        root.join("docs/milestones/m1-autonomous-engineering.md"),
-    )
-    .expect("read milestone markdown");
+    let milestone_md =
+        std::fs::read_to_string(root.join("docs/milestones/m1-autonomous-engineering.md"))
+            .expect("read milestone markdown");
     let milestone_html = std::fs::read_to_string(root.join("site/docs/milestone-one.html"))
         .expect("read milestone page");
 
