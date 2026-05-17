@@ -1077,6 +1077,7 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
                 "status": "passed",
                 "transcript": task.transcript_display,
                 "validation": task.validation_output_display,
+                "review_status": passed_task_review_status(&task.review_transcript_display),
                 "review_transcript": task.review_transcript_display,
             })
         })
@@ -1222,6 +1223,7 @@ fn write_failed_run_summary(
                 "status": "passed",
                 "transcript": task.transcript_display,
                 "validation": task.validation_output_display,
+                "review_status": passed_task_review_status(&task.review_transcript_display),
                 "review_transcript": task.review_transcript_display,
             })
         })
@@ -1234,6 +1236,7 @@ fn write_failed_run_summary(
         "reason": reason,
         "transcript": transcript_display,
         "validation": link_validation_output.then(|| progress.validation_output_display.clone()),
+        "review_status": failed_task_review_status(phase, link_review_transcript),
         "review_transcript": failed_review_transcript_display,
     });
     let summary_json = json!({
@@ -1261,6 +1264,24 @@ fn failed_run_error(original: anyhow::Error, summary_result: Result<()>) -> anyh
         Err(summary_err) => anyhow::anyhow!(
             "{original}; additionally failed to write failed run artifacts: {summary_err}"
         ),
+    }
+}
+
+fn passed_task_review_status(review_transcript_display: &Option<String>) -> &'static str {
+    if review_transcript_display.is_some() {
+        "passed"
+    } else {
+        "skipped"
+    }
+}
+
+fn failed_task_review_status(phase: &str, link_review_transcript: bool) -> &'static str {
+    if phase == "review" {
+        "failed"
+    } else if link_review_transcript {
+        "passed"
+    } else {
+        "skipped"
     }
 }
 

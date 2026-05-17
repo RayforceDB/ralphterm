@@ -796,6 +796,76 @@ fn commit_failure_keeps_task_unchecked_and_records_failed_commit_phase() {
 }
 
 #[test]
+fn commit_failure_after_passed_review_records_review_status_passed() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let hook_path = repo.path.join(".git/hooks/pre-commit");
+    fs::write(
+        &hook_path,
+        "#!/bin/sh\necho failing pre-commit >&2\nexit 1\n",
+    )
+    .expect("write failing pre-commit hook");
+    let mut permissions = fs::metadata(&hook_path)
+        .expect("stat pre-commit hook")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook_path, permissions).expect("chmod pre-commit hook");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed machine-readable run summary"),
+    )
+    .expect("parse failed machine-readable run summary");
+    assert_eq!(summary_json["failed_task"]["phase"], "commit");
+    assert_eq!(summary_json["failed_task"]["review_status"], "passed");
+    assert_eq!(
+        summary_json["failed_task"]["review_transcript"],
+        ".ralphterm/progress/plan-task-1-review.transcript"
+    );
+}
+
+#[test]
 fn commit_failure_restores_index_when_agent_staged_task_outputs() {
     let repo = TempRepo::new();
     repo.init_git();
@@ -2368,6 +2438,7 @@ fn run_command_writes_passed_summary_with_transcripts_after_success() {
         summary_json["tasks"][0]["validation"],
         ".ralphterm/progress/plan-task-1-validation.txt"
     );
+    assert_eq!(summary_json["tasks"][0]["review_status"], "skipped");
     assert_eq!(summary_json["tasks"].as_array().unwrap().len(), 2);
 }
 
@@ -3023,6 +3094,14 @@ fn failed_summary_includes_prior_passed_tasks_in_same_run() {
         summary.contains(".ralphterm/progress/plan-task-2.transcript"),
         "{summary}"
     );
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed machine-readable run summary"),
+    )
+    .expect("parse failed machine-readable run summary");
+    assert_eq!(summary_json["tasks"][0]["review_status"], "skipped");
+    assert_eq!(summary_json["failed_task"]["review_status"], "skipped");
 }
 
 #[test]
@@ -3132,6 +3211,17 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
     assert!(
         summary.contains(".ralphterm/progress/plan-task-1-review.transcript"),
         "passed run summary should link the independent review transcript:\n{summary}"
+    );
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read machine-readable run summary"),
+    )
+    .expect("parse machine-readable run summary");
+    assert_eq!(summary_json["tasks"][0]["review_status"], "passed");
+    assert_eq!(
+        summary_json["tasks"][0]["review_transcript"],
+        ".ralphterm/progress/plan-task-1-review.transcript"
     );
 }
 
@@ -3371,6 +3461,17 @@ fn review_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
     assert!(summary.contains("Phase: review"), "{summary}");
     assert!(summary.contains("review command timed out"), "{summary}");
     assert!(summary.contains(review_transcript_path), "{summary}");
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed machine-readable run summary"),
+    )
+    .expect("parse failed machine-readable run summary");
+    assert_eq!(summary_json["failed_task"]["review_status"], "failed");
+    assert_eq!(
+        summary_json["failed_task"]["review_transcript"],
+        review_transcript_path
+    );
 }
 
 #[test]
@@ -4847,6 +4948,7 @@ fn failed_retry_summary_links_failing_attempt_artifacts() {
         summary_json["failed_task"]["review_transcript"],
         ".ralphterm/progress/plan-task-1-attempt-2-review.transcript"
     );
+    assert_eq!(summary_json["failed_task"]["review_status"], "failed");
 }
 
 #[test]
