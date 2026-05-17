@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <meta property="og:site_name" content="RalphTerm" />
+  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Docker isolation — RalphTerm Docs</title>
+  <meta name="description" content="Run RalphTerm plans inside a container with --docker, --docker-image, and extra volume/env passthrough." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#how">Why</a>
+        <a href="/#what">Product</a>
+        <a href="/#api">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/workflows.html">Workflows</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <p class="sidebar-section">Drop-in</p>
+        <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
+        <a href="/docs/ralphex-compat.html">Ralphex compatibility</a>
+        <a href="/docs/cli.html">CLI reference</a>
+        <a href="/docs/providers.html">Providers</a>
+        <a href="/docs/notifications.html">Notifications</a>
+        <a href="/docs/docker.html">Docker isolation</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> drop-in</div>
+      <h1>Docker isolation</h1>
+      <p>Run untrusted plans without trusting the host shell. <code>--docker</code> spawns the agent (and reviewer) inside a container. The repo ships a <code>docker/Dockerfile</code> and entrypoint; <code>--docker-image</code> overrides the image name.</p>
+
+      <h2>Quick start</h2>
+      <pre><code># build the default image
+docker build -t ralphterm:latest -f docker/Dockerfile .
+
+# run a plan inside the container
+ralphterm --docker --tasks-only docs/plans/feature.md
+
+# use a custom image
+ralphterm --docker --docker-image my-org/ralphterm:dev docs/plans/feature.md</code></pre>
+
+      <h2>Bind mounts</h2>
+      <p>By default the container mounts:</p>
+      <ul>
+        <li>workspace (current repo) at <code>/workspace</code> read-write</li>
+        <li>plan file at its resolved path read-write</li>
+        <li><code>~/.claude</code> (or the configured agent auth dir) read-write</li>
+        <li><code>~/.config/ralphterm/</code> read-only</li>
+        <li><code>~/.config/ralphex/</code> read-only</li>
+      </ul>
+
+      <h2>Extra volumes and env vars</h2>
+      <p>Pass through additional bind mounts and environment variables with the ralphex-compatible env variables:</p>
+      <pre><code># mount extra paths into the container
+export RALPHEX_EXTRA_VOLUMES="/data/cache:/cache:ro,/tmp/scratch:/tmp/scratch"
+
+# forward extra env vars
+export RALPHEX_EXTRA_ENV="AWS_PROFILE,AWS_REGION,HTTP_PROXY"
+
+ralphterm --docker docs/plans/feature.md</code></pre>
+      <p>Also forwarded by default when set on the host: <code>TZ</code>, <code>AWS_PROFILE</code>, <code>AWS_REGION</code>. Use <code>--preserve-anthropic-api-key</code> to pass <code>ANTHROPIC_API_KEY</code> through.</p>
+
+      <h2>Image build instructions</h2>
+      <p>The Dockerfile is a small Debian-based image with git, the wrapper scripts under <code>scripts/wrappers/</code>, and the RalphTerm binary. Rebuild after changing wrappers:</p>
+      <pre><code>docker build -t ralphterm:latest -f docker/Dockerfile .
+
+# inspect what's inside
+docker run --rm -it ralphterm:latest /bin/sh
+ralphterm --version</code></pre>
+
+      <h2>Notes</h2>
+      <ul>
+        <li>If the <code>docker</code> binary is missing, RalphTerm exits with a clear error before trying to start the run.</li>
+        <li>Containers run with the calling user's UID/GID so files written into <code>/workspace</code> have correct ownership on the host.</li>
+        <li>Use <code>--docker-image</code> with a content-addressed digest in CI to keep runs reproducible.</li>
+      </ul>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>

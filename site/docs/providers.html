@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <meta property="og:site_name" content="RalphTerm" />
+  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Providers — RalphTerm Docs</title>
+  <meta name="description" content="Codex, Copilot, Gemini, and OpenCode setup for RalphTerm." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#how">Why</a>
+        <a href="/#what">Product</a>
+        <a href="/#api">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/workflows.html">Workflows</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <p class="sidebar-section">Drop-in</p>
+        <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
+        <a href="/docs/ralphex-compat.html">Ralphex compatibility</a>
+        <a href="/docs/cli.html">CLI reference</a>
+        <a href="/docs/providers.html">Providers</a>
+        <a href="/docs/notifications.html">Notifications</a>
+        <a href="/docs/docker.html">Docker isolation</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> drop-in</div>
+      <h1>Providers</h1>
+      <p>RalphTerm ships wrapper scripts in <code>scripts/wrappers/</code> for the providers ralphex users already rely on. Pick one with <code>--agent &lt;name&gt;</code>; <code>--claude-command</code> still wins when both are set. Each provider owns its own auth and credentials.</p>
+
+      <h2>codex</h2>
+      <p>Install OpenAI Codex CLI and log in once. Then either use <code>--agent codex</code> or set <code>agent = codex</code> in config.</p>
+      <pre><code># install
+npm install -g @openai/codex
+codex login
+
+# environment
+export OPENAI_API_KEY=sk-...
+export CODEX_HOME=$HOME/.codex     # optional override
+
+# config snippet (~/.config/ralphex/config.json)
+{
+  "agent": "codex",
+  "claude_command": "scripts/wrappers/codex.sh"
+}
+
+# CLI usage
+ralphterm --agent codex docs/plans/feature.md
+ralphterm --claude-command scripts/wrappers/codex.sh docs/plans/feature.md</code></pre>
+
+      <h2>copilot</h2>
+      <p>Install the GitHub Copilot CLI and authenticate. The wrapper translates RalphTerm's PTY input/signals into Copilot-specific behavior.</p>
+      <pre><code># install
+gh extension install github/gh-copilot
+
+# environment
+export GITHUB_TOKEN=ghp_...        # or rely on gh auth login
+
+# config snippet
+{
+  "agent": "copilot",
+  "claude_command": "scripts/wrappers/copilot.sh"
+}
+
+# CLI usage
+ralphterm --agent copilot docs/plans/feature.md</code></pre>
+
+      <h2>gemini</h2>
+      <p>Install the Google Gemini CLI; auth via gcloud or API key.</p>
+      <pre><code># install
+npm install -g @google/gemini-cli
+gemini auth                         # or: export GEMINI_API_KEY=...
+
+# environment
+export GEMINI_API_KEY=...
+
+# config snippet
+{
+  "agent": "gemini",
+  "claude_command": "scripts/wrappers/gemini.sh"
+}
+
+# CLI usage
+ralphterm --agent gemini docs/plans/feature.md</code></pre>
+
+      <h2>opencode</h2>
+      <p>OpenCode is the open-source terminal-native agent; the wrapper drives it over PTY just like Claude Code.</p>
+      <pre><code># install
+curl -fsSL https://opencode.ai/install | bash
+
+# environment
+export OPENCODE_API_KEY=...         # only if your backend requires it
+
+# config snippet
+{
+  "agent": "opencode",
+  "claude_command": "scripts/wrappers/opencode.sh"
+}
+
+# CLI usage
+ralphterm --agent opencode docs/plans/feature.md</code></pre>
+
+      <h2>Mixing implementation and review providers</h2>
+      <p>Run implementation on one provider and review on another. The reviewer runs in its own PTY after validation.</p>
+      <pre><code>ralphterm docs/plans/feature.md \
+  --agent claude \
+  --external-review-tool=codex \
+  --review-model gpt-5-codex</code></pre>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>

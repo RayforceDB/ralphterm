@@ -604,6 +604,231 @@ fn dashboard_run_form_validates_review_retry_budget_before_post() {
 }
 
 #[test]
+fn landing_page_leads_with_ralphex_drop_in_pitch() {
+    let site_index = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/index.html"),
+    )
+    .expect("read site index");
+
+    let h1_start = site_index
+        .find("<h1>")
+        .expect("landing page should have an h1");
+    let h1_end = site_index[h1_start..]
+        .find("</h1>")
+        .map(|offset| h1_start + offset)
+        .expect("landing page h1 should close");
+    let h1 = &site_index[h1_start..h1_end].to_lowercase();
+    assert!(
+        h1.contains("drop-in"),
+        "landing hero h1 should mention drop-in"
+    );
+    assert!(
+        h1.contains("ralphex"),
+        "landing hero h1 should mention ralphex"
+    );
+
+    let lead_start = site_index
+        .find("<p class=\"lead\">")
+        .expect("landing page should have a lead paragraph");
+    let lead_end = site_index[lead_start..]
+        .find("</p>")
+        .map(|offset| lead_start + offset)
+        .expect("landing lead should close");
+    let lead = &site_index[lead_start..lead_end].to_lowercase();
+    assert!(
+        lead.contains("drop-in"),
+        "landing lead paragraph should mention drop-in"
+    );
+    assert!(
+        lead.contains("ralphex"),
+        "landing lead paragraph should mention ralphex"
+    );
+}
+
+#[test]
+fn landing_page_links_to_migration_guide() {
+    let site_index = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/index.html"),
+    )
+    .expect("read site index");
+    assert!(
+        site_index.contains("<a href=\"/docs/migrate-from-ralphex.html\"")
+            || site_index.contains("href=\"/docs/migrate-from-ralphex.html\""),
+        "landing page should link to the migration guide"
+    );
+}
+
+#[test]
+fn migration_guide_page_exists_and_describes_swap() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("site/docs/migrate-from-ralphex.html"),
+    )
+    .expect("read migration guide");
+    for expected in [
+        "Install ralphterm",
+        "Point your scripts at ralphex",
+        "--tasks-only",
+    ] {
+        assert!(
+            page.contains(expected),
+            "migration guide should mention {expected}"
+        );
+    }
+}
+
+#[test]
+fn ralphex_compat_page_lists_full_flag_table() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/docs/ralphex-compat.html"),
+    )
+    .expect("read ralphex compat page");
+    let required_flags = [
+        "--tasks-only",
+        "--review",
+        "--external-only",
+        "--codex-only",
+        "--max-iterations",
+        "--review-patience",
+        "--task-model",
+        "--review-model",
+        "--claude-command",
+        "--claude-args",
+        "--external-review-tool",
+        "--custom-review-script",
+        "--base-ref",
+        "--session-timeout",
+        "--idle-timeout",
+        "--wait",
+        "--worktree",
+        "--branch",
+        "--serve",
+        "--port",
+        "--host",
+        "--watch",
+        "--debug",
+        "--no-color",
+    ];
+    let mut present = 0;
+    for flag in required_flags {
+        if page.contains(flag) {
+            present += 1;
+        }
+    }
+    assert!(
+        present >= 20,
+        "ralphex compat page should list at least 20 ralphex flag names (found {present})"
+    );
+}
+
+#[test]
+fn cli_reference_page_exists() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/docs/cli.html"),
+    )
+    .expect("read cli reference page");
+    assert!(
+        page.contains("<dl"),
+        "cli reference page should use definition lists"
+    );
+    let candidate_flags = [
+        "--tasks-only",
+        "--review",
+        "--external-only",
+        "--codex-only",
+        "--max-iterations",
+        "--review-patience",
+        "--task-model",
+        "--review-model",
+        "--claude-command",
+        "--claude-args",
+        "--external-review-tool",
+        "--custom-review-script",
+        "--worktree",
+        "--branch",
+        "--serve",
+        "--port",
+        "--host",
+        "--watch",
+        "--debug",
+        "--no-color",
+        "--docker",
+        "--docker-image",
+    ];
+    let mut present = 0;
+    for flag in candidate_flags {
+        if page.contains(flag) {
+            present += 1;
+        }
+    }
+    assert!(
+        present >= 10,
+        "cli reference should list at least 10 flag names (found {present})"
+    );
+}
+
+#[test]
+fn providers_page_documents_four_providers() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/docs/providers.html"),
+    )
+    .expect("read providers page");
+    for provider in ["codex", "copilot", "gemini", "opencode"] {
+        assert!(
+            page.contains(provider),
+            "providers page should document {provider}"
+        );
+    }
+}
+
+#[test]
+fn notifications_page_documents_four_channels() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/docs/notifications.html"),
+    )
+    .expect("read notifications page");
+    for channel in ["Telegram", "Slack", "Email", "Webhook"] {
+        assert!(
+            page.contains(channel),
+            "notifications page should document {channel}"
+        );
+    }
+}
+
+#[test]
+fn docker_page_documents_image_flag() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/docs/docker.html"),
+    )
+    .expect("read docker page");
+    assert!(
+        page.contains("--docker-image"),
+        "docker page should document --docker-image"
+    );
+}
+
+#[test]
+fn sitemap_includes_new_docs_pages() {
+    let sitemap = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/sitemap.xml"),
+    )
+    .expect("read sitemap");
+    for url in [
+        "https://ralphterm.rayforcedb.com/docs/migrate-from-ralphex.html",
+        "https://ralphterm.rayforcedb.com/docs/ralphex-compat.html",
+        "https://ralphterm.rayforcedb.com/docs/cli.html",
+        "https://ralphterm.rayforcedb.com/docs/providers.html",
+        "https://ralphterm.rayforcedb.com/docs/notifications.html",
+        "https://ralphterm.rayforcedb.com/docs/docker.html",
+    ] {
+        assert!(
+            sitemap.contains(url),
+            "sitemap should include new doc URL {url}"
+        );
+    }
+}
+
+#[test]
 fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let api_markdown = std::fs::read_to_string(root.join("docs/api.md")).expect("read api docs");

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <meta property="og:site_name" content="RalphTerm" />
+  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Notifications — RalphTerm Docs</title>
+  <meta name="description" content="Telegram, Slack, Email, and Webhook notification configuration." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#how">Why</a>
+        <a href="/#what">Product</a>
+        <a href="/#api">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/workflows.html">Workflows</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <p class="sidebar-section">Drop-in</p>
+        <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
+        <a href="/docs/ralphex-compat.html">Ralphex compatibility</a>
+        <a href="/docs/cli.html">CLI reference</a>
+        <a href="/docs/providers.html">Providers</a>
+        <a href="/docs/notifications.html">Notifications</a>
+        <a href="/docs/docker.html">Docker isolation</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> drop-in</div>
+      <h1>Notifications</h1>
+      <p>RalphTerm fires notifications on plan completion, plan failure, repeated review failure, and detected rate-limit pauses. Channels match ralphex: Telegram, Slack, Email (SMTP), and a generic Webhook. Each delivery has a 10s timeout and never blocks the run.</p>
+
+      <h2>Configure under [notify]</h2>
+      <p>Configuration lives in <code>~/.config/ralphex/config.json</code> (or <code>.ralphex/config.json</code> for project overrides):</p>
+      <pre><code>{
+  "notify": {
+    "telegram_token": "123456:ABC...",
+    "telegram_chat_id": "987654321",
+    "slack_webhook": "https://hooks.slack.com/services/T.../B.../...",
+    "email_smtp": "smtp.example.com:587",
+    "email_to": "ops@example.com",
+    "webhook_url": "https://ci.example.com/hooks/ralphterm",
+    "notify_on": "plan_done,task_failed,review_failed,rate_limit"
+  }
+}</code></pre>
+
+      <h2>Telegram</h2>
+      <p>Create a Telegram bot via <code>@BotFather</code> to get the bot token, then send any message to it to obtain a chat id. RalphTerm posts plain-text messages via <code>sendMessage</code>.</p>
+      <pre><code># CLI override
+ralphterm --notify-telegram-token "$TG_TOKEN" \
+          --notify-telegram-chat "$TG_CHAT" \
+          --notify-on plan_done,review_failed \
+          docs/plans/feature.md</code></pre>
+
+      <h2>Slack</h2>
+      <p>Configure an Incoming Webhook in your Slack workspace and paste the URL into <code>slack_webhook</code>. Messages are posted as JSON with a short status line.</p>
+      <pre><code># CLI override
+ralphterm --notify-slack "$SLACK_WEBHOOK" docs/plans/feature.md</code></pre>
+
+      <h2>Email (SMTP)</h2>
+      <p>RalphTerm sends plain-text email via SMTP. Configure <code>email_smtp</code> with <code>host:port</code> and <code>email_to</code> with the recipient. Credentials are read from the environment (<code>SMTP_USER</code>, <code>SMTP_PASS</code>).</p>
+      <pre><code>export SMTP_USER=alerts@example.com
+export SMTP_PASS=...
+ralphterm docs/plans/feature.md</code></pre>
+
+      <h2>Webhook</h2>
+      <p>Generic <code>POST</code> with a JSON body. Useful for CI, paging, and custom dashboards.</p>
+      <pre><code># Payload shape
+{
+  "event": "review_failed",
+  "plan": "docs/plans/feature.md",
+  "task": "Implement smoke output",
+  "iteration": 2,
+  "transcript_url": "https://ralphterm.local/v1/runs/.../progress/review.txt"
+}</code></pre>
+
+      <h2>Security notes</h2>
+      <p>Always prefer HTTPS endpoints for Slack and Webhook delivery. RalphTerm enforces TLS by default and refuses to send notifications over plain HTTP. The override env var <code>RALPHTERM_NOTIFY_ALLOW_INSECURE=1</code> lifts that check; use it only for local testing.</p>
+      <p>Tokens and webhook URLs are secrets. Keep them in <code>~/.config/ralphex/config.json</code> (mode <code>0600</code>) or supply them via environment variables and CLI overrides at run time rather than committing them to a project repo.</p>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>

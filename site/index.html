@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RalphTerm - Plan runs with independent review</title>
-  <meta name="description" content="Run a markdown plan through real Claude Code or Codex terminals, validate each task, require independent review, commit progress, and keep transcripts.">
-  <meta name="keywords" content="RalphTerm, Claude Code, Codex, AI coding agents, plan runner, terminal automation, CLI orchestration, autonomous coding, PTY">
+  <title>RalphTerm - Drop-in ralphex replacement with PTY-native execution</title>
+  <meta name="description" content="Drop-in replacement for ralphex. Real terminal CLIs. Real review gates. No --print, no -p, no one-shot prompt mode.">
+  <meta name="keywords" content="RalphTerm, ralphex, drop-in replacement, Claude Code, Codex, Copilot, Gemini, OpenCode, AI coding agents, plan runner, PTY, terminal automation, autonomous coding">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://ralphterm.rayforcedb.com/">
 
   <meta property="og:type" content="website">
-  <meta property="og:title" content="RalphTerm - Plan runs with independent review">
-  <meta property="og:description" content="Run a plan through real Claude Code or Codex terminal agents, validate the task, require an independent reviewer, and only then commit progress.">
+  <meta property="og:title" content="RalphTerm - Drop-in ralphex replacement with PTY-native execution">
+  <meta property="og:description" content="Drop-in replacement for ralphex. Real terminal CLIs. Real review gates. No --print, no -p, no one-shot prompt mode.">
   <meta property="og:url" content="https://ralphterm.rayforcedb.com/">
   <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png">
   <meta property="og:site_name" content="RalphTerm">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="RalphTerm - Plan runs with independent review">
-  <meta name="twitter:description" content="Run markdown plans through real terminal agents, then require independent review before progress counts.">
+  <meta name="twitter:title" content="RalphTerm - Drop-in ralphex replacement with PTY-native execution">
+  <meta name="twitter:description" content="Drop-in replacement for ralphex. Real terminal CLIs. Real review gates. No --print, no -p, no one-shot prompt mode.">
   <meta name="twitter:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png">
 
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
@@ -31,7 +31,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "RalphTerm",
-    "description": "Autonomous plan runner for AI coding agents. It runs official CLIs in real terminal sessions, validates task output, requires independent review when configured, commits progress, and keeps transcripts.",
+    "description": "Drop-in ralphex replacement. RalphTerm runs the same plans, the same flags, and the same config through real PTY-backed CLIs with independent review gates.",
     "url": "https://ralphterm.rayforcedb.com",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS",
@@ -53,26 +53,52 @@
       <a href="#how">How</a>
       <a href="#api">API</a>
       <a href="/docs/">Docs</a>
+      <a href="/docs/migrate-from-ralphex.html">Migrate</a>
       <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
     </nav>
   </header>
 
   <main>
     <section class="hero">
-      <p class="badge">For reviewed Claude Code and Codex plan runs</p>
-      <h1>Write a plan. Let real terminal agents execute it, then review it.</h1>
+      <p class="badge">Drop-in ralphex replacement</p>
+      <h1>Drop-in ralphex replacement. Real PTY, real CLIs, real review gates.</h1>
       <p class="lead">
-        RalphTerm runs the maintainer loop directly: implementation agent, validation commands, independent reviewer, then accepted progress. It runs the official CLIs in real PTYs, sends each task as terminal input, waits for completion, and keeps the transcript.
+        A drop-in replacement for ralphex. Swap <code>ralphex</code> for <code>ralphterm</code>, or use the bundled <code>ralphex</code> binary alias, and keep the same plans, prompts, config, agents, and notifications. RalphTerm reads <code>~/.config/ralphex/</code> and <code>.ralphex/</code>, accepts the same flags, runs the same plan format, and preserves the independent-review acceptance gate.
       </p>
       <p class="why-line">
-        Use it for autonomous engineering loops that need real interaction without <code>claude -p</code>, <code>--print</code>, or brittle one-shot prompt calls. Unchecked agent progress is not good enough.
+        Write a plan. Let real terminal agents execute it, then review it. RalphTerm runs the maintainer loop directly: implementation agent, validation commands, independent reviewer, then accepted progress. It runs the official CLIs in real PTYs, sends each task as terminal input, waits for completion, and keeps the transcript. Use it for autonomous engineering loops that need real interaction without <code>claude -p</code>, <code>--print</code>, or brittle one-shot prompt calls. Unchecked agent progress is not good enough.
       </p>
       <div class="hero-actions">
         <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
-        <a class="btn secondary" href="/docs/">Documentation</a>
+        <a class="btn secondary" href="/docs/migrate-from-ralphex.html">Migration guide</a>
       </div>
 
-      <div class="terminal-card" aria-label="RalphTerm example">
+      <div class="compare-two">
+        <div class="terminal-card" aria-label="ralphex invocation">
+          <div class="terminal-bar"><span></span><span></span><span></span><b>ralphex</b></div>
+          <pre><code>$ ralphex --tasks-only docs/plans/feature.md
+[ralphex] loading plan docs/plans/feature.md
+[ralphex] tasks-only mode (review skipped)
+[ralphex] task 1 sent to claude in PTY
+[ralphex] COMPLETED
+[ralphex] task marked [x]</code></pre>
+        </div>
+        <div class="terminal-card" aria-label="ralphterm invocation">
+          <div class="terminal-bar"><span></span><span></span><span></span><b>ralphterm</b></div>
+          <pre><code>$ ralphterm --tasks-only docs/plans/feature.md
+[ralphterm] loading plan docs/plans/feature.md
+[ralphterm] tasks-only mode (review skipped)
+[ralphterm] task 1 sent to claude in real PTY
+[ralphterm] COMPLETED
+[ralphterm] task marked [x]</code></pre>
+        </div>
+      </div>
+
+      <p class="why-line">
+        Same flags. Same plan file. Same checkbox semantics. The compatibility layer at <a href="/docs/ralphex-compat.html">ralphex-compat</a> documents every accepted flag, and the <a href="/docs/cli.html">CLI reference</a> lists every option with type, default, and notes.
+      </p>
+
+      <div class="terminal-card" aria-label="Reviewed plan example">
         <div class="terminal-bar"><span></span><span></span><span></span><b>ralphterm.local</b></div>
         <pre><code>$ ralphterm smoke --agent claude
 Smoke: claude
@@ -104,28 +130,62 @@ $ ralphterm run docs/plans/example.md --agent claude \
     <section id="what" class="section split-card">
       <div>
         <p class="eyebrow">What is RalphTerm?</p>
-        <h2>A plan runner for autonomous coding work.</h2>
+        <h2>A drop-in plan runner with real review gates.</h2>
       </div>
       <p>
-        RalphTerm does not replace Claude Code or Codex. It runs them the way a human runs them: inside a terminal. The product layer is the verified plan loop around that terminal: task prompts, validation, independent review, checked-off progress, commits, and transcripts.
+        RalphTerm does not replace Claude Code or Codex. It runs them the way a human runs them: inside a terminal. The product layer is the verified plan loop around that terminal: task prompts, validation, independent review, checked-off progress, commits, and transcripts. If you are coming from ralphex, the swap is one binary; everything else stays.
       </p>
     </section>
 
     <section id="how" class="section">
-      <p class="eyebrow">Why it exists</p>
-      <h2>AI CLIs are interactive. Automation has to handle that.</h2>
+      <p class="eyebrow">What's different</p>
+      <h2>Same surface. Different floor.</h2>
+      <p><img src="/assets/comparison.svg" alt="ralphex equals ralphterm" width="320" height="96" loading="lazy"></p>
       <div class="cards three">
         <article>
-          <h3>Prompt mode breaks</h3>
-          <p>Long plan runs hit login screens, approval prompts, rate limits, follow-up questions, and output changes.</p>
+          <h3>Same flags. Same plans. Same config.</h3>
+          <p>RalphTerm accepts the same CLI surface as ralphex, reads <code>~/.config/ralphex/</code> and <code>.ralphex/</code>, and runs the exact same markdown plan files. Point your scripts at <code>ralphex</code> (the alias) or <code>ralphterm</code> and keep going.</p>
         </article>
         <article>
-          <h3>PTY mode survives</h3>
-          <p>The official CLI keeps its real terminal. RalphTerm watches output and sends input like a controlled operator.</p>
+          <h3>Real PTY execution.</h3>
+          <p>Every implementation and review command runs in a real terminal. No <code>--print</code>, no <code>-p</code>, no one-shot prompt mode. Login screens, approval prompts, rate limits, and follow-up questions all survive.</p>
         </article>
         <article>
-          <h3>Runs stay auditable</h3>
-          <p>Every task can expose validation results, completion signals, commit hashes, and the raw transcript.</p>
+          <h3>Independent review gates.</h3>
+          <p>The reviewer runs in its own PTY after validation and must print an exact <code>REVIEW_PASS</code> line. Implementation completion alone never marks a task <code>[x]</code> or creates a commit.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <p class="eyebrow">Drop-in features</p>
+      <h2>Everything ralphex did, in one binary.</h2>
+      <div class="cards three">
+        <article>
+          <h3>Worktrees</h3>
+          <p><code>--worktree --branch</code> creates isolated git worktrees per plan run, defaulting the branch to the plan filename slug. Safe to run untrusted plans without touching your checkout.</p>
+        </article>
+        <article>
+          <h3>Notifications</h3>
+          <p>Telegram, Slack, Email (SMTP), and generic Webhook delivery on plan completion, task failure, review failure, and rate-limit pauses. Configured via <code>[notify]</code> or CLI overrides. See <a href="/docs/notifications.html">notifications</a>.</p>
+        </article>
+        <article>
+          <h3>Docker isolation</h3>
+          <p><code>--docker --docker-image ralphterm:latest</code> runs the agent and reviewer inside a container. Honors <code>RALPHEX_EXTRA_VOLUMES</code> and <code>RALPHEX_EXTRA_ENV</code>. See <a href="/docs/docker.html">docker</a>.</p>
+        </article>
+      </div>
+      <div class="cards three">
+        <article>
+          <h3>Multi-provider</h3>
+          <p>Wrapper scripts for Codex, Copilot, Gemini, and OpenCode ship in <code>scripts/wrappers/</code>. Pick one with <code>--agent codex</code>, <code>--agent copilot</code>, <code>--agent gemini</code>, or <code>--agent opencode</code>. See <a href="/docs/providers.html">providers</a>.</p>
+        </article>
+        <article>
+          <h3>Review retry loop with patience</h3>
+          <p><code>--review-patience N</code> and <code>--max-iterations N</code> let the implementation/review loop re-run with reviewer feedback before blocking. <code>REVIEW_FAIL</code> triggers retry; only a clean review accepts the task.</p>
+        </article>
+        <article>
+          <h3>Plan-completion auto-move</h3>
+          <p>On successful full or tasks mode runs, RalphTerm honors <code>move_plan_on_completion</code> and moves the plan to <code>docs/plans/completed/</code> so the next pass sees a clean queue.</p>
         </article>
       </div>
     </section>
@@ -134,27 +194,28 @@ $ ralphterm run docs/plans/example.md --agent claude \
       <div>
         <p class="eyebrow">Current workflow</p>
         <h2>Plan runner first. PTY API underneath.</h2>
-        <p>Use <code>ralphterm run</code> for task-by-task plan execution. The session API remains the lower-level control surface for custom orchestrators.</p>
+        <p>Use <code>ralphterm [flags] PLAN</code> (or the <code>ralphex</code> alias) for ralphex-style plan execution. The session API remains the lower-level control surface for custom orchestrators.</p>
       </div>
       <ul class="api-list">
-        <li><code>ralphterm smoke --agent claude</code><span>verify the real CLI can run inside a PTY and emit a completion signal</span></li>
+        <li><code>ralphterm --tasks-only docs/plans/foo.md</code><span>tasks-only mode, ralphex-style, no review gate</span></li>
+        <li><code>ralphterm --claude-command claude docs/plans/foo.md</code><span>full mode with default review gate, drives the CLI in a real PTY</span></li>
+        <li><code>ralphterm --external-review-tool=custom --custom-review-script ./review.sh docs/plans/foo.md</code><span>map a custom reviewer into RalphTerm's independent review command</span></li>
         <li><code>ralphterm run PLAN --dry-run</code><span>preview pending tasks, review mode, and validation without starting an agent</span></li>
         <li><code>ralphterm run PLAN --agent claude --require-review --review-agent codex</code><span>fail before agent execution unless an independent reviewer is configured</span></li>
-        <li><code>ralphterm run PLAN --agent codex</code><span>run the same loop through Codex</span></li>
         <li><code>POST /v1/sessions</code><span>start Claude, Codex, or a custom command in a PTY</span></li>
         <li><code>GET /v1/sessions/:id/transcript</code><span>read the terminal transcript</span></li>
       </ul>
     </section>
 
     <section class="section roadmap">
-      <p class="eyebrow">Next</p>
-      <h2>From task execution to full replacement-grade autonomy.</h2>
+      <p class="eyebrow">Get started</p>
+      <h2>Swap one binary. Keep everything else.</h2>
       <p>
-        The current loop can execute plan tasks, validate results, require an independent reviewer, commit progress, and keep transcripts. The next milestone adds stronger isolation, approval queues, richer review loops, and final patch summaries around that working core.
+        The drop-in path is short: install RalphTerm, point your existing scripts at <code>ralphex</code> (the alias) or <code>ralphterm</code>, keep your <code>~/.config/ralphex/</code> and project <code>.ralphex/</code>, and confirm the review gate with <code>ralphterm --tasks-only &lt;plan&gt;</code> followed by a full reviewed run.
       </p>
       <div class="hero-actions small-actions">
-        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">Star the repo</a>
-        <a class="btn secondary" href="/docs/milestone-one.html">Read milestone 1</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+        <a class="btn secondary" href="/docs/migrate-from-ralphex.html">Migration guide</a>
       </div>
     </section>
   </main>
@@ -163,6 +224,7 @@ $ ralphterm run docs/plans/example.md --agent claude \
     <span>MIT License</span>
     <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
     <a href="/docs/">Docs</a>
+    <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
   </footer>
 </body>
 </html>

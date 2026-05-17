@@ -175,6 +175,21 @@ code {
   box-shadow: 0 30px 90px rgba(0,0,0,.4);
   overflow: hidden;
 }
+.compare-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  max-width: 1040px;
+  margin: 44px auto 0;
+  text-align: left;
+}
+.compare-two .terminal-card {
+  max-width: none;
+  margin: 0;
+}
+@media (max-width: 800px) {
+  .compare-two { grid-template-columns: 1fr; }
+}
 .terminal-bar {
   display: flex;
   align-items: center;

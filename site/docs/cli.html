@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <meta property="og:site_name" content="RalphTerm" />
+  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>CLI reference — RalphTerm Docs</title>
+  <meta name="description" content="Comprehensive CLI reference: every supported flag with type, default, and notes." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#how">Why</a>
+        <a href="/#what">Product</a>
+        <a href="/#api">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/workflows.html">Workflows</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <p class="sidebar-section">Drop-in</p>
+        <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
+        <a href="/docs/ralphex-compat.html">Ralphex compatibility</a>
+        <a href="/docs/cli.html">CLI reference</a>
+        <a href="/docs/providers.html">Providers</a>
+        <a href="/docs/notifications.html">Notifications</a>
+        <a href="/docs/docker.html">Docker isolation</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> reference</div>
+      <h1>CLI reference</h1>
+      <p>Every flag accepted by <code>ralphterm</code> (and the bundled <code>ralphex</code> alias). Usage:</p>
+      <pre><code>ralphterm [flags] [plan-file]
+ralphterm run PLAN [flags]            # explicit subcommand still works
+ralphterm smoke --agent &lt;name&gt;        # one-shot smoke run
+ralphterm serve [flags]               # start the local daemon
+ralphterm workspace &lt;subcommand&gt;      # workspace management</code></pre>
+
+      <h2>Modes</h2>
+      <dl>
+        <dt><code>--tasks-only</code>, <code>-t</code></dt>
+        <dd>Type: flag. Default: off. Skip the review gate. Equivalent to ralphex tasks-only mode.</dd>
+        <dt><code>--review</code>, <code>-r</code></dt>
+        <dd>Type: flag. Default: off. Review-only mode: skip task execution, run the full review pipeline.</dd>
+        <dt><code>--external-only</code>, <code>-e</code></dt>
+        <dd>Type: flag. Default: off. Run the external review and fixer loop only.</dd>
+        <dt><code>--codex-only</code>, <code>-c</code></dt>
+        <dd>Type: flag. Default: off. Alias for the codex external-only loop.</dd>
+      </dl>
+
+      <h2>Implementation agent</h2>
+      <dl>
+        <dt><code>--claude-command &lt;cmd&gt;</code></dt>
+        <dd>Type: string. Default: <code>claude</code>. Implementation CLI executable. Drives a real PTY; never uses <code>--print</code> or <code>-p</code>.</dd>
+        <dt><code>--claude-args &lt;args&gt;</code></dt>
+        <dd>Type: string. Default: empty. Extra arguments appended to <code>--claude-command</code>.</dd>
+        <dt><code>--task-model &lt;model&gt;</code></dt>
+        <dd>Type: string. Default: provider default. Model identifier passed to the implementation CLI.</dd>
+        <dt><code>--agent &lt;name&gt;</code></dt>
+        <dd>Type: enum (<code>claude</code> | <code>codex</code> | <code>copilot</code> | <code>gemini</code> | <code>opencode</code>). Default: <code>claude</code>. Selects a wrapper script under <code>scripts/wrappers/</code>. <code>--claude-command</code> wins when both are set.</dd>
+      </dl>
+
+      <h2>Review pipeline</h2>
+      <dl>
+        <dt><code>--review-model &lt;model&gt;</code></dt>
+        <dd>Type: string. Default: provider default. Model identifier passed to the review CLI.</dd>
+        <dt><code>--external-review-tool=&lt;codex|custom|none&gt;</code></dt>
+        <dd>Type: enum. Default: <code>codex</code>. Selects the reviewer kind. <code>custom</code> requires <code>--custom-review-script</code>; <code>none</code> disables review.</dd>
+        <dt><code>--custom-review-script &lt;cmd&gt;</code></dt>
+        <dd>Type: string. Default: empty. Custom reviewer executable mapped to RalphTerm's independent review command.</dd>
+        <dt><code>--review-patience &lt;n&gt;</code></dt>
+        <dd>Type: integer. Default: <code>1</code>. Consecutive clean reviews required before acceptance.</dd>
+        <dt><code>--max-iterations &lt;n&gt;</code>, <code>-m</code></dt>
+        <dd>Type: integer. Default: <code>3</code>. Implementation+review iteration cap per task.</dd>
+        <dt><code>--max-external-iterations &lt;n&gt;</code></dt>
+        <dd>Type: integer. Default: <code>3</code>. External-review loop cap.</dd>
+        <dt><code>--require-review</code></dt>
+        <dd>Type: flag. Default: off. Hard gate: refuse to start without <code>--review-command</code> or <code>--review-agent</code>.</dd>
+        <dt><code>--review-command &lt;cmd&gt;</code></dt>
+        <dd>Type: string. Default: empty. Independent reviewer command.</dd>
+        <dt><code>--review-agent &lt;name&gt;</code></dt>
+        <dd>Type: string. Default: empty. Use a known agent identity for review.</dd>
+        <dt><code>--max-review-retries &lt;n&gt;</code></dt>
+        <dd>Type: integer. Default: <code>1</code>. Retry budget for <code>REVIEW_FAIL</code>. <code>0</code> blocks on the first failed review.</dd>
+        <dt><code>--skip-finalize</code></dt>
+        <dd>Type: flag. Default: off. Suppress the final-review pass; commits still gated by per-task review.</dd>
+      </dl>
+
+      <h2>Timing and base ref</h2>
+      <dl>
+        <dt><code>--base-ref &lt;ref&gt;</code>, <code>-b</code></dt>
+        <dd>Type: string. Default: <code>HEAD</code>. Diff baseline included in reviewer context.</dd>
+        <dt><code>--wait</code></dt>
+        <dd>Type: flag. Default: off. Block until the daemon/run finishes.</dd>
+        <dt><code>--session-timeout &lt;duration&gt;</code></dt>
+        <dd>Type: duration (e.g. <code>30m</code>). Default: provider default. Per-session wall-clock timeout.</dd>
+        <dt><code>--idle-timeout &lt;duration&gt;</code></dt>
+        <dd>Type: duration. Default: provider default. Idle PTY timeout before the session is cancelled.</dd>
+      </dl>
+
+      <h2>Workspace and worktree</h2>
+      <dl>
+        <dt><code>--worktree</code></dt>
+        <dd>Type: flag. Default: off. Create an isolated git worktree for the run.</dd>
+        <dt><code>--branch &lt;name&gt;</code></dt>
+        <dd>Type: string. Default: plan filename slug. Worktree branch override.</dd>
+        <dt><code>--workspace-id &lt;id&gt;</code></dt>
+        <dd>Type: string. Default: empty. Run inside <code>.ralphterm/workspaces/&lt;id&gt;</code>; does not auto-clean after the run.</dd>
+      </dl>
+
+      <h2>Daemon and dashboard</h2>
+      <dl>
+        <dt><code>--serve</code>, <code>-s</code></dt>
+        <dd>Type: flag. Default: off. Start the local daemon with progress/dashboard endpoints.</dd>
+        <dt><code>--port &lt;n&gt;</code>, <code>-p</code></dt>
+        <dd>Type: integer. Default: <code>7878</code>. Daemon port.</dd>
+        <dt><code>--host &lt;addr&gt;</code></dt>
+        <dd>Type: string. Default: <code>127.0.0.1</code>. Daemon bind host.</dd>
+        <dt><code>--watch &lt;dir&gt;</code>, <code>-w</code></dt>
+        <dd>Type: path. Default: empty. Watch a plans directory and process new plans automatically.</dd>
+      </dl>
+
+      <h2>Notifications</h2>
+      <dl>
+        <dt><code>--notify-telegram-token &lt;token&gt;</code></dt>
+        <dd>Type: string. Default: from config. Telegram bot token override.</dd>
+        <dt><code>--notify-telegram-chat &lt;chat-id&gt;</code></dt>
+        <dd>Type: string. Default: from config. Telegram chat id override.</dd>
+        <dt><code>--notify-slack &lt;webhook&gt;</code></dt>
+        <dd>Type: URL. Default: from config. Slack webhook URL override.</dd>
+        <dt><code>--notify-webhook &lt;url&gt;</code></dt>
+        <dd>Type: URL. Default: from config. Generic JSON POST webhook URL.</dd>
+        <dt><code>--notify-on &lt;a,b,c&gt;</code></dt>
+        <dd>Type: comma-separated list. Default: <code>plan_done,task_failed,review_failed,rate_limit</code>. Events that fire notifications.</dd>
+      </dl>
+
+      <h2>Docker isolation</h2>
+      <dl>
+        <dt><code>--docker</code></dt>
+        <dd>Type: flag. Default: off. Run the agent and reviewer inside a container.</dd>
+        <dt><code>--docker-image &lt;image&gt;</code></dt>
+        <dd>Type: string. Default: <code>ralphterm:latest</code>. Container image to use.</dd>
+        <dt><code>--preserve-anthropic-api-key</code></dt>
+        <dd>Type: flag. Default: off. Pass <code>ANTHROPIC_API_KEY</code> through to the container.</dd>
+      </dl>
+
+      <h2>Config</h2>
+      <dl>
+        <dt><code>--config-dir &lt;path&gt;</code></dt>
+        <dd>Type: path. Default: <code>~/.config/ralphex/</code> or <code>RALPHEX_CONFIG_DIR</code>. Global config directory.</dd>
+        <dt><code>--plan &lt;path&gt;</code></dt>
+        <dd>Type: path. Default: positional argument. Explicit plan-path flag; positional <code>&lt;plan&gt;</code> is the canonical form.</dd>
+        <dt><code>--init</code></dt>
+        <dd>Type: flag. Default: off. Scaffold a <code>.ralphex/</code> directory with default config (pending).</dd>
+        <dt><code>--reset</code></dt>
+        <dd>Type: flag. Default: off. Reset local <code>.ralphex/</code> state to defaults (pending).</dd>
+        <dt><code>--dump-defaults</code></dt>
+        <dd>Type: flag. Default: off. Print the default config to stdout.</dd>
+      </dl>
+
+      <h2>Output</h2>
+      <dl>
+        <dt><code>--debug</code>, <code>-d</code></dt>
+        <dd>Type: flag. Default: off. Verbose logging.</dd>
+        <dt><code>--no-color</code></dt>
+        <dd>Type: flag. Default: off. Disable ANSI color in RalphTerm-owned output.</dd>
+        <dt><code>--no-commit</code></dt>
+        <dd>Type: flag. Default: off. Do not create a checkpoint commit after a passed review.</dd>
+        <dt><code>--dry-run</code></dt>
+        <dd>Type: flag. Default: off. Preview pending tasks, review mode, and validation without starting an agent.</dd>
+        <dt><code>--version</code>, <code>-v</code></dt>
+        <dd>Type: flag. Default: off. Print the RalphTerm version.</dd>
+      </dl>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>

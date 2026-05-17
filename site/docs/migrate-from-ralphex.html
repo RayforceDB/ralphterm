@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <meta property="og:site_name" content="RalphTerm" />
+  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Migrate from ralphex — RalphTerm Docs</title>
+  <meta name="description" content="Step-by-step migration from ralphex to RalphTerm: install, point your scripts, keep your config, confirm the review gate." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#how">Why</a>
+        <a href="/#what">Product</a>
+        <a href="/#api">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/workflows.html">Workflows</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <p class="sidebar-section">Drop-in</p>
+        <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
+        <a href="/docs/ralphex-compat.html">Ralphex compatibility</a>
+        <a href="/docs/cli.html">CLI reference</a>
+        <a href="/docs/providers.html">Providers</a>
+        <a href="/docs/notifications.html">Notifications</a>
+        <a href="/docs/docker.html">Docker isolation</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> drop-in</div>
+      <h1>Migrate from ralphex</h1>
+      <p>RalphTerm is a drop-in replacement for ralphex. Same flags, same plan files, same config directories. This guide walks the five-step swap.</p>
+
+      <h2>1. Install ralphterm</h2>
+      <p>Build from source or install a release binary. The build produces two binaries: <code>ralphterm</code> and <code>ralphex</code>. They share the same code path; the second is an alias.</p>
+      <pre><code>git clone git@github.com:RayforceDB/ralphterm.git
+cd ralphterm
+cargo build --release
+# install both binaries somewhere on PATH
+install -m 0755 target/release/ralphterm /usr/local/bin/ralphterm
+install -m 0755 target/release/ralphex    /usr/local/bin/ralphex</code></pre>
+
+      <h2>2. Point your scripts at ralphex (the alias) or ralphterm</h2>
+      <p>Existing scripts that invoke <code>ralphex --tasks-only ...</code> keep working unchanged because the <code>ralphex</code> binary alias accepts the same flags. If you prefer the new name, change the invocation to <code>ralphterm</code>. Both run the same compatibility parser.</p>
+      <pre><code># Existing ralphex script - keep it as-is, just install the new binary
+ralphex --tasks-only --claude-command claude docs/plans/feature.md
+
+# Or rename the call to ralphterm with no other changes
+ralphterm --tasks-only --claude-command claude docs/plans/feature.md</code></pre>
+
+      <h2>3. Keep <code>~/.config/ralphex/</code></h2>
+      <p>RalphTerm reads the same config directories ralphex did. The default global config dir is <code>~/.config/ralphex/</code>; the project-local override is <code>.ralphex/</code>. <code>--config-dir</code> and <code>RALPHEX_CONFIG_DIR</code> still work. Existing prompts, agents, <code>claude_command</code>, <code>claude_args</code>, task/review model split, codex/external review config, timeouts, worktree settings, watch directories, plan-completion move config, and notify settings are read directly.</p>
+      <pre><code>$ ls ~/.config/ralphex/
+config.json   prompts/   agents/
+
+$ ls .ralphex/
+config.json   progress/</code></pre>
+
+      <h2>4. Confirm the review gate works</h2>
+      <p>Verify both modes with a small plan. The first command uses <code>--tasks-only</code> for a no-review smoke pass; the second runs the full reviewed loop so you see that the independent reviewer is required before progress is committed.</p>
+      <pre><code># tasks-only mode (review skipped)
+ralphterm --tasks-only docs/plans/example.md
+
+# full mode with the default review gate
+ralphterm docs/plans/example.md \
+  --claude-command claude \
+  --external-review-tool=codex</code></pre>
+      <p>If you previously used <code>--external-review-tool=custom --custom-review-script ./review.sh</code> in ralphex, it maps directly onto RalphTerm's independent review command. Without a reviewer, full mode fails before agent execution instead of silently claiming acceptance.</p>
+
+      <h2>5. (Optional) Add notifications, Docker, worktrees, wrappers</h2>
+      <p>These surfaces are also drop-in compatible:</p>
+      <ul>
+        <li><strong>Notifications</strong>: configure Telegram, Slack, Email, or Webhook under <code>[notify]</code>; CLI overrides <code>--notify-telegram-token</code>, <code>--notify-slack</code>, <code>--notify-webhook</code>, <code>--notify-on</code> still apply. See <a href="/docs/notifications.html">notifications</a>.</li>
+        <li><strong>Docker isolation</strong>: <code>--docker --docker-image ralphterm:latest</code> runs the agent and reviewer inside a container. Honors <code>RALPHEX_EXTRA_VOLUMES</code> and <code>RALPHEX_EXTRA_ENV</code>. See <a href="/docs/docker.html">docker</a>.</li>
+        <li><strong>Worktrees</strong>: <code>--worktree --branch &lt;name&gt;</code> creates isolated git worktrees per run. Branch defaults to the plan filename slug.</li>
+        <li><strong>Alternate providers</strong>: <code>--agent codex|copilot|gemini|opencode</code> picks a wrapper script in <code>scripts/wrappers/</code>. See <a href="/docs/providers.html">providers</a>.</li>
+      </ul>
+
+      <h2>What changed under the hood</h2>
+      <p>RalphTerm enforces the original ralphex semantic without any wiggle room: implementation <code>COMPLETED</code> is not acceptance. Acceptance requires validation plus independent review until reviewers find zero actionable issues. Use <code>--review-patience</code> and <code>--max-iterations</code> to tune the loop; use <code>--tasks-only</code> to skip review intentionally.</p>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050507" />
+  <meta property="og:site_name" content="RalphTerm" />
+  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <title>Ralphex compatibility — RalphTerm Docs</title>
+  <meta name="description" content="Compatibility table for every ralphex flag mapped to RalphTerm." />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">↯</span>
+        <span>RalphTerm</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#how">Why</a>
+        <a href="/#what">Product</a>
+        <a href="/#api">Workflow</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn ghost" href="/docs/">Read docs</a>
+        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container docs-shell">
+
+      <aside class="sidebar">
+        <a href="/docs/">Getting started</a>
+        <a href="/docs/api.html">API</a>
+        <a href="/docs/architecture.html">Architecture</a>
+        <a href="/docs/security.html">Security</a>
+        <a href="/docs/workflows.html">Workflows</a>
+        <a href="/docs/milestone-one.html">Milestone 1</a>
+        <p class="sidebar-section">Drop-in</p>
+        <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
+        <a href="/docs/ralphex-compat.html">Ralphex compatibility</a>
+        <a href="/docs/cli.html">CLI reference</a>
+        <a href="/docs/providers.html">Providers</a>
+        <a href="/docs/notifications.html">Notifications</a>
+        <a href="/docs/docker.html">Docker isolation</a>
+        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      </aside>
+
+    <article class="article">
+
+      <div class="eyebrow"><span class="dot"></span> drop-in</div>
+      <h1>Ralphex compatibility</h1>
+      <p>This is the authoritative compatibility table between ralphex flags and RalphTerm. Status legend:</p>
+      <ul>
+        <li><strong>Supported</strong> — same behavior as ralphex.</li>
+        <li><strong>Accepted</strong> — parsed without error, but may warn or no-op when the corresponding behavior is not yet wired.</li>
+        <li><strong>Pending</strong> — recognized by the parser, planned for a near-term release.</li>
+      </ul>
+
+      <h2>Flag table</h2>
+      <table>
+        <thead>
+          <tr><th>Ralphex flag</th><th>RalphTerm equivalent</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>-m</code>, <code>--max-iterations</code></td><td><code>--max-iterations</code></td><td>Supported</td><td>Implementation+review iteration cap per task.</td></tr>
+          <tr><td><code>--max-external-iterations</code></td><td><code>--max-external-iterations</code></td><td>Supported</td><td>External-review loop cap.</td></tr>
+          <tr><td><code>--review-patience</code></td><td><code>--review-patience</code></td><td>Supported</td><td>Number of consecutive clean reviews required before acceptance.</td></tr>
+          <tr><td><code>--task-model</code></td><td><code>--task-model</code></td><td>Supported</td><td>Model identifier passed to the implementation CLI.</td></tr>
+          <tr><td><code>--review-model</code></td><td><code>--review-model</code></td><td>Supported</td><td>Model identifier passed to the review CLI.</td></tr>
+          <tr><td><code>--claude-command</code></td><td><code>--claude-command</code></td><td>Supported</td><td>Drives a PTY command. Never <code>claude -p</code> or <code>--print</code>.</td></tr>
+          <tr><td><code>--claude-args</code></td><td><code>--claude-args</code></td><td>Supported</td><td>Joined with <code>--claude-command</code>.</td></tr>
+          <tr><td><code>--external-review-tool</code></td><td><code>--external-review-tool=codex|custom|none</code></td><td>Supported</td><td><code>custom</code> requires <code>--custom-review-script</code>; <code>none</code> disables review.</td></tr>
+          <tr><td><code>--custom-review-script</code></td><td><code>--custom-review-script</code></td><td>Supported</td><td>Maps directly to RalphTerm's independent review command.</td></tr>
+          <tr><td><code>-r</code>, <code>--review</code></td><td><code>--review</code></td><td>Supported</td><td>Review-only mode: skip task execution, run the full review pipeline.</td></tr>
+          <tr><td><code>-e</code>, <code>--external-only</code></td><td><code>--external-only</code></td><td>Supported</td><td>Run external review and fixer loop only.</td></tr>
+          <tr><td><code>-c</code>, <code>--codex-only</code></td><td><code>--codex-only</code></td><td>Supported</td><td>Alias for the codex external-only loop.</td></tr>
+          <tr><td><code>-t</code>, <code>--tasks-only</code></td><td><code>--tasks-only</code></td><td>Supported</td><td>Skip review intentionally. Default full mode is review-gated.</td></tr>
+          <tr><td><code>-b</code>, <code>--base-ref</code></td><td><code>--base-ref</code></td><td>Supported</td><td>Diff baseline for reviewer context and final review.</td></tr>
+          <tr><td><code>--wait</code></td><td><code>--wait</code></td><td>Supported</td><td>Block until the daemon/run finishes.</td></tr>
+          <tr><td><code>--session-timeout</code></td><td><code>--session-timeout</code></td><td>Supported</td><td>Per-session wall-clock timeout.</td></tr>
+          <tr><td><code>--idle-timeout</code></td><td><code>--idle-timeout</code></td><td>Supported</td><td>Idle PTY timeout before the session is cancelled.</td></tr>
+          <tr><td><code>--skip-finalize</code></td><td><code>--skip-finalize</code></td><td>Accepted</td><td>Suppresses the final-review pass; commits still gated by per-task review.</td></tr>
+          <tr><td><code>--preserve-anthropic-api-key</code></td><td><code>--preserve-anthropic-api-key</code></td><td>Supported</td><td>Passes <code>ANTHROPIC_API_KEY</code> through to the agent process.</td></tr>
+          <tr><td><code>--worktree</code></td><td><code>--worktree</code></td><td>Supported</td><td>Creates an isolated git worktree for the run.</td></tr>
+          <tr><td><code>--branch</code></td><td><code>--branch</code></td><td>Supported</td><td>Worktree branch override; defaults to plan filename slug.</td></tr>
+          <tr><td><code>--plan</code></td><td>positional <code>&lt;plan&gt;</code></td><td>Supported</td><td>RalphTerm accepts a positional plan path; <code>--plan</code> still parses.</td></tr>
+          <tr><td><code>-d</code>, <code>--debug</code></td><td><code>--debug</code></td><td>Supported</td><td>Verbose logging.</td></tr>
+          <tr><td><code>--no-color</code></td><td><code>--no-color</code></td><td>Supported</td><td>Disable ANSI color in RalphTerm-owned output.</td></tr>
+          <tr><td><code>-v</code>, <code>--version</code></td><td><code>--version</code></td><td>Supported</td><td>Prints the RalphTerm version.</td></tr>
+          <tr><td><code>-s</code>, <code>--serve</code></td><td><code>--serve</code></td><td>Supported</td><td>Starts the local daemon with progress/dashboard endpoints.</td></tr>
+          <tr><td><code>-p</code>, <code>--port</code></td><td><code>--port</code></td><td>Supported</td><td>Daemon port; default <code>7878</code>.</td></tr>
+          <tr><td><code>--host</code></td><td><code>--host</code></td><td>Supported</td><td>Daemon bind host; default <code>127.0.0.1</code>.</td></tr>
+          <tr><td><code>-w</code>, <code>--watch</code></td><td><code>--watch</code></td><td>Supported</td><td>Watch a plans directory and process new plans automatically.</td></tr>
+          <tr><td><code>--init</code></td><td><code>--init</code></td><td>Pending</td><td>Scaffolds a <code>.ralphex/</code> directory with default config.</td></tr>
+          <tr><td><code>--reset</code></td><td><code>--reset</code></td><td>Pending</td><td>Reset local <code>.ralphex/</code> state to defaults.</td></tr>
+          <tr><td><code>--dump-defaults</code></td><td><code>--dump-defaults</code></td><td>Accepted</td><td>Prints the default config to stdout.</td></tr>
+          <tr><td><code>--config-dir</code> / <code>RALPHEX_CONFIG_DIR</code></td><td><code>--config-dir</code> / <code>RALPHEX_CONFIG_DIR</code></td><td>Supported</td><td>Overrides global config dir (default <code>~/.config/ralphex/</code>).</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Modes</h2>
+      <ul>
+        <li><strong>Full mode</strong> (no <code>--tasks-only</code>): task execution plus review gate. Fails before agent execution if no reviewer is configured.</li>
+        <li><strong>Tasks-only</strong> (<code>--tasks-only</code>): execution only, no review.</li>
+        <li><strong>Review-only</strong> (<code>--review</code>): skip task execution, run review pipeline.</li>
+        <li><strong>External-only</strong> (<code>--external-only</code> / <code>--codex-only</code>): run external review/fixer loop only.</li>
+      </ul>
+
+      <h2>Signals</h2>
+      <p>The signal detector recognizes the ralphex signals and RalphTerm's native aliases:</p>
+      <ul>
+        <li><code>&lt;&lt;&lt;RALPHEX:ALL_TASKS_DONE&gt;&gt;&gt;</code></li>
+        <li><code>&lt;&lt;&lt;RALPHEX:TASK_FAILED&gt;&gt;&gt;</code></li>
+        <li><code>&lt;&lt;&lt;RALPHEX:REVIEW_DONE&gt;&gt;&gt;</code></li>
+        <li><code>&lt;&lt;&lt;RALPHEX:CODEX_REVIEW_DONE&gt;&gt;&gt;</code></li>
+        <li><code>COMPLETED</code>, <code>FAILED</code>, <code>REVIEW_PASS</code>, <code>REVIEW_FAIL</code> (RalphTerm-native aliases).</li>
+      </ul>
+      <p><code>REVIEW_DONE</code> means this iteration found zero actionable issues, not that all fixes are accepted.</p>
+
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span>RalphTerm by RayforceDB</span>
+      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
+    </div>
+  </footer>
+
+</body>
+</html>
