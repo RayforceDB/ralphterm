@@ -20,6 +20,8 @@ pub mod plan;
 #[doc(hidden)]
 pub mod preflight;
 #[doc(hidden)]
+pub mod progress_log;
+#[doc(hidden)]
 pub mod prompts;
 #[doc(hidden)]
 pub mod pty_agent;
