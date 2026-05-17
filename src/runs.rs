@@ -381,7 +381,11 @@ impl RunStore {
         let next_phase = match event.event_type.as_str() {
             "validation_started" => Some(RunPhase::Validating),
             "review_started" => Some(RunPhase::Reviewing),
-            "review_passed" | "review_failed" | "agent_retry_started" => Some(RunPhase::Executing),
+            "task_started"
+            | "validation_passed"
+            | "review_passed"
+            | "review_failed"
+            | "agent_retry_started" => Some(RunPhase::Executing),
             _ => None,
         };
         if let Some(next_phase) = next_phase {

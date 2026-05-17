@@ -2822,6 +2822,111 @@ fn run_api_reports_validating_phase_while_validation_command_is_running() {
 }
 
 #[test]
+fn run_api_returns_to_executing_phase_after_validation_before_next_no_review_task() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let agent_path = repo.path.join("slow-second-task-agent.sh");
+    std::fs::write(
+        &agent_path,
+        "#!/usr/bin/env sh\nset -eu\nprompt=$(cat)\nprintf '%s\\n' \"$prompt\" > slow-second-task-agent-last-prompt.txt\nif printf '%s\\n' \"$prompt\" | grep -q 'Write first.txt'; then\n  printf 'created first by phase test\\n' > first.txt\nfi\nif printf '%s\\n' \"$prompt\" | grep -q 'Write second.txt'; then\n  printf 'started second task\\n' > second-task-started.txt\n  sleep 3\n  printf 'created second by phase test\\n' > second.txt\nfi\nprintf 'COMPLETED\\n'\n",
+    )
+    .expect("write slow second task agent script");
+    let mut permissions = std::fs::metadata(&agent_path)
+        .expect("slow second task agent script metadata")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&agent_path, permissions)
+        .expect("make slow second task agent script executable");
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+
+### Task 2: Create second file
+- [ ] Write second.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": agent_path.to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+    assert_eq!(created_json["status"], "running");
+
+    wait_for_file(repo.path.join("second-task-started.txt"));
+    let events = wait_for_json(
+        port,
+        &format!("GET /v1/runs/{id}/events HTTP/1.1"),
+        |json| {
+            let events = json.as_array().expect("event list");
+            let task_one_validation_passed = events.iter().any(|event| {
+                event["type"] == "validation_passed"
+                    && event["task_number"] == 1
+                    && event["attempt"] == 1
+            });
+            let task_two_started = events
+                .iter()
+                .any(|event| event["type"] == "task_started" && event["task_number"] == 2);
+            (task_one_validation_passed && task_two_started).then(|| json.clone())
+        },
+    );
+    assert!(
+        events
+            .as_array()
+            .expect("event list")
+            .iter()
+            .any(|event| { event["type"] == "review_skipped" && event["task_number"] == 1 }),
+        "no-review run should skip review after validation: {events}"
+    );
+
+    let viewed = request_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), None);
+    assert_eq!(viewed.status, 200, "{}", viewed.body);
+    let executing: serde_json::Value = serde_json::from_str(&viewed.body).expect("run json");
+    assert_eq!(executing["status"], "running", "{executing}");
+    assert_eq!(executing["phase"], "executing", "{executing}");
+
+    let completed = wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+    assert_eq!(completed["phase"], "complete");
+}
+
+#[test]
 fn run_api_exposes_reviewing_phase_while_review_command_runs() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
