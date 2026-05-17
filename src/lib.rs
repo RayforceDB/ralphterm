@@ -14,6 +14,8 @@ pub mod docker;
 #[doc(hidden)]
 pub mod notify;
 #[doc(hidden)]
+pub mod output_format;
+#[doc(hidden)]
 pub mod plan;
 #[doc(hidden)]
 pub mod preflight;
