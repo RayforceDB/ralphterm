@@ -1,13 +1,13 @@
 {
   "name": "RalphTerm",
   "short_name": "RalphTerm",
-  "description": "Terminal-native orchestration for AI coding agents using real PTYs.",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#050507",
-  "theme_color": "#050507",
+  "description": "Drop-in replacement for ralphex with PTY-native execution.",
   "icons": [
-    {"src": "/assets/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"},
-    {"src": "/assets/social-preview.png", "sizes": "1200x630", "type": "image/png"}
-  ]
+    { "src": "/assets/favicon.svg", "type": "image/svg+xml", "sizes": "any" },
+    { "src": "/assets/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+  ],
+  "theme_color": "#fafafa",
+  "background_color": "#fafafa",
+  "display": "browser",
+  "start_url": "/"
 }
