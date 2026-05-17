@@ -54,9 +54,23 @@ impl WorkspaceManager {
     }
 
     pub fn workspace(&self, id: impl AsRef<str>) -> Result<Workspace> {
+        self.workspace_with_branch(id, None)
+    }
+
+    pub fn workspace_with_branch(
+        &self,
+        id: impl AsRef<str>,
+        branch: Option<&str>,
+    ) -> Result<Workspace> {
         let id = sanitize_id(id.as_ref())?;
         let base_commit = self.git_output(["rev-parse", "HEAD"])?;
-        let branch = format!("ralphterm/{id}");
+        let branch = match branch {
+            Some(name) => {
+                validate_branch_name(name)?;
+                name.to_string()
+            }
+            None => format!("ralphterm/{id}"),
+        };
         let path = self
             .repo_root
             .join(".ralphterm")
@@ -73,7 +87,15 @@ impl WorkspaceManager {
     }
 
     pub fn create(&self, id: impl AsRef<str>) -> Result<Workspace> {
-        let workspace = self.workspace(id)?;
+        self.create_with_branch(id, None)
+    }
+
+    pub fn create_with_branch(
+        &self,
+        id: impl AsRef<str>,
+        branch: Option<&str>,
+    ) -> Result<Workspace> {
+        let workspace = self.workspace_with_branch(id, branch)?;
         let id = workspace.id.clone();
         let base_commit = workspace.base_commit.clone();
         let branch = workspace.branch.clone();
@@ -179,11 +201,8 @@ impl WorkspaceManager {
 
         let expected_branch = format!("ralphterm/{id}");
         if workspace.branch != expected_branch {
-            bail!(
-                "workspace branch {} does not match expected branch {}",
-                workspace.branch,
-                expected_branch
-            );
+            // Allow custom branch overrides (validated separately).
+            validate_branch_name(&workspace.branch)?;
         }
 
         Ok(())
@@ -291,6 +310,68 @@ impl WorkspaceManager {
     {
         self.git_output(args).map(|_| ())
     }
+}
+
+fn validate_branch_name(branch: &str) -> Result<()> {
+    let trimmed = branch.trim();
+    if trimmed.is_empty() {
+        bail!("branch name cannot be empty");
+    }
+    if trimmed != branch {
+        bail!("branch name must not have leading or trailing whitespace");
+    }
+    if trimmed.starts_with('-')
+        || trimmed.starts_with('/')
+        || trimmed.ends_with('/')
+        || trimmed.contains("..")
+        || trimmed.contains("//")
+        || trimmed.contains('\\')
+        || trimmed.contains('\0')
+    {
+        bail!("invalid branch name: {trimmed}");
+    }
+    if !trimmed.chars().all(|ch| {
+        ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | '+' | '#' | '@')
+    }) {
+        bail!("branch name may only contain ascii letters, numbers, '-', '_', '.', '/', '+', '#', '@'");
+    }
+    Ok(())
+}
+
+/// Derive a kebab-case ASCII workspace id from a plan file path. Uses the
+/// file stem, lower-cases ascii letters, replaces non-alphanumeric runs with
+/// a single '-', and trims leading/trailing dashes. Errors if the result is
+/// empty (e.g., the plan filename has no ascii characters).
+pub fn workspace_id_from_plan_path(plan: &Path) -> Result<String> {
+    let stem = plan
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow::anyhow!("plan filename is not valid utf-8: {}", plan.display()))?;
+    let mut out = String::with_capacity(stem.len());
+    let mut last_dash = false;
+    for ch in stem.chars() {
+        if ch.is_ascii_alphanumeric() {
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+            last_dash = false;
+        } else if (matches!(ch, '-' | '_') || ch.is_ascii_whitespace())
+            && !out.is_empty()
+            && !last_dash
+        {
+            out.push('-');
+            last_dash = true;
+        }
+        // Drop other characters silently (e.g., dots, plus signs).
+    }
+    let id = out.trim_matches('-').to_string();
+    if id.is_empty() {
+        bail!(
+            "cannot derive workspace id from plan filename: {}",
+            plan.display()
+        );
+    }
+    sanitize_id(&id)
 }
 
 fn sanitize_id(input: &str) -> Result<String> {

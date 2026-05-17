@@ -158,6 +158,17 @@ struct Cli {
         help = "ralphex-compatible: directory containing the global config file"
     )]
     compat_config_dir: Option<PathBuf>,
+    #[arg(
+        long = "worktree",
+        help = "ralphex-compatible: run the plan inside an isolated git worktree (workspace id derived from plan filename)"
+    )]
+    compat_worktree: bool,
+    #[arg(
+        long = "branch",
+        requires = "compat_worktree",
+        help = "ralphex-compatible: override the worktree branch name (requires --worktree)"
+    )]
+    compat_branch: Option<String>,
     #[arg(value_name = "plan-file")]
     compat_plan_file: Option<PathBuf>,
 }
@@ -466,12 +477,22 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
 }
 
 fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
-    let Some(plan) = cli.compat_plan_file else {
+    let Some(plan) = cli.compat_plan_file.clone() else {
         bail!("plan file required for ralphex-compatible execution");
     };
 
     let project_root = std::env::current_dir().context("read current directory")?;
     let config = crate::config::load(cli.compat_config_dir.as_deref(), &project_root)?;
+
+    let worktree_info = if cli.compat_worktree {
+        Some(prepare_compat_worktree(
+            &project_root,
+            &plan,
+            cli.compat_branch.as_deref(),
+        )?)
+    } else {
+        None
+    };
 
     // Helper: an arg counts as "CLI-provided" iff value_source is CommandLine.
     let cli_provided = |id: &str| -> bool {
@@ -670,8 +691,17 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         config.review_patience.unwrap_or(cli.compat_review_patience)
     };
 
+    let final_plan_path = worktree_info
+        .as_ref()
+        .map(|info| info.plan_in_worktree.clone())
+        .unwrap_or(plan);
+
+    let worktree_path_for_print = worktree_info
+        .as_ref()
+        .map(|info| info.worktree_path.clone());
+
     run_plan_cli(RunCliOptions {
-        plan,
+        plan: final_plan_path,
         agent: None,
         agent_command,
         review_agent: None,
@@ -685,6 +715,64 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         review_patience: Some(review_patience_value),
         mode,
         max_external_iterations: max_external_iterations_value,
+    })?;
+
+    if let Some(path) = worktree_path_for_print {
+        println!("Worktree: {}", path.display());
+    }
+    Ok(())
+}
+
+struct CompatWorktreeInfo {
+    worktree_path: PathBuf,
+    plan_in_worktree: PathBuf,
+}
+
+fn prepare_compat_worktree(
+    project_root: &FsPath,
+    plan: &FsPath,
+    branch: Option<&str>,
+) -> anyhow::Result<CompatWorktreeInfo> {
+    let manager = WorkspaceManager::discover(project_root)?;
+    let id = crate::workspace::workspace_id_from_plan_path(plan)?;
+    let candidate = manager.workspace_with_branch(&id, branch)?;
+    let workspace = if candidate.path.exists() {
+        manager.validate_existing_workspace(&candidate)?;
+        candidate
+    } else {
+        manager.create_with_branch(&id, branch)?
+    };
+
+    let plan_resolved = if plan.is_absolute() {
+        plan.to_path_buf()
+    } else {
+        let cwd_relative = project_root
+            .strip_prefix(manager.repo_root())
+            .with_context(|| {
+                format!(
+                    "current directory {} is not inside repository {}",
+                    project_root.display(),
+                    manager.repo_root().display()
+                )
+            })?;
+        validate_workspace_plan_path(cwd_relative, plan)?;
+        workspace.path.join(cwd_relative).join(plan)
+    };
+
+    let workspace_cwd = if project_root == manager.repo_root() {
+        workspace.path.clone()
+    } else {
+        let cwd_relative = project_root
+            .strip_prefix(manager.repo_root())
+            .unwrap_or(FsPath::new(""));
+        workspace.path.join(cwd_relative)
+    };
+    std::env::set_current_dir(&workspace_cwd)
+        .with_context(|| format!("switch to workspace directory {}", workspace_cwd.display()))?;
+
+    Ok(CompatWorktreeInfo {
+        worktree_path: workspace.path,
+        plan_in_worktree: plan_resolved,
     })
 }
 

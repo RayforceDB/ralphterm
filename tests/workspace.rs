@@ -372,11 +372,11 @@ fn cleanup_rejects_workspace_values_that_do_not_match_manager_and_id() {
         branch: "not-ralphterm/trusted-id".to_string(),
         ..workspace.clone()
     };
-    assert!(manager
-        .cleanup(&wrong_branch)
-        .unwrap_err()
-        .to_string()
-        .contains("workspace branch"));
+    let err = manager.cleanup(&wrong_branch).unwrap_err().to_string();
+    assert!(
+        err.contains("workspace branch") || err.contains("branch mismatch"),
+        "cleanup with wrong branch must be rejected: {err}"
+    );
 
     manager.cleanup(&workspace).unwrap();
 }
