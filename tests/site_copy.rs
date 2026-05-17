@@ -921,6 +921,7 @@ fn landing_uses_spec_sheet_eyebrows() {
         "— drop in",
         "— what it replaces",
         "— invoke",
+        "— install",
     ] {
         assert!(
             html.contains(marker),
