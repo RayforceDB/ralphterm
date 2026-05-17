@@ -15,11 +15,21 @@ use anyhow::{bail, Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde_json::json;
 
-use crate::plan::{parse_plan, Task};
+use crate::plan::Task;
 
 pub const DEFAULT_PLAN_AGENT_COMMAND: &str = "claude";
 
+pub(crate) fn count_unchecked_tasks(plan_path: &std::path::Path) -> std::io::Result<usize> {
+    let body = std::fs::read_to_string(plan_path)?;
+    let count = body
+        .lines()
+        .filter(|line| line.trim_start().starts_with("- [ ]"))
+        .count();
+    Ok(count)
+}
+
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct NoCommitBaseline {
     paths: BTreeSet<String>,
     tracked_file_contents: BTreeMap<String, Vec<u8>>,
@@ -27,6 +37,7 @@ struct NoCommitBaseline {
 }
 
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct RetryCleanupSnapshot {
     dirs: BTreeMap<PathBuf, fs::Permissions>,
     files: BTreeMap<PathBuf, RetryCleanupFileSnapshot>,
@@ -34,18 +45,21 @@ struct RetryCleanupSnapshot {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct RetryCleanupFileSnapshot {
     contents: Vec<u8>,
     permissions: fs::Permissions,
 }
 
 impl RetryCleanupSnapshot {
+    #[allow(dead_code)]
     fn capture(root: &Path) -> Result<Self> {
         let mut snapshot = Self::default();
         collect_retry_cleanup_snapshot(root, root, &mut snapshot)?;
         Ok(snapshot)
     }
 
+    #[allow(dead_code)]
     fn restore(&self, root: &Path) -> Result<()> {
         self.restore_existing_baseline_dir_permissions_shallow_to_deep(root)?;
 
@@ -124,6 +138,7 @@ impl RetryCleanupSnapshot {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn path_matches_baseline_kind(&self, root: &Path, relative_path: &Path) -> Result<bool> {
         let is_baseline_dir = self.dirs.contains_key(relative_path);
         let is_baseline_file = self.files.contains_key(relative_path);
@@ -141,6 +156,7 @@ impl RetryCleanupSnapshot {
             || (is_baseline_symlink && file_type.is_symlink()))
     }
 
+    #[allow(dead_code)]
     fn restore_existing_baseline_dir_permissions_shallow_to_deep(&self, root: &Path) -> Result<()> {
         let mut dirs: Vec<_> = self.dirs.iter().collect();
         dirs.sort_by_key(|(relative_dir, _)| relative_dir.components().count());
@@ -176,6 +192,7 @@ pub struct PlanRunEvent {
 }
 
 impl PlanRunEvent {
+    #[allow(dead_code)]
     fn for_task(event_type: &'static str, task: &Task, attempt: Option<usize>) -> Self {
         Self {
             event_type,
@@ -187,11 +204,13 @@ impl PlanRunEvent {
         }
     }
 
+    #[allow(dead_code)]
     fn with_artifact(mut self, artifact_path: impl Into<String>) -> Self {
         self.artifact_path = Some(artifact_path.into());
         self
     }
 
+    #[allow(dead_code)]
     fn with_message(mut self, message: impl Into<String>) -> Self {
         self.message = Some(message.into());
         self
@@ -244,681 +263,139 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
 }
 
 fn run_plan_default(options: RunOptions) -> Result<String> {
-    let input = fs::read_to_string(&options.plan_path)
-        .with_context(|| format!("read plan {}", options.plan_path.display()))?;
-    let mut plan_text = input;
-    let plan = parse_plan(&plan_text).context("parse plan")?;
-    let pending = plan.pending_tasks();
-    let plan_name = options
-        .plan_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("plan");
+    use crate::output_format as fmt;
+    use crate::preflight::Preflight;
+    use crate::progress_log::ProgressLog;
+    use crate::prompts::{substitute, Prompts};
+    use std::collections::HashMap;
+    use std::time::Instant;
 
-    let review_command = options.review_command.clone();
-    let agent_command = options
-        .agent_command
-        .clone()
-        .unwrap_or_else(|| DEFAULT_PLAN_AGENT_COMMAND.to_string());
-    if options.require_review && review_command.is_none() {
-        bail!("--require-review needs --review-command or --review-agent");
+    let RunOptions {
+        plan_path,
+        agent_command,
+        mode,
+        no_commit,
+        dry_run,
+        agent_timeout,
+        ..
+    } = options;
+
+    let agent_cmd = agent_command.unwrap_or_else(|| DEFAULT_PLAN_AGENT_COMMAND.to_string());
+    let repo_root = std::env::current_dir()?;
+    let plan_path = plan_path.canonicalize()?;
+
+    let max_iterations: usize = std::env::var("RALPHTERM_MAX_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+
+    let preflight = Preflight {
+        repo_root: &repo_root,
+        plan_path: &plan_path,
+        branch_override: None,
+        use_worktree: false,
+        allow_dirty: dry_run,
     }
-    if let Some(review_command) = review_command.as_deref() {
-        if agent_commands_equivalent(&agent_command, review_command)? {
-            bail!("independent review command must differ from agent command");
+    .check()?;
+
+    if preflight.created_branch {
+        fmt::print_branch_creating(&preflight.branch);
+    }
+
+    let mut progress = ProgressLog::open(&repo_root, &preflight.plan_slug)?;
+    let mode_label = fmt::mode_label(
+        matches!(mode, RunMode::TasksOnly),
+        matches!(mode, RunMode::ReviewOnly),
+        matches!(mode, RunMode::ExternalOnly),
+    );
+    fmt::print_run_header(
+        max_iterations,
+        mode_label,
+        &plan_path,
+        &preflight.branch,
+        progress.path(),
+    );
+    progress.write_control(&format!("creating branch: {}", preflight.branch))?;
+    progress.write_control(&format!(
+        "starting ralphex loop (max {max_iterations} iterations) ({mode_label})"
+    ))?;
+    progress.write_control(&format!("plan: {}", plan_path.display()))?;
+    progress.write_control(&format!("branch: {}", preflight.branch))?;
+
+    fmt::print_task_phase_start();
+    progress.write_control("starting task execution phase")?;
+
+    let prompts = Prompts::load(&repo_root, None);
+    let start = Instant::now();
+
+    for iteration in 1..=max_iterations {
+        if count_unchecked_tasks(&plan_path)? == 0 {
+            break;
+        }
+        fmt::print_iteration_header(iteration);
+        progress.write_control(&format!("--- task iteration {iteration} ---"))?;
+
+        let plan_str = plan_path.to_string_lossy().to_string();
+        let progress_path_str = progress.path().to_string_lossy().to_string();
+        let goal = plan_first_h1(&plan_path).unwrap_or_default();
+        let default_branch = preflight.default_branch.clone();
+
+        let mut vars: HashMap<&str, &str> = HashMap::new();
+        vars.insert("PLAN_FILE", &plan_str);
+        vars.insert("PROGRESS_FILE", &progress_path_str);
+        vars.insert("GOAL", &goal);
+        vars.insert("DEFAULT_BRANCH", &default_branch);
+
+        let prompt = substitute(&prompts.task, &vars);
+        let timeout = agent_timeout.unwrap_or_else(agent_timeout_default);
+        let run = run_agent_command_with_timeout(&agent_cmd, &prompt, timeout)?;
+
+        let cleaned = strip_ansi_escapes(&run.transcript);
+        for line in cleaned.lines() {
+            let trimmed = line.trim_end();
+            if trimmed.is_empty() {
+                continue;
+            }
+            println!("{trimmed}");
+            let _ = progress.write_narration(trimmed);
+        }
+
+        if crate::signals::detect_signal(&cleaned) == Some(crate::signals::AgentSignal::Completed) {
+            break;
+        }
+        if run.exit_code != 0 {
+            anyhow::bail!("agent iteration {iteration} exited with {}", run.exit_code);
         }
     }
 
-    let mut output = format!("Executing {plan_name}\n");
-    if pending.is_empty() {
-        if options.dry_run {
-            output.push_str(&format!("Review retries: {}\n", options.max_review_retries));
-        }
-        output.push_str("No pending tasks.\n");
-        if !options.dry_run {
-            write_no_pending_run_summary(plan_name, &plan_slug(&options.plan_path))?;
-            write_run_diff_patch(
-                &plan_slug(&options.plan_path),
-                false,
-                None,
-                &NoCommitBaseline::default(),
-            )?;
-        }
-        return Ok(output);
+    if count_unchecked_tasks(&plan_path)? > 0 {
+        anyhow::bail!("hit max iterations ({max_iterations}) without ALL_TASKS_DONE");
     }
 
-    if options.dry_run {
-        return Ok(describe_dry_run(
-            plan_name,
-            &plan.validation_commands,
-            &pending,
-            review_command.as_deref(),
-            options.max_review_retries,
-        ));
-    }
+    let elapsed = start.elapsed();
+    let (files, additions, deletions) = git_shortstat(&repo_root, &preflight.default_branch)?;
 
-    validate_interactive_agent_command(&agent_command)?;
-    if let Some(review_command) = options.review_command.as_deref() {
-        validate_interactive_agent_command(review_command)?;
-    }
-    let plan_slug = plan_slug(&options.plan_path);
-    remove_stale_run_summary(&plan_slug)?;
-    let run_baseline_revision = if options.no_commit {
-        None
+    let plan_dest = if no_commit {
+        plan_path.clone()
     } else {
-        git_head_revision()
+        move_plan_to_completed(&plan_path)?
     };
-    let run_baseline_paths = if options.no_commit {
-        git_run_baseline().context("snapshot run baseline git status")?
-    } else {
-        NoCommitBaseline::default()
-    };
-    let mut executed_tasks = Vec::new();
-
-    for task in pending {
-        let progress = ProgressPaths::new(&plan_slug, task.number)?;
-        let last_task_end = last_task_end_status(&progress.log_path, task.number)?;
-        let resume_context = if last_task_end.failed {
-            append_progress(
-                &progress.log_path,
-                &format!("resume number={} previous_result=failed", task.number),
-            )?;
-            emit_plan_event(
-                &options,
-                PlanRunEvent::for_task("resume_started", task, None)
-                    .with_message("previous task attempt failed"),
-            )?;
-            let previous_attempt = progress.attempt(1);
-            let transcript_display = last_task_end
-                .transcript_display
-                .filter(|path| path != &progress.transcript_display)
-                .unwrap_or(previous_attempt.transcript_display);
-            Some(ResumeContext {
-                transcript_display,
-                validation_output_display: last_task_end
-                    .validation_output_available
-                    .then(|| progress.validation_output_display.clone()),
-                review_transcript_display: last_task_end.review_transcript_display,
-            })
-        } else {
-            None
-        };
-        append_progress(
-            &progress.log_path,
-            &format!("task_start number={} title={}", task.number, task.title),
-        )?;
-        emit_plan_event(&options, PlanRunEvent::for_task("task_started", task, None))?;
-        let baseline_paths = if options.no_commit {
-            BTreeSet::new()
-        } else {
-            git_status_paths().context("snapshot git status before task")?
-        };
-        let commit_failure_worktree_snapshot = if options.no_commit {
-            None
-        } else {
-            Some(
-                RetryCleanupSnapshot::capture(Path::new("."))
-                    .context("snapshot task baseline before commit rollback")?,
-            )
-        };
-        let commit_failure_index_snapshot = if options.no_commit {
-            None
-        } else {
-            Some(git_index_snapshot().context("snapshot git index before task starts")?)
-        };
-        let review_retry_cleanup_baseline =
-            if options.review_command.is_some() && options.max_review_retries > 0 {
-                Some(
-                    RetryCleanupSnapshot::capture(Path::new("."))
-                        .context("snapshot task baseline before review retryable implementation")?,
-                )
-            } else {
-                None
-            };
-        output.push_str(&format!("Task {}: {}\n", task.number, task.title));
-        let mut review_feedback = None;
-        let mut attempt = 1;
-        let mut completed_review_attempts = 0;
-        // Track consecutive identical review failure categories to support
-        // --review-patience stalemate detection.
-        let mut last_review_failure_category: Option<String> = None;
-        let mut consecutive_same_category: usize = 0;
-        let final_transcript_display: String;
-        let final_review_transcript_display: String;
-        let (_transcript, _validation_output) = loop {
-            let attempt_progress = progress.attempt(attempt);
-            if attempt > 1 {
-                append_progress(
-                    &progress.log_path,
-                    &format!("agent_retry attempt={attempt} reason=review_failed"),
-                )?;
-            }
-            let prompt = build_task_prompt(
-                plan_name,
-                task,
-                &plan.validation_commands,
-                review_feedback.as_deref(),
-                resume_context.as_ref(),
-            );
-            let timeout = options.agent_timeout.unwrap_or_else(agent_timeout);
-            check_for_cancellation(&options)?;
-            let agent_run = match run_agent_command_with_timeout(&agent_command, &prompt, timeout)
-                .with_context(|| format!("run agent for task {}", task.number))
-            {
-                Ok(agent_run) => agent_run,
-                Err(err) => {
-                    append_progress(
-                        &progress.log_path,
-                        &format!("task_end number={} result=failed", task.number),
-                    )?;
-                    let detail = format!("{err:#}");
-                    emit_task_failed_event(
-                        &options,
-                        task,
-                        attempt,
-                        format!("agent execution failed: {detail}"),
-                    )?;
-                    let summary_result = write_failed_run_summary(
-                        plan_name,
-                        &plan_slug,
-                        &executed_tasks,
-                        task,
-                        attempt,
-                        completed_review_attempts,
-                        "agent execution",
-                        &detail,
-                        &progress,
-                        Some(&attempt_progress),
-                        false,
-                        false,
-                    );
-                    return Err(failed_run_error(err, summary_result));
-                }
-            };
-            let transcript = agent_run.transcript;
-            fs::write(&attempt_progress.transcript_path, &transcript).with_context(|| {
-                format!(
-                    "write transcript {}",
-                    attempt_progress.transcript_path.display()
-                )
-            })?;
-            if attempt == 1 {
-                fs::write(&progress.transcript_path, &transcript).with_context(|| {
-                    format!("write transcript {}", progress.transcript_path.display())
-                })?;
-            }
-            let current_transcript_display = if attempt == 1 {
-                progress.transcript_display.clone()
-            } else {
-                attempt_progress.transcript_display.clone()
-            };
-            let signal = completion_signal(&transcript, &prompt);
-            append_progress(
-                &progress.log_path,
-                &format!(
-                    "signal={} transcript path={}",
-                    signal.as_str(),
-                    current_transcript_display
-                ),
-            )?;
-            output.push_str(&transcript);
-            if !transcript.ends_with('\n') {
-                output.push('\n');
-            }
-            if agent_run.timed_out {
-                append_progress(
-                    &progress.log_path,
-                    &format!("task_end number={} result=failed", task.number),
-                )?;
-                let detail = format!("agent command timed out after {timeout:?}\n{transcript}");
-                emit_task_failed_event(&options, task, attempt, detail.clone())?;
-                let summary_result = write_failed_run_summary(
-                    plan_name,
-                    &plan_slug,
-                    &executed_tasks,
-                    task,
-                    attempt,
-                    completed_review_attempts,
-                    "agent execution",
-                    &detail,
-                    &progress,
-                    Some(&attempt_progress),
-                    false,
-                    false,
-                );
-                let err = anyhow::anyhow!(
-                    "agent command timed out after {:?} for task {}\n{}",
-                    timeout,
-                    task.number,
-                    transcript
-                );
-                return Err(failed_run_error(err, summary_result));
-            }
-            if agent_run.exit_code != 0 {
-                append_progress(
-                    &progress.log_path,
-                    &format!("task_end number={} result=failed", task.number),
-                )?;
-                let detail = format!("agent command exited with {}", agent_run.exit_code);
-                emit_task_failed_event(&options, task, attempt, detail.clone())?;
-                let summary_result = write_failed_run_summary(
-                    plan_name,
-                    &plan_slug,
-                    &executed_tasks,
-                    task,
-                    attempt,
-                    completed_review_attempts,
-                    "agent execution",
-                    &detail,
-                    &progress,
-                    Some(&attempt_progress),
-                    false,
-                    false,
-                );
-                let err = anyhow::anyhow!(
-                    "agent command exited with {} for task {}",
-                    agent_run.exit_code,
-                    task.number
-                );
-                return Err(failed_run_error(err, summary_result));
-            }
-            if signal != CompletionSignal::Completed {
-                append_progress(
-                    &progress.log_path,
-                    &format!("task_end number={} result=failed", task.number),
-                )?;
-                let detail = format!(
-                    "missing required COMPLETED signal from agent (detected signal={})",
-                    signal.as_str()
-                );
-                emit_task_failed_event(&options, task, attempt, detail.clone())?;
-                let summary_result = write_failed_run_summary(
-                    plan_name,
-                    &plan_slug,
-                    &executed_tasks,
-                    task,
-                    attempt,
-                    completed_review_attempts,
-                    "agent completion",
-                    &detail,
-                    &progress,
-                    Some(&attempt_progress),
-                    false,
-                    false,
-                );
-                let err = anyhow::anyhow!(
-                    "agent for task {} did not emit required COMPLETED signal (detected signal={})",
-                    task.number,
-                    signal.as_str()
-                );
-                return Err(failed_run_error(err, summary_result));
-            }
-            emit_plan_event(
-                &options,
-                PlanRunEvent::for_task("validation_started", task, Some(attempt)),
-            )?;
-            let validation_output = match run_validation_commands(
-                &plan.validation_commands,
-                &progress.validation_output_path,
-            ) {
-                Ok(validation_output) => {
-                    output.push_str(&validation_output);
-                    validation_output
-                }
-                Err(err) => {
-                    append_progress(&progress.log_path, "validation result=failed")?;
-                    let validation_error = err.to_string();
-                    emit_plan_event(
-                        &options,
-                        PlanRunEvent::for_task("validation_failed", task, Some(attempt))
-                            .with_artifact(progress.validation_output_display.clone())
-                            .with_message(validation_error.clone()),
-                    )?;
-                    append_progress(
-                        &progress.log_path,
-                        &format!("task_end number={} result=failed", task.number),
-                    )?;
-                    emit_plan_event(
-                        &options,
-                        PlanRunEvent::for_task("task_failed", task, Some(attempt))
-                            .with_message(format!("validation failed: {validation_error}")),
-                    )?;
-                    let summary_result = write_failed_run_summary(
-                        plan_name,
-                        &plan_slug,
-                        &executed_tasks,
-                        task,
-                        attempt,
-                        completed_review_attempts,
-                        "validation",
-                        &validation_error,
-                        &progress,
-                        Some(&attempt_progress),
-                        true,
-                        false,
-                    )
-                    .and_then(|()| {
-                        if options.no_commit {
-                            write_run_diff_patch(&plan_slug, true, None, &run_baseline_paths)
-                        } else {
-                            Ok(())
-                        }
-                    });
-                    return Err(failed_run_error(err, summary_result));
-                }
-            };
-            append_progress(&progress.log_path, "validation result=passed")?;
-            emit_plan_event(
-                &options,
-                PlanRunEvent::for_task("validation_passed", task, Some(attempt))
-                    .with_artifact(progress.validation_output_display.clone()),
-            )?;
-            if let Some(review_command) = options.review_command.as_deref() {
-                emit_plan_event(
-                    &options,
-                    PlanRunEvent::for_task("review_started", task, Some(attempt)),
-                )?;
-                let review_result = run_review_command(
-                    review_command,
-                    plan_name,
-                    task,
-                    &transcript,
-                    &validation_output,
-                    timeout,
-                    &progress,
-                    &attempt_progress,
-                );
-                completed_review_attempts += 1;
-                match review_result {
-                    Ok(review_output) => {
-                        output.push_str(&review_output);
-                        append_progress(&progress.log_path, "review result=passed")?;
-                        let passed_review_transcript_display = if attempt == 1 {
-                            progress.review_transcript_display.clone()
-                        } else {
-                            attempt_progress.review_transcript_display.clone()
-                        };
-                        emit_plan_event(
-                            &options,
-                            PlanRunEvent::for_task("review_passed", task, Some(attempt))
-                                .with_artifact(passed_review_transcript_display.clone()),
-                        )?;
-                        final_transcript_display = current_transcript_display;
-                        final_review_transcript_display = passed_review_transcript_display;
-                        break (transcript, validation_output);
-                    }
-                    Err(err) => {
-                        append_progress(&progress.log_path, "review result=failed")?;
-                        let feedback = err.to_string();
-                        let mut review_failed_event =
-                            PlanRunEvent::for_task("review_failed", task, Some(attempt))
-                                .with_message(feedback.clone());
-                        if err.transcript_written() {
-                            review_failed_event = review_failed_event
-                                .with_artifact(attempt_progress.review_transcript_display.clone());
-                        }
-                        emit_plan_event(&options, review_failed_event)?;
-                        if err.explicit_fail() {
-                            let category = review_failure_category(&feedback);
-                            if last_review_failure_category.as_deref() == Some(&category) {
-                                consecutive_same_category += 1;
-                            } else {
-                                consecutive_same_category = 1;
-                                last_review_failure_category = Some(category);
-                            }
-                            if let Some(patience) = options.review_patience {
-                                if patience > 0 && consecutive_same_category >= patience {
-                                    append_progress(
-                                        &progress.log_path,
-                                        &format!("task_end number={} result=failed", task.number),
-                                    )?;
-                                    let stalemate_message = format!(
-                                        "review stalemate detected after {consecutive_same_category} consecutive identical failure(s) for task {}",
-                                        task.number
-                                    );
-                                    emit_plan_event(
-                                        &options,
-                                        PlanRunEvent::for_task("task_failed", task, Some(attempt))
-                                            .with_message(stalemate_message.clone()),
-                                    )?;
-                                    let summary_result = write_failed_run_summary(
-                                        plan_name,
-                                        &plan_slug,
-                                        &executed_tasks,
-                                        task,
-                                        attempt,
-                                        completed_review_attempts,
-                                        "review",
-                                        &stalemate_message,
-                                        &progress,
-                                        Some(&attempt_progress),
-                                        true,
-                                        err.transcript_written(),
-                                    );
-                                    let stalemate_err =
-                                        anyhow::anyhow!("{stalemate_message}\n{feedback}");
-                                    return Err(failed_run_error(stalemate_err, summary_result));
-                                }
-                            }
-                        }
-                        let review_retries_used = attempt - 1;
-                        if err.explicit_fail() && review_retries_used < options.max_review_retries {
-                            output.push_str(&format!(
-                                "Review failed on attempt {attempt}; retrying implementation.\n"
-                            ));
-                            emit_plan_event(
-                                &options,
-                                PlanRunEvent::for_task(
-                                    "agent_retry_started",
-                                    task,
-                                    Some(attempt + 1),
-                                )
-                                .with_message(feedback.clone()),
-                            )?;
-                            if let Some(review_retry_cleanup_baseline) =
-                                &review_retry_cleanup_baseline
-                            {
-                                if let Err(cleanup_err) = review_retry_cleanup_baseline
-                                    .restore(Path::new("."))
-                                    .context(
-                                        "clean up rejected implementation attempt before review retry",
-                                    )
-                                {
-                                    let cleanup_message = format!("{cleanup_err:#}");
-                                    let _ = append_progress(
-                                        &progress.log_path,
-                                        &format!(
-                                            "review_retry_cleanup result=failed reason=review_failed error={cleanup_message}"
-                                        ),
-                                    );
-                                    let _ = append_progress(
-                                        &progress.log_path,
-                                        &format!("task_end number={} result=failed", task.number),
-                                    );
-                                    let summary_result = write_failed_run_summary(
-                                        plan_name,
-                                        &plan_slug,
-                                        &executed_tasks,
-                                        task,
-                                        attempt,
-                                        completed_review_attempts,
-                                        "review retry cleanup",
-                                        &cleanup_message,
-                                        &progress,
-                                        Some(&attempt_progress),
-                                        true,
-                                        err.transcript_written(),
-                                    );
-                                    return Err(failed_run_error(cleanup_err, summary_result));
-                                }
-                            }
-                            append_progress(
-                                &progress.log_path,
-                                "review_retry_cleanup result=passed reason=review_failed",
-                            )?;
-                            review_feedback = Some(feedback);
-                            attempt += 1;
-                            continue;
-                        }
-                        append_progress(
-                            &progress.log_path,
-                            &format!("task_end number={} result=failed", task.number),
-                        )?;
-                        emit_plan_event(
-                            &options,
-                            PlanRunEvent::for_task("task_failed", task, Some(attempt))
-                                .with_message(format!("review failed: {feedback}")),
-                        )?;
-                        let summary_result = write_failed_run_summary(
-                            plan_name,
-                            &plan_slug,
-                            &executed_tasks,
-                            task,
-                            attempt,
-                            completed_review_attempts,
-                            "review",
-                            &err.to_string(),
-                            &progress,
-                            Some(&attempt_progress),
-                            true,
-                            err.transcript_written(),
-                        );
-                        return Err(failed_run_error(err.into(), summary_result));
-                    }
-                }
-            } else {
-                output.push_str("Review: skipped\n");
-                append_progress(&progress.log_path, "review result=skipped")?;
-                emit_plan_event(
-                    &options,
-                    PlanRunEvent::for_task("review_skipped", task, Some(attempt))
-                        .with_message("review not configured"),
-                )?;
-                final_transcript_display = current_transcript_display;
-                final_review_transcript_display = progress.review_transcript_display.clone();
-                break (transcript, validation_output);
-            }
-        };
-        let unchecked_plan_text = plan_text.clone();
-        let index_snapshot = commit_failure_index_snapshot.as_ref();
-        plan_text = crate::plan::mark_task_complete(&plan_text, task.number)
-            .with_context(|| format!("mark task {} complete", task.number))?;
-        fs::write(&options.plan_path, &plan_text)
-            .with_context(|| format!("write plan {}", options.plan_path.display()))?;
-        append_progress(
-            &progress.log_path,
-            &format!("plan_marked_complete number={}", task.number),
-        )?;
-        emit_plan_event(
-            &options,
-            PlanRunEvent::for_task("task_marked_complete", task, None),
-        )?;
-        output.push_str(&format!("Marked task {} complete\n", task.number));
-        let commit = if !options.no_commit {
-            let commit = match commit_task(&task.title, &baseline_paths) {
-                Ok(commit) => commit,
-                Err(err) => {
-                    let err = err.context(format!("commit task {}", task.number));
-                    let reason = format!("{err:#}");
-                    if let Err(restore_err) = fs::write(&options.plan_path, &unchecked_plan_text) {
-                        append_progress(
-                            &progress.log_path,
-                            &format!("plan_restore result=failed reason={restore_err}"),
-                        )?;
-                    }
-                    if let Some(snapshot) = &index_snapshot {
-                        if let Err(restore_err) = restore_git_index_snapshot(snapshot) {
-                            append_progress(
-                                &progress.log_path,
-                                &format!("git_index_restore result=failed reason={restore_err:#}"),
-                            )?;
-                        }
-                    }
-                    if let Some(snapshot) = &commit_failure_worktree_snapshot {
-                        if let Err(restore_err) = snapshot
-                            .restore(Path::new("."))
-                            .context("restore task worktree after failed commit")
-                        {
-                            append_progress(
-                                &progress.log_path,
-                                &format!(
-                                    "task_worktree_restore result=failed reason={restore_err:#}"
-                                ),
-                            )?;
-                        }
-                    }
-                    append_progress(
-                        &progress.log_path,
-                        &format!("task_end number={} result=failed", task.number),
-                    )?;
-                    let summary_result = write_failed_run_summary(
-                        plan_name,
-                        &plan_slug,
-                        &executed_tasks,
-                        task,
-                        attempt,
-                        completed_review_attempts,
-                        "commit",
-                        &reason,
-                        &progress,
-                        None,
-                        true,
-                        options.review_command.is_some(),
-                    );
-                    return Err(failed_run_error(err, summary_result));
-                }
-            };
-            append_progress(&progress.log_path, &format!("commit hash={commit}"))?;
-            emit_plan_event(
-                &options,
-                PlanRunEvent::for_task("task_committed", task, None)
-                    .with_message(format!("{commit} task: {}", task.title)),
-            )?;
-            output.push_str(&format!("Committed {commit}\n"));
-            Some(commit)
-        } else {
-            append_progress(&progress.log_path, "commit no_commit=true")?;
-            None
-        };
-        append_progress(
-            &progress.log_path,
-            &format!("task_end number={} result=passed", task.number),
-        )?;
-        emit_plan_event(
-            &options,
-            PlanRunEvent::for_task("task_succeeded", task, None)
-                .with_artifact(final_transcript_display.clone()),
-        )?;
-        let review_attempts = completed_review_attempts;
-        executed_tasks.push(ExecutedTask {
-            number: task.number,
-            title: task.title.clone(),
-            attempts: attempt,
-            review_attempts,
-            transcript_display: final_transcript_display,
-            validation_output_display: progress.validation_output_display,
-            review_transcript_display: options
-                .review_command
-                .as_ref()
-                .map(|_| final_review_transcript_display),
-            commit_status: if commit.is_some() {
-                "committed"
-            } else {
-                "skipped"
-            },
-            commit,
-        });
+    if plan_dest != plan_path {
+        fmt::print_moved_plan(&plan_dest);
+        progress.write_control(&format!("moved plan to {}", plan_dest.display()))?;
     }
 
-    write_run_summary(plan_name, &plan_slug, &executed_tasks)?;
-    write_run_diff_patch(
-        &plan_slug,
-        options.no_commit,
-        run_baseline_revision.as_deref(),
-        &run_baseline_paths,
-    )?;
+    fmt::print_completion_summary(
+        elapsed,
+        files,
+        additions,
+        deletions,
+        &plan_dest,
+        &preflight.branch,
+        progress.path(),
+    );
 
-    Ok(output)
+    Ok(String::new())
 }
 
 fn run_plan_review_only(options: RunOptions) -> Result<String> {
@@ -1152,6 +629,7 @@ fn agent_timeout() -> Duration {
     Duration::from_millis(timeout_ms)
 }
 
+#[allow(dead_code)]
 fn describe_dry_run(
     plan_name: &str,
     validation_commands: &[String],
@@ -1178,6 +656,7 @@ fn describe_dry_run(
     output
 }
 
+#[allow(dead_code)]
 fn emit_plan_event(options: &RunOptions, event: PlanRunEvent) -> Result<()> {
     if let Some(event_sink) = &options.event_sink {
         event_sink(event)?;
@@ -1185,6 +664,7 @@ fn emit_plan_event(options: &RunOptions, event: PlanRunEvent) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn emit_task_failed_event(
     options: &RunOptions,
     task: &Task,
@@ -1197,6 +677,7 @@ fn emit_task_failed_event(
     )
 }
 
+#[allow(dead_code)]
 struct ProgressPaths {
     log_path: PathBuf,
     transcript_path: PathBuf,
@@ -1207,6 +688,7 @@ struct ProgressPaths {
     validation_output_display: String,
 }
 
+#[allow(dead_code)]
 struct ExecutedTask {
     number: usize,
     title: String,
@@ -1219,6 +701,7 @@ struct ExecutedTask {
     commit_status: &'static str,
 }
 
+#[allow(dead_code)]
 struct AttemptProgressPaths {
     transcript_path: PathBuf,
     review_transcript_path: PathBuf,
@@ -1227,6 +710,7 @@ struct AttemptProgressPaths {
     review_transcript_display: String,
 }
 
+#[allow(dead_code)]
 struct ResumeContext {
     transcript_display: String,
     validation_output_display: Option<String>,
@@ -1240,6 +724,7 @@ struct AgentRun {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ReviewCommandError {
     message: String,
     explicit_fail: bool,
@@ -1247,6 +732,7 @@ struct ReviewCommandError {
 }
 
 impl ReviewCommandError {
+    #[allow(dead_code)]
     fn new(message: String, explicit_fail: bool, transcript_written: bool) -> Self {
         Self {
             message,
@@ -1255,10 +741,12 @@ impl ReviewCommandError {
         }
     }
 
+    #[allow(dead_code)]
     fn explicit_fail(&self) -> bool {
         self.explicit_fail
     }
 
+    #[allow(dead_code)]
     fn transcript_written(&self) -> bool {
         self.transcript_written
     }
@@ -1285,6 +773,7 @@ impl From<std::io::Error> for ReviewCommandError {
 }
 
 impl ProgressPaths {
+    #[allow(dead_code)]
     fn new(plan_slug: &str, task_number: usize) -> Result<Self> {
         ensure_ralphterm_git_excluded()?;
         let progress_dir = PathBuf::from(".ralphterm").join("progress");
@@ -1310,6 +799,7 @@ impl ProgressPaths {
         })
     }
 
+    #[allow(dead_code)]
     fn attempt(&self, attempt: usize) -> AttemptProgressPaths {
         let transcript_stem = self
             .transcript_path
@@ -1336,6 +826,7 @@ impl ProgressPaths {
     }
 }
 
+#[allow(dead_code)]
 fn append_progress(path: &Path, event: &str) -> Result<()> {
     let mut file = OpenOptions::new()
         .create(true)
@@ -1345,18 +836,21 @@ fn append_progress(path: &Path, event: &str) -> Result<()> {
     writeln!(file, "timestamp={} {event}", timestamp()).context("write progress log")
 }
 
+#[allow(dead_code)]
 fn run_summary_path(plan_slug: &str) -> PathBuf {
     PathBuf::from(".ralphterm")
         .join("progress")
         .join(format!("{plan_slug}-summary.md"))
 }
 
+#[allow(dead_code)]
 fn run_summary_json_path(plan_slug: &str) -> PathBuf {
     PathBuf::from(".ralphterm")
         .join("progress")
         .join(format!("{plan_slug}-summary.json"))
 }
 
+#[allow(dead_code)]
 fn remove_stale_run_summary(plan_slug: &str) -> Result<()> {
     let summary_path = run_summary_path(plan_slug);
     match fs::remove_file(&summary_path) {
@@ -1380,6 +874,7 @@ fn remove_stale_run_summary(plan_slug: &str) -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -> Result<()> {
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
@@ -1439,6 +934,7 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
     .with_context(|| format!("write run summary json {}", summary_json_path.display()))
 }
 
+#[allow(dead_code)]
 fn write_no_pending_run_summary(plan_name: &str, plan_slug: &str) -> Result<()> {
     let progress_dir = PathBuf::from(".ralphterm").join("progress");
     fs::create_dir_all(&progress_dir).context("create progress directory")?;
@@ -1463,6 +959,7 @@ fn write_no_pending_run_summary(plan_name: &str, plan_slug: &str) -> Result<()> 
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 fn write_failed_run_summary(
     plan_name: &str,
     plan_slug: &str,
@@ -1633,6 +1130,7 @@ fn write_failed_run_summary(
     })
 }
 
+#[allow(dead_code)]
 fn failed_run_error(original: anyhow::Error, summary_result: Result<()>) -> anyhow::Error {
     match summary_result {
         Ok(()) => original,
@@ -1642,10 +1140,12 @@ fn failed_run_error(original: anyhow::Error, summary_result: Result<()>) -> anyh
     }
 }
 
+#[allow(dead_code)]
 fn task_commit_display(task: &ExecutedTask) -> &str {
     task.commit.as_deref().unwrap_or("skipped (--no-commit)")
 }
 
+#[allow(dead_code)]
 fn passed_task_review_status(review_transcript_display: &Option<String>) -> &'static str {
     if review_transcript_display.is_some() {
         "passed"
@@ -1654,6 +1154,7 @@ fn passed_task_review_status(review_transcript_display: &Option<String>) -> &'st
     }
 }
 
+#[allow(dead_code)]
 fn failed_task_review_status(phase: &str, link_review_transcript: bool) -> &'static str {
     if phase == "review" || phase == "review retry cleanup" {
         "failed"
@@ -1664,6 +1165,7 @@ fn failed_task_review_status(phase: &str, link_review_transcript: bool) -> &'sta
     }
 }
 
+#[allow(dead_code)]
 fn failed_task_commit_status(phase: &str) -> &'static str {
     if phase == "commit" {
         "failed"
@@ -1672,6 +1174,7 @@ fn failed_task_commit_status(phase: &str) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn failed_task_acceptance_gates(
     phase: &str,
     review_status: &str,
@@ -1685,6 +1188,7 @@ fn failed_task_acceptance_gates(
     })
 }
 
+#[allow(dead_code)]
 fn failed_task_agent_gate(phase: &str) -> &'static str {
     if phase == "agent execution" || phase == "agent completion" {
         "failed"
@@ -1693,6 +1197,7 @@ fn failed_task_agent_gate(phase: &str) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn failed_task_validation_gate(phase: &str) -> &'static str {
     match phase {
         "agent execution" | "agent completion" => "skipped",
@@ -1731,6 +1236,7 @@ mod tests {
     }
 }
 
+#[allow(dead_code)]
 fn write_run_diff_patch(
     plan_slug: &str,
     no_commit: bool,
@@ -1754,6 +1260,7 @@ fn write_run_diff_patch(
         .with_context(|| format!("write run diff patch {}", diff_path.display()))
 }
 
+#[allow(dead_code)]
 fn working_tree_diff_patch(baseline: &NoCommitBaseline) -> Result<String> {
     let mut patch = String::new();
     let untracked_files = git_untracked_files()?;
@@ -1787,12 +1294,14 @@ fn working_tree_diff_patch(baseline: &NoCommitBaseline) -> Result<String> {
     Ok(patch)
 }
 
+#[allow(dead_code)]
 fn is_baseline_path(path: &str, baseline_paths: &BTreeSet<String>) -> bool {
     baseline_paths
         .iter()
         .any(|baseline| path == baseline || baseline.ends_with('/') && path.starts_with(baseline))
 }
 
+#[allow(dead_code)]
 fn git_diff_patch(revisions: &[&str]) -> Result<String> {
     let mut args = vec!["diff", "--binary", "--"];
     if !revisions.is_empty() {
@@ -1810,6 +1319,7 @@ fn git_no_index_new_file_patch(path: &str) -> Result<String> {
     )
 }
 
+#[allow(dead_code)]
 fn git_no_index_file_patch_from_contents(path: &str, contents: &[u8]) -> Result<String> {
     let temp_path = PathBuf::from(".ralphterm")
         .join("progress")
@@ -1838,16 +1348,19 @@ fn git_no_index_file_patch_from_contents(path: &str, contents: &[u8]) -> Result<
     }
 }
 
+#[allow(dead_code)]
 fn rewrite_no_index_snapshot_paths(patch: &str, temp_path: &str, path: &str) -> String {
     patch
         .replace(&format!("a/{temp_path}"), &format!("a/{path}"))
         .replace(temp_path, path)
 }
 
+#[allow(dead_code)]
 fn git_cached_path_diff_patch(path: &str) -> Result<String> {
     run_git_allow_exit_codes(&["diff", "--binary", "--cached", "--", path], &[0])
 }
 
+#[allow(dead_code)]
 fn git_worktree_path_diff_patch(path: &str) -> Result<String> {
     run_git_allow_exit_codes(&["diff", "--binary", "--", path], &[0])
 }
@@ -1872,6 +1385,7 @@ fn git_untracked_files() -> Result<BTreeSet<String>> {
         .collect())
 }
 
+#[allow(dead_code)]
 fn git_head_revision() -> Option<String> {
     let output = Command::new("git")
         .args(["rev-parse", "--verify", "HEAD"])
@@ -1884,6 +1398,7 @@ fn git_head_revision() -> Option<String> {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct LastTaskEndStatus {
     failed: bool,
     transcript_display: Option<String>,
@@ -1891,6 +1406,7 @@ struct LastTaskEndStatus {
     review_transcript_display: Option<String>,
 }
 
+#[allow(dead_code)]
 fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndStatus> {
     if !path.exists() {
         return Ok(LastTaskEndStatus::default());
@@ -1945,6 +1461,7 @@ fn last_task_end_status(path: &Path, task_number: usize) -> Result<LastTaskEndSt
     Ok(last_status)
 }
 
+#[allow(dead_code)]
 fn signal_transcript_display(event: &str) -> Option<&str> {
     if !event.starts_with("signal=") {
         return None;
@@ -1955,6 +1472,7 @@ fn signal_transcript_display(event: &str) -> Option<&str> {
         .filter(|transcript_display| !transcript_display.is_empty())
 }
 
+#[allow(dead_code)]
 fn review_transcript_display(event: &str) -> Option<&str> {
     event
         .strip_prefix("review transcript path=")
@@ -1962,11 +1480,13 @@ fn review_transcript_display(event: &str) -> Option<&str> {
         .filter(|review_transcript_display| !review_transcript_display.is_empty())
 }
 
+#[allow(dead_code)]
 fn progress_event(line: &str) -> Option<&str> {
     let rest = line.strip_prefix("timestamp=")?;
     rest.split_once(' ').map(|(_, event)| event)
 }
 
+#[allow(dead_code)]
 fn event_starts_with_token(event: &str, token: &str) -> bool {
     let Some(rest) = event.strip_prefix(token) else {
         return false;
@@ -1974,6 +1494,7 @@ fn event_starts_with_token(event: &str, token: &str) -> bool {
     rest.is_empty() || rest.starts_with(' ')
 }
 
+#[allow(dead_code)]
 fn timestamp() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2016,6 +1537,7 @@ fn transcript_without_prompt_echo(transcript: &str, prompt: &str) -> String {
     normalized
 }
 
+#[allow(dead_code)]
 fn plan_slug(plan_path: &Path) -> String {
     let raw = plan_path
         .file_stem()
@@ -2039,6 +1561,7 @@ fn plan_slug(plan_path: &Path) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn commit_task(title: &str, baseline_paths: &BTreeSet<String>) -> Result<String> {
     let current_paths = git_status_paths().context("snapshot git status after task")?;
     let paths_to_stage: Vec<&str> = current_paths
@@ -2059,10 +1582,12 @@ fn commit_task(title: &str, baseline_paths: &BTreeSet<String>) -> Result<String>
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct GitIndexSnapshot {
     tree: String,
 }
 
+#[allow(dead_code)]
 fn git_index_snapshot() -> Result<GitIndexSnapshot> {
     let tree = run_git(&["write-tree"])
         .context("write current git index to tree")?
@@ -2074,11 +1599,13 @@ fn git_index_snapshot() -> Result<GitIndexSnapshot> {
     Ok(GitIndexSnapshot { tree })
 }
 
+#[allow(dead_code)]
 fn restore_git_index_snapshot(snapshot: &GitIndexSnapshot) -> Result<()> {
     run_git(&["read-tree", &snapshot.tree]).context("restore git index from tree snapshot")?;
     Ok(())
 }
 
+#[allow(dead_code)]
 fn git_run_baseline() -> Result<NoCommitBaseline> {
     if !git_inside_work_tree() {
         return Ok(NoCommitBaseline::default());
@@ -2111,14 +1638,17 @@ fn git_run_baseline() -> Result<NoCommitBaseline> {
     })
 }
 
+#[allow(dead_code)]
 fn git_status_paths() -> Result<BTreeSet<String>> {
     git_status_paths_from_porcelain(true)
 }
 
+#[allow(dead_code)]
 fn git_status_paths_excluding_untracked() -> Result<BTreeSet<String>> {
     git_status_paths_from_porcelain(false)
 }
 
+#[allow(dead_code)]
 fn git_status_paths_from_porcelain(include_untracked: bool) -> Result<BTreeSet<String>> {
     let output = run_git(&["status", "--porcelain", "-z"])?;
     let mut paths = BTreeSet::new();
@@ -2137,6 +1667,7 @@ fn is_ralphterm_artifact(path: &str) -> bool {
     path == ".ralphterm" || path.starts_with(".ralphterm/")
 }
 
+#[allow(dead_code)]
 fn collect_retry_cleanup_snapshot(
     root: &Path,
     path: &Path,
@@ -2186,6 +1717,7 @@ fn collect_retry_cleanup_snapshot(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn remove_path_for_restore(path: &Path) -> Result<()> {
     let metadata = path
         .symlink_metadata()
@@ -2199,6 +1731,7 @@ fn remove_path_for_restore(path: &Path) -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 fn collect_retry_cleanup_paths(
     root: &Path,
     path: &Path,
@@ -2228,6 +1761,7 @@ fn collect_retry_cleanup_paths(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn is_retry_cleanup_ignored_path(path: &Path) -> bool {
     matches!(
         path.components().next(),
@@ -2236,6 +1770,7 @@ fn is_retry_cleanup_ignored_path(path: &Path) -> bool {
     )
 }
 
+#[allow(dead_code)]
 fn git_inside_work_tree() -> bool {
     let Ok(output) = Command::new("git")
         .args(["rev-parse", "--is-inside-work-tree"])
@@ -2246,6 +1781,7 @@ fn git_inside_work_tree() -> bool {
     output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
 }
 
+#[allow(dead_code)]
 fn ensure_ralphterm_git_excluded() -> Result<()> {
     let git_path = Command::new("git")
         .args(["rev-parse", "--git-path", "info/exclude"])
@@ -2280,6 +1816,7 @@ fn ensure_ralphterm_git_excluded() -> Result<()> {
     writeln!(file, ".ralphterm/").with_context(|| format!("write {}", exclude_path.display()))
 }
 
+#[allow(dead_code)]
 fn run_git(args: &[&str]) -> Result<String> {
     run_git_with_paths(args, &[])
 }
@@ -2298,6 +1835,7 @@ fn run_git_allow_exit_codes(args: &[&str], allowed_exit_codes: &[i32]) -> Result
     Ok(String::from_utf8_lossy(&result.stdout).into_owned())
 }
 
+#[allow(dead_code)]
 fn run_git_with_paths(args: &[&str], paths: &[&str]) -> Result<String> {
     let result = Command::new("git")
         .args(args)
@@ -2315,6 +1853,7 @@ fn run_git_with_paths(args: &[&str], paths: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&result.stdout).into_owned())
 }
 
+#[allow(dead_code)]
 fn build_task_prompt(
     plan_name: &str,
     task: &Task,
@@ -2361,6 +1900,7 @@ fn build_task_prompt(
     prompt
 }
 
+#[allow(dead_code)]
 fn run_validation_commands(commands: &[String], output_path: &Path) -> Result<String> {
     let mut output = String::new();
     fs::write(output_path, &output)
@@ -2403,6 +1943,7 @@ fn run_validation_commands(commands: &[String], output_path: &Path) -> Result<St
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 fn run_review_command(
     review_command: &str,
     plan_name: &str,
@@ -2497,6 +2038,7 @@ fn run_review_command(
     }
 }
 
+#[allow(dead_code)]
 fn build_review_prompt(
     plan_name: &str,
     task: &Task,
@@ -2518,6 +2060,7 @@ fn build_review_prompt(
     )
 }
 
+#[allow(dead_code)]
 fn progress_log_for_review(log_path: &Path) -> String {
     fs::read_to_string(log_path).unwrap_or_else(|err| {
         format!(
@@ -2568,6 +2111,7 @@ fn review_output_decision(transcript: &str, _prompt: &str) -> Option<bool> {
 /// is the trimmed reason text after the first REVIEW_FAIL signal line; if the
 /// reviewer only emitted the bare signal, the category is empty so all bare
 /// REVIEW_FAIL responses count as the same category.
+#[allow(dead_code)]
 fn review_failure_category(feedback: &str) -> String {
     let normalized = feedback.replace("\r\n", "\n").replace('\r', "\n");
     for line in normalized.lines() {
@@ -2876,4 +2420,111 @@ fn validate_interactive_agent_command(agent_command: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn plan_first_h1(plan_path: &std::path::Path) -> Option<String> {
+    let body = std::fs::read_to_string(plan_path).ok()?;
+    body.lines()
+        .find_map(|l| l.strip_prefix("# ").map(|s| s.trim().to_string()))
+}
+
+fn git_shortstat(repo: &std::path::Path, base: &str) -> Result<(usize, usize, usize)> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["diff", "--shortstat", &format!("{base}..HEAD")])
+        .output()
+        .context("git diff --shortstat")?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut files = 0usize;
+    let mut adds = 0usize;
+    let mut dels = 0usize;
+    for part in text.split(',') {
+        let part = part.trim();
+        let num: usize = part
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if part.contains("file") {
+            files = num;
+        } else if part.contains("insertion") {
+            adds = num;
+        } else if part.contains("deletion") {
+            dels = num;
+        }
+    }
+    Ok((files, adds, dels))
+}
+
+fn move_plan_to_completed(plan: &std::path::Path) -> Result<std::path::PathBuf> {
+    let parent = plan
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("plan has no parent dir"))?;
+    let dest_dir = parent.join("completed");
+    std::fs::create_dir_all(&dest_dir).with_context(|| format!("create {}", dest_dir.display()))?;
+    let dest = dest_dir.join(
+        plan.file_name()
+            .ok_or_else(|| anyhow::anyhow!("plan has no filename"))?,
+    );
+    std::fs::rename(plan, &dest).with_context(|| format!("move plan to {}", dest.display()))?;
+    Ok(dest)
+}
+
+fn agent_timeout_default() -> std::time::Duration {
+    std::time::Duration::from_secs(30 * 60)
+}
+
+/// Strip ANSI escape sequences (CSI, OSC, simple ESC-prefixed) from a
+/// transcript so downstream signal detection and progress logging can
+/// operate on plain text.
+fn strip_ansi_escapes(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() {
+            let next = bytes[i + 1];
+            if next == b'[' {
+                // CSI sequence: ESC [ params ... final-byte (0x40..=0x7E)
+                i += 2;
+                while i < bytes.len() && !(0x40..=0x7e).contains(&bytes[i]) {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+                continue;
+            } else if next == b']' {
+                // OSC sequence: ESC ] ... BEL or ESC \
+                i += 2;
+                while i < bytes.len() {
+                    if bytes[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            } else if matches!(next, b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/') {
+                // Character-set selection: ESC ( char etc.
+                i += 2;
+                if i < bytes.len() {
+                    i += 1;
+                }
+                continue;
+            } else {
+                // Generic two-byte escape: ESC X
+                i += 2;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
