@@ -110,6 +110,81 @@ fn dashboard_lists_active_sessions_and_javascript_renders_them() {
 }
 
 #[test]
+fn session_list_and_dashboard_expose_pending_approval_status() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let html = request_json(port, "GET /dashboard HTTP/1.1", None);
+    assert_eq!(html.status, 200, "{}", html.body);
+    assert!(html.body.contains("Approval"), "{}", html.body);
+
+    let js = request_json(port, "GET /dashboard/app.js HTTP/1.1", None);
+    assert_eq!(js.status, 200, "{}", js.body);
+    assert!(js.body.contains("approval_pending"), "{}", js.body);
+    assert!(js.body.contains("Pending"), "{}", js.body);
+    assert!(js.body.contains("Clear"), "{}", js.body);
+
+    let body = serde_json::json!({
+        "agent": "codex",
+        "prompt": "ignored initial prompt",
+        "command": "/bin/sh",
+        "args": ["-c", "read _ignored; printf 'PLAN_READY\\n'; read gate; printf 'Approve? '; read answer; printf 'GATE:%s\\nANSWER:%s\\n' \"$gate\" \"$answer\"; sleep 30"]
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/sessions HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created session json");
+    let id = created_json["id"].as_str().expect("session id");
+
+    wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("PLAN_READY"),
+    );
+    let before_prompt = wait_for_json(port, "GET /v1/sessions HTTP/1.1", |json| {
+        json.as_array()
+            .and_then(|sessions| sessions.iter().find(|session| session["id"] == id))
+            .and_then(|session| {
+                (session["status"] == "running" && session["signal"] == "PLAN_READY")
+                    .then(|| session.clone())
+            })
+    });
+    assert_eq!(before_prompt["approval_pending"], false, "{before_prompt}");
+
+    let gate_body = serde_json::json!({"text": "continue", "enter": true}).to_string();
+    let gate_released = request_json(
+        port,
+        &format!("POST /v1/sessions/{id}/input HTTP/1.1"),
+        Some(&gate_body),
+    );
+    assert_eq!(gate_released.status, 202, "{}", gate_released.body);
+
+    wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("Approve?"),
+    );
+    let pending = wait_for_json(port, "GET /v1/sessions HTTP/1.1", |json| {
+        json.as_array()
+            .and_then(|sessions| sessions.iter().find(|session| session["id"] == id))
+            .and_then(|session| (session["approval_pending"] == true).then(|| session.clone()))
+    });
+    assert_eq!(pending["approval_pending"], true, "{pending}");
+}
+
+#[test]
 fn session_approval_decision_posts_to_pty_and_emits_event() {
     let _guard = server_test_lock();
     let repo = TempDir::new();

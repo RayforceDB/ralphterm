@@ -9,20 +9,20 @@ function cell(text) {
   return td;
 }
 
-function renderEmptyRow(body, message) {
+function renderEmptyRow(body, message, colSpan = 4) {
   const row = document.createElement('tr');
   const empty = document.createElement('td');
-  empty.colSpan = 4;
+  empty.colSpan = colSpan;
   empty.className = 'empty-state';
   empty.textContent = message;
   row.append(empty);
   body.append(row);
 }
 
-function renderErrorRow(body, message) {
+function renderErrorRow(body, message, colSpan = 4) {
   const row = document.createElement('tr');
   const cellElement = document.createElement('td');
-  cellElement.colSpan = 4;
+  cellElement.colSpan = colSpan;
   cellElement.textContent = message;
   row.append(cellElement);
   body.append(row);
@@ -52,7 +52,7 @@ function renderSessionRows(sessions) {
   sessionsBody.replaceChildren();
 
   if (!sessions.length) {
-    renderEmptyRow(sessionsBody, 'No sessions yet.');
+    renderEmptyRow(sessionsBody, 'No sessions yet.', 5);
     return;
   }
 
@@ -63,6 +63,7 @@ function renderSessionRows(sessions) {
       cell(session.agent),
       cell(session.status),
       cell(session.signal),
+      cell(session.approval_pending ? 'Pending' : 'Clear'),
     );
     sessionsBody.append(row);
   }
@@ -98,7 +99,7 @@ async function loadSessions() {
   } catch (error) {
     sessionsStatus.textContent = 'Error';
     sessionsBody.replaceChildren();
-    renderErrorRow(sessionsBody, error.message);
+    renderErrorRow(sessionsBody, error.message, 5);
   }
 }
 

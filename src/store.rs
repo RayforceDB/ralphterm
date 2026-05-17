@@ -22,6 +22,7 @@ pub struct SessionRecord {
     pub agent: AgentKind,
     pub status: SessionStatus,
     pub signal: Option<AgentSignal>,
+    pub approval_pending: bool,
     pub exit_code: Option<i32>,
 }
 
@@ -81,6 +82,7 @@ impl SessionStore {
                 agent: cfg.agent,
                 status: SessionStatus::Running,
                 signal: None,
+                approval_pending: false,
                 exit_code: None,
             }),
             transcript: Mutex::new(String::new()),
@@ -113,18 +115,15 @@ impl SessionStore {
 
     pub fn get(&self, id: Uuid) -> Option<SessionRecord> {
         self.sessions
-            .get(&id)?
-            .record
-            .lock()
-            .ok()
-            .map(|r| r.clone())
+            .get(&id)
+            .and_then(|entry| session_record(&entry))
     }
 
     pub fn list(&self) -> Vec<SessionRecord> {
         let mut records: Vec<_> = self
             .sessions
             .iter()
-            .filter_map(|entry| entry.record.lock().ok().map(|record| record.clone()))
+            .filter_map(|entry| session_record(&entry))
             .collect();
         records.sort_by_key(|record| record.id);
         records
@@ -222,6 +221,12 @@ impl SessionStore {
     pub fn subscribe(&self, id: Uuid) -> Option<broadcast::Receiver<SessionEvent>> {
         Some(self.sessions.get(&id)?.event_tx.subscribe())
     }
+}
+
+fn session_record(handle: &SessionHandle) -> Option<SessionRecord> {
+    let mut record = handle.record.lock().ok()?.clone();
+    record.approval_pending = *handle.approval_requested.lock().ok()?;
+    Some(record)
 }
 
 fn run_session_thread(
@@ -420,6 +425,7 @@ mod tests {
                 agent: AgentKind::Codex,
                 status: SessionStatus::Running,
                 signal: None,
+                approval_pending: false,
                 exit_code: None,
             }),
             transcript: Mutex::new(String::new()),
