@@ -17,6 +17,8 @@ use serde_json::json;
 
 use crate::plan::{parse_plan, Task};
 
+pub const DEFAULT_PLAN_AGENT_COMMAND: &str = "claude";
+
 #[derive(Debug, Default)]
 struct NoCommitBaseline {
     paths: BTreeSet<String>,
@@ -225,7 +227,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     let agent_command = options
         .agent_command
         .clone()
-        .unwrap_or_else(|| "claude".to_string());
+        .unwrap_or_else(|| DEFAULT_PLAN_AGENT_COMMAND.to_string());
     if options.require_review && review_command.is_none() {
         bail!("--require-review needs --review-command or --review-agent");
     }

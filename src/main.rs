@@ -27,7 +27,10 @@ mod store;
 use pty_agent::{AgentKind, SessionConfig, SessionInput};
 use ralphterm::{
     plan::parse_plan,
-    runner::{agent_commands_equivalent, run_plan, run_smoke, PlanRunEvent, RunOptions},
+    runner::{
+        agent_commands_equivalent, run_plan, run_smoke, PlanRunEvent, RunOptions,
+        DEFAULT_PLAN_AGENT_COMMAND,
+    },
     runs::{
         CreatedRunRecord, RunPhase, RunProgressEvent, RunRecord, RunResultArtifacts, RunStatus,
         RunStore,
@@ -423,9 +426,13 @@ async fn create_run(
             "review_command or review_agent is required when require_review is true",
         ));
     }
-    if let (Some(agent_command), Some(review_command)) =
-        (agent_command.as_deref(), review_command.as_deref())
-    {
+    let effective_agent_command_for_validation = agent_command
+        .clone()
+        .or_else(|| dry_run.then(|| DEFAULT_PLAN_AGENT_COMMAND.to_string()));
+    if let (Some(agent_command), Some(review_command)) = (
+        effective_agent_command_for_validation.as_deref(),
+        review_command.as_deref(),
+    ) {
         let commands_equivalent = agent_commands_equivalent(agent_command, review_command)
             .map_err(|err| ApiError::bad_request(err.to_string()))?;
         if commands_equivalent {
