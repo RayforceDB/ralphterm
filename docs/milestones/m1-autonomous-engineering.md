@@ -4,7 +4,7 @@
 
 **Goal:** Ship RalphTerm as a complete local autonomous engineering workflow powered by real interactive PTY sessions.
 
-**Architecture:** RalphTerm remains a local daemon. The first milestone adds the workflow layer above the current PTY/session API: run intake, workspace setup, execution phases, review phases, dashboard, notifications, and persistent run history.
+**Architecture:** RalphTerm remains a local daemon. The first milestone adds the workflow layer above the current PTY/session API: run intake, workspace setup, implementation, validation, independent review, dashboard, notifications, and persistent run history.
 
 **Tech Stack:** Rust 2021, axum, tokio, portable-pty, serde, uuid, static HTML/CSS/JS for the first dashboard, file-backed JSONL storage for run history.
 
@@ -33,17 +33,22 @@ A user can run one command, submit an engineering task against a repository, wat
 
 - `planning`
 - `implementation`
-- `self-review`
-- `external-review`
+- `validation`
+- `independent-review`
 - `finalize`
 
 Each phase is a PTY session with its own transcript and signals.
 
+```text
+implement -> validate -> independent-review -> accept/commit
+```
+
 ### 4. Review loop
 
-- run a second agent or second session as reviewer
+- run a second agent or second session as the independent reviewer
 - feed diff and implementation transcript
-- require explicit `REVIEW_DONE` or `FAILED`
+- require explicit `REVIEW_PASS` before acceptance
+- treat `REVIEW_FAIL` as retry feedback while the retry budget allows it
 - optionally send findings back to implementation agent
 
 ### 5. Dashboard
@@ -72,7 +77,7 @@ File-backed run directory:
   phases/
     01-planning/transcript.raw.txt
     02-implementation/transcript.raw.txt
-    03-self-review/transcript.raw.txt
+    03-independent-review/transcript.raw.txt
   diff.patch
   summary.md
 ```
@@ -174,8 +179,9 @@ cargo test --all
 
 1. planning session
 2. implementation session
-3. self-review session
-4. finalize result
+3. validation command run
+4. independent-review session
+5. accept and commit only after the review gate passes
 
 ### Task 6: Add dashboard shell
 

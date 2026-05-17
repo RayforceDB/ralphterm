@@ -57,12 +57,13 @@
       <ul>
         <li>A user submits one task and receives a final patch, summary, transcripts, and event log.</li>
         <li>The run uses terminal-native agent sessions, not one-shot prompt shortcuts.</li>
-        <li>Implementation and review phases are separate and observable.</li>
+        <li>Implementation, validation, and independent review are separate and observable.</li>
         <li>Approval requests are visible, auditable, and manual by default.</li>
         <li>The dashboard shows live output and final artifacts.</li>
       </ul>
       <h2>Phases</h2>
-      <pre><code>intake -> workspace -> plan -> implement -> self-review -> external-review -> finalize</code></pre>
+      <pre><code>intake -> workspace -> plan -> implement -> validate -> independent-review -> accept/commit</code></pre>
+      <p>The product boundary is the acceptance gate: <code>implement -> validate -> independent-review -> accept/commit</code>. An implementation agent finishing is not enough; the task only counts after validation succeeds and the reviewer prints <code>REVIEW_PASS</code>.</p>
       <h2>Core deliverables</h2>
       <div class="grid two">
         <div class="card"><h3>Run model</h3><p>Run, phase, workspace, session, artifact, and approval state.</p></div>

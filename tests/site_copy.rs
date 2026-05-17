@@ -42,6 +42,35 @@ fn docs_site_exposes_reviewed_plan_workflow_page() {
 }
 
 #[test]
+fn milestone_docs_name_the_real_acceptance_gate() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let milestone_md = std::fs::read_to_string(
+        root.join("docs/milestones/m1-autonomous-engineering.md"),
+    )
+    .expect("read milestone markdown");
+    let milestone_html = std::fs::read_to_string(root.join("site/docs/milestone-one.html"))
+        .expect("read milestone page");
+
+    for (name, text) in [
+        ("milestone markdown", milestone_md.as_str()),
+        ("public milestone page", milestone_html.as_str()),
+    ] {
+        assert!(
+            text.contains("implement -> validate -> independent-review -> accept/commit"),
+            "{name} should describe the acceptance gate as implementation, validation, independent review, then acceptance"
+        );
+        assert!(
+            !text.contains("self-review"),
+            "{name} should not imply self-review is the product boundary"
+        );
+        assert!(
+            !text.contains("external-review"),
+            "{name} should name independent review instead of external-review"
+        );
+    }
+}
+
+#[test]
 fn public_docs_navigation_targets_existing_landing_sections() {
     let site_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site");
     let site_index =
