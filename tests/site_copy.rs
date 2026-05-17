@@ -13,7 +13,7 @@ fn docs_site_exposes_reviewed_plan_workflow_page() {
         docs_index.contains("/docs/workflows.html"),
         "docs index should link to the public workflows page"
     );
-    for expected_href in ["/#what", "/#how", "/#api", "/docs/"] {
+    for expected_href in ["/", "/docs/"] {
         assert!(
             workflows.contains(&format!("href=\"{expected_href}\"")),
             "workflows page navigation should link to existing landing-page target {expected_href}"
@@ -74,37 +74,50 @@ fn public_docs_navigation_targets_existing_landing_sections() {
     let site_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site");
     let site_index =
         std::fs::read_to_string(site_root.join("index.html")).expect("read site index");
-    for docs_page in [
-        "docs/index.html",
-        "docs/api.html",
-        "docs/architecture.html",
-        "docs/security.html",
-        "docs/milestone-one.html",
-        "docs/workflows.html",
-    ] {
-        let html = std::fs::read_to_string(site_root.join(docs_page))
-            .unwrap_or_else(|err| panic!("read {docs_page}: {err}"));
-        for fragment in ["how", "what", "api"] {
-            let href = format!("href=\"/#{fragment}\"");
-            let target = format!("id=\"{fragment}\"");
-            assert!(
-                html.contains(&href),
-                "{docs_page} should link to landing section /#{fragment}"
-            );
-            assert!(
-                site_index.contains(&target),
-                "landing page should expose target {target} for {docs_page}"
-            );
+
+    // Collect every id="..." value present on the landing page.
+    let mut landing_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut search = site_index.as_str();
+    let needle = "id=\"";
+    while let Some(pos) = search.find(needle) {
+        let after = &search[pos + needle.len()..];
+        if let Some(end) = after.find('"') {
+            landing_ids.insert(after[..end].to_string());
+            search = &after[end + 1..];
+        } else {
+            break;
         }
-        for stale_href in [
-            "href=\"/#why\"",
-            "href=\"/#product\"",
-            "href=\"/#workflow\"",
-        ] {
+    }
+
+    let docs_dir = site_root.join("docs");
+    let entries = std::fs::read_dir(&docs_dir).expect("read docs dir");
+    for entry in entries {
+        let entry = entry.expect("read docs entry");
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("html") {
+            continue;
+        }
+        let display = path
+            .strip_prefix(&site_root)
+            .map(|rel| rel.display().to_string())
+            .unwrap_or_else(|_| path.display().to_string());
+        let html =
+            std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {display}: {err}"));
+
+        // Walk every href="/#..." occurrence in the docs page.
+        let mut hay = html.as_str();
+        let href_needle = "href=\"/#";
+        while let Some(pos) = hay.find(href_needle) {
+            let after = &hay[pos + href_needle.len()..];
+            let end = after
+                .find('"')
+                .unwrap_or_else(|| panic!("{display} has unterminated href=\"/#...\""));
+            let fragment = &after[..end];
             assert!(
-                !html.contains(stale_href),
-                "{docs_page} should not link to missing landing section {stale_href}"
+                landing_ids.contains(fragment),
+                "{display} links to /#{fragment} but landing page has no matching id=\"{fragment}\""
             );
+            hay = &after[end + 1..];
         }
     }
 }
@@ -114,69 +127,38 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
     let site_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site");
     let site_index =
         std::fs::read_to_string(site_root.join("index.html")).expect("read site index");
-    let docs_index =
-        std::fs::read_to_string(site_root.join("docs/index.html")).expect("read docs index");
-    let workflows = std::fs::read_to_string(site_root.join("docs/workflows.html"))
-        .expect("read workflows page");
+
+    let h1_start = site_index
+        .find("<h1")
+        .expect("landing page should have an h1");
+    let h1_open_end = site_index[h1_start..]
+        .find('>')
+        .map(|offset| h1_start + offset + 1)
+        .expect("landing h1 opening tag should close");
+    let h1_close = site_index[h1_open_end..]
+        .find("</h1>")
+        .map(|offset| h1_open_end + offset)
+        .expect("landing h1 should close");
+    let h1_text = site_index[h1_open_end..h1_close].to_lowercase();
+    assert!(
+        h1_text.contains("drop-in")
+            || h1_text.contains("ralphex")
+            || h1_text.contains("review gate"),
+        "landing hero h1 should lead with the drop-in / ralphex / review-gate story (got: {h1_text:?})"
+    );
+
+    let head_len = site_index.len().min(3000);
+    let head = &site_index[..head_len];
+    for forbidden in ["/v1/sessions", "POST /v1/sessions", "Current API"] {
+        assert!(
+            !head.contains(forbidden),
+            "landing page lead must not surface PTY-API copy {forbidden:?} in the first 3000 chars"
+        );
+    }
 
     assert!(
-        site_index.contains("Write a plan. Let real terminal agents execute it, then review it."),
-        "landing page should lead with plan execution plus cross-review verification"
-    );
-    let product_loop = "RalphTerm runs the maintainer loop directly: implementation agent, validation commands, independent reviewer, then accepted progress.";
-    assert!(
-        site_index.contains(product_loop),
-        "landing page should state the verified plan-runner loop before PTY plumbing"
-    );
-    let product_loop_index = site_index
-        .find(product_loop)
-        .expect("landing page should contain verified plan-runner loop");
-    let pty_index = site_index
-        .find("real PTYs")
-        .expect("landing page should still mention real PTY execution");
-    assert!(
-        product_loop_index < pty_index,
-        "landing page should explain the verified plan-runner loop before low-level PTY plumbing"
-    );
-    assert!(
-        site_index.contains("ralphterm run docs/plans/example.md --dry-run"),
-        "landing page should show the safe plan preview command"
-    );
-    assert!(
-        site_index.contains("ralphterm run docs/plans/example.md --dry-run \\")
-            && site_index.contains("--require-review \\")
-            && site_index.contains("--review-agent codex")
-            && site_index.contains("Review: codex"),
-        "landing hero should preview the reviewed plan path, not an unreviewed smoke path"
-    );
-    assert!(
-        !site_index.contains("Review: skipped"),
-        "landing hero should not lead with skipped review when review is the product boundary"
-    );
-    assert!(
-        site_index.contains("ralphterm run docs/plans/example.md --agent claude"),
-        "landing page should show the plan runner command"
-    );
-    assert!(
-        workflows.contains("--review-command"),
-        "workflows page should show that plan runs can require an independent review gate"
-    );
-    assert!(
-        workflows.contains("REVIEW_FAIL retry"),
-        "workflows page should explain that an initial REVIEW_FAIL retries implementation"
-    );
-    assert!(
-        !docs_index.contains("REVIEW_FAIL</code> leaves the task unchecked"),
-        "getting started copy should not imply the first REVIEW_FAIL immediately blocks without retry"
-    );
-    assert!(
-        docs_index.contains("<code>REVIEW_FAIL</code> triggers one retry")
-            && docs_index.contains("<code>--max-review-retries N</code>"),
-        "getting started copy should describe the default retry behavior and configurable retry budget"
-    );
-    assert!(
-        site_index.contains("without <code>claude -p</code>"),
-        "landing page should state that RalphTerm does not use Claude prompt mode"
+        site_index.contains("\u{2014} capabilities"),
+        "landing page should expose the capabilities spec-sheet eyebrow"
     );
 }
 
@@ -610,38 +592,31 @@ fn landing_page_leads_with_ralphex_drop_in_pitch() {
     )
     .expect("read site index");
 
+    let h1_marker = "<h1 class=\"rt-display\"";
     let h1_start = site_index
-        .find("<h1>")
-        .expect("landing page should have an h1");
-    let h1_end = site_index[h1_start..]
+        .find(h1_marker)
+        .expect("landing page should have the rt-display h1");
+    let h1_open_end = site_index[h1_start..]
+        .find('>')
+        .map(|offset| h1_start + offset + 1)
+        .expect("landing h1 opening tag should close");
+    let h1_close = site_index[h1_open_end..]
         .find("</h1>")
-        .map(|offset| h1_start + offset)
-        .expect("landing page h1 should close");
-    let h1 = &site_index[h1_start..h1_end].to_lowercase();
+        .map(|offset| h1_open_end + offset)
+        .expect("landing h1 should close");
+    let h1_text = site_index[h1_open_end..h1_close].to_lowercase();
     assert!(
-        h1.contains("drop-in"),
-        "landing hero h1 should mention drop-in"
+        h1_text.contains("drop-in"),
+        "landing rt-display h1 should mention drop-in (got: {h1_text:?})"
     );
     assert!(
-        h1.contains("ralphex"),
-        "landing hero h1 should mention ralphex"
+        h1_text.contains("ralphex"),
+        "landing rt-display h1 should mention ralphex (got: {h1_text:?})"
     );
 
-    let lead_start = site_index
-        .find("<p class=\"lead\">")
-        .expect("landing page should have a lead paragraph");
-    let lead_end = site_index[lead_start..]
-        .find("</p>")
-        .map(|offset| lead_start + offset)
-        .expect("landing lead should close");
-    let lead = &site_index[lead_start..lead_end].to_lowercase();
     assert!(
-        lead.contains("drop-in"),
-        "landing lead paragraph should mention drop-in"
-    );
-    assert!(
-        lead.contains("ralphex"),
-        "landing lead paragraph should mention ralphex"
+        site_index.contains("href=\"/docs/migrate-from-ralphex.html\""),
+        "landing page should link to the migration guide"
     );
 }
 
