@@ -684,6 +684,14 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             .with_context(|| format!("mark task {} complete", task.number))?;
         fs::write(&options.plan_path, &plan_text)
             .with_context(|| format!("write plan {}", options.plan_path.display()))?;
+        append_progress(
+            &progress.log_path,
+            &format!("plan_marked_complete number={}", task.number),
+        )?;
+        emit_plan_event(
+            &options,
+            PlanRunEvent::for_task("task_marked_complete", task, None),
+        )?;
         output.push_str(&format!("Marked task {} complete\n", task.number));
         let commit = if !options.no_commit {
             let commit = match commit_task(&task.title, &baseline_paths) {

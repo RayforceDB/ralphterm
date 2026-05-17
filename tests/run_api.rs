@@ -931,6 +931,100 @@ fn run_api_returns_running_record_before_background_plan_finishes() {
 }
 
 #[test]
+fn run_api_records_task_marked_complete_before_task_success() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+
+    let plan = std::fs::read_to_string(&plan_path).expect("read updated plan");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+
+    let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
+    assert_eq!(events.status, 200, "{}", events.body);
+    let events_json: serde_json::Value = serde_json::from_str(&events.body).expect("events json");
+    let events = events_json.as_array().expect("event list");
+    let validation_pos = events
+        .iter()
+        .position(|event| event["type"] == "validation_passed")
+        .expect("validation_passed event");
+    let marked_pos = events
+        .iter()
+        .position(|event| {
+            event["type"] == "task_marked_complete"
+                && event["task_number"] == 1
+                && event["task_title"] == "Create first file"
+        })
+        .expect("task_marked_complete event");
+    let succeeded_pos = events
+        .iter()
+        .position(|event| event["type"] == "task_succeeded")
+        .expect("task_succeeded event");
+    assert!(
+        validation_pos < marked_pos && marked_pos < succeeded_pos,
+        "task_marked_complete should be recorded after validation and before task success: {events_json}"
+    );
+
+    let progress_log = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan.log HTTP/1.1"),
+        None,
+    );
+    assert_eq!(progress_log.status, 200, "{}", progress_log.body);
+    assert!(
+        progress_log.body.contains("plan_marked_complete number=1"),
+        "{}",
+        progress_log.body
+    );
+}
+
+#[test]
 fn cancelling_running_run_prevents_late_success_overwrite() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
@@ -2236,6 +2330,7 @@ fn run_api_plan_run_records_structured_task_progress_events() {
             "validation_passed",
             "review_started",
             "review_passed",
+            "task_marked_complete",
             "task_committed",
             "task_succeeded",
             "run_succeeded",
