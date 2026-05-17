@@ -949,6 +949,180 @@ fn cancelling_running_run_prevents_late_success_overwrite() {
             .any(|event| event["type"] == "run_succeeded"),
         "{events_json}"
     );
+    assert!(
+        !events_json
+            .as_array()
+            .expect("event list")
+            .iter()
+            .any(|event| event["type"] == "task_succeeded"),
+        "cancelled run must not emit task_succeeded after cancellation: {events_json}"
+    );
+
+    let plan = std::fs::read_to_string(&plan_path).expect("read plan after cancelled run");
+    assert!(
+        plan.contains("- [ ] Write first.txt"),
+        "cancelled run must not mark the task complete:\n{plan}"
+    );
+    assert!(
+        !plan.contains("- [x] Write first.txt"),
+        "cancelled run must not accept task after cancellation:\n{plan}"
+    );
+}
+
+#[test]
+fn cancelling_run_during_agent_does_not_mark_task_complete_without_validation_or_review() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("slow-fake-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+
+    wait_for_file(repo.path.join("slow-fake-agent-last-prompt.txt"));
+
+    let cancelled = request_json(
+        port,
+        &format!("POST /v1/runs/{id}/cancel HTTP/1.1"),
+        Some("{}"),
+    );
+    assert_eq!(cancelled.status, 202, "{}", cancelled.body);
+
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "failed").then(|| json.clone())
+    });
+
+    thread::sleep(Duration::from_secs(3));
+
+    let plan = std::fs::read_to_string(&plan_path).expect("read plan after cancelled run");
+    assert!(
+        plan.contains("- [ ] Write first.txt"),
+        "cancelled run must not mark the task complete:\n{plan}"
+    );
+    assert!(
+        !plan.contains("- [x] Write first.txt"),
+        "cancelled run must not accept task after cancellation:\n{plan}"
+    );
+
+    let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
+    assert_eq!(events.status, 200, "{}", events.body);
+    let events_json: serde_json::Value = serde_json::from_str(&events.body).expect("events json");
+    assert!(
+        !events_json
+            .as_array()
+            .expect("event list")
+            .iter()
+            .any(|event| event["type"] == "task_succeeded"),
+        "cancelled run must not emit task_succeeded after cancellation: {events_json}"
+    );
+}
+
+#[test]
+fn run_api_archives_rejected_review_attempt_transcripts_after_retry_success() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("retry-after-review-agent.sh").to_string_lossy(),
+        "review_command": fixture_path("review-fail-once.sh").to_string_lossy(),
+        "require_review": true,
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+
+    let attempt_one_review = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-1-attempt-1-review.transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        attempt_one_review.status, 200,
+        "{}",
+        attempt_one_review.body
+    );
+    assert!(
+        attempt_one_review.body.contains("REVIEW_FAIL"),
+        "{}",
+        attempt_one_review.body
+    );
 }
 
 #[test]

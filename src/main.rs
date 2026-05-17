@@ -909,7 +909,7 @@ async fn get_run_progress(
     let summary_json = RunStore::summary_json_path(state.run_base_dir.as_ref(), id)?
         .and_then(|path| fs::read_to_string(path).ok());
     let allowed = progress_artifact_names(&plan_slug, summary_json.as_deref())?;
-    if !allowed.contains(&artifact) {
+    if !allowed.contains(&artifact) && !is_current_run_progress_artifact(&plan_slug, &artifact) {
         return Err(ApiError::artifact_not_found("progress"));
     }
 
