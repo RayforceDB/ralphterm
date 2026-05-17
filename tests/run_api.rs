@@ -139,6 +139,8 @@ fn dashboard_run_form_posts_reviewed_plan_run_request() {
         "name=\"no_commit\"",
         "id=\"run-max-review-retries\"",
         "name=\"max_review_retries\"",
+        "id=\"run-agent-timeout-ms\"",
+        "name=\"agent_timeout_ms\"",
         "value=\"1\"",
         "id=\"run-submit\"",
         "id=\"run-form-status\"",
@@ -163,6 +165,8 @@ fn dashboard_run_form_posts_reviewed_plan_run_request() {
         "dry_run",
         "no_commit",
         "max_review_retries",
+        "agent_timeout_ms",
+        "agent timeout must be a positive integer",
         "runSubmit.disabled = true",
         "runSubmit.disabled = false",
         "agent and agent_command are mutually exclusive",
@@ -3139,6 +3143,41 @@ fn run_api_rejects_agent_command_without_plan_path_without_creating_run() {
     .to_string();
     let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
     assert_eq!(response.status, 400, "{}", response.body);
+
+    let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed_json: serde_json::Value = serde_json::from_str(&listed.body).expect("list json");
+    assert_eq!(listed_json.as_array().expect("run list").len(), 0);
+}
+
+#[test]
+fn run_api_rejects_zero_agent_timeout_without_creating_run() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": "docs/plan.md",
+        "agent_timeout_ms": 0
+    })
+    .to_string();
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert!(
+        response.body.contains("agent_timeout_ms"),
+        "{}",
+        response.body
+    );
 
     let listed = request_json(port, "GET /v1/runs HTTP/1.1", None);
     assert_eq!(listed.status, 200, "{}", listed.body);

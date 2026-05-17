@@ -203,6 +203,7 @@ pub struct RunOptions {
     pub plan_path: PathBuf,
     pub agent_command: Option<String>,
     pub review_command: Option<String>,
+    pub agent_timeout: Option<Duration>,
     pub require_review: bool,
     pub max_review_retries: usize,
     pub no_commit: bool,
@@ -364,7 +365,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 review_feedback.as_deref(),
                 resume_context.as_ref(),
             );
-            let timeout = agent_timeout();
+            let timeout = options.agent_timeout.unwrap_or_else(agent_timeout);
             check_for_cancellation(&options)?;
             let agent_run = match run_agent_command_with_timeout(&agent_command, &prompt, timeout)
                 .with_context(|| format!("run agent for task {}", task.number))

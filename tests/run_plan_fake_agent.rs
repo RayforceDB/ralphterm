@@ -278,6 +278,68 @@ fn run_command_records_complete_transcript_for_successful_large_output_agent() {
 }
 
 #[test]
+fn run_command_accepts_explicit_agent_timeout_without_environment_variable() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let start = Instant::now();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ralphterm"));
+    command
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("hanging-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--agent-timeout-ms",
+            "250",
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped());
+    let output = run_with_test_timeout(command, Duration::from_secs(5));
+
+    let elapsed = start.elapsed();
+    assert!(
+        !output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "explicit run timeout was not bounded: elapsed={elapsed:?}\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostics.contains("timed out"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("still waiting for external input"),
+        "{diagnostics}"
+    );
+}
+
+#[test]
 fn run_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");

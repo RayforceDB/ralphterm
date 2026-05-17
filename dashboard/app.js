@@ -239,14 +239,22 @@ function parseMaxReviewRetries(value) {
   return Number(text);
 }
 
+function parseOptionalPositiveInteger(value) {
+  const text = value === null ? '' : String(value).trim();
+  if (!text) return null;
+  return Number(text);
+}
+
 function runRequestBody(form) {
   const formData = new FormData(form);
+  const agentTimeoutMs = parseOptionalPositiveInteger(formData.get('agent_timeout_ms'));
   const body = {
     require_review: formData.has('require_review'),
     dry_run: formData.has('dry_run'),
     no_commit: formData.has('no_commit'),
     max_review_retries: parseMaxReviewRetries(formData.get('max_review_retries')),
   };
+  if (agentTimeoutMs !== null) body.agent_timeout_ms = agentTimeoutMs;
 
   for (const name of ['plan_path', 'workspace_id', 'agent', 'agent_command', 'review_agent', 'review_command']) {
     const value = optionalText(formData, name);
@@ -259,6 +267,9 @@ function runRequestBody(form) {
 function validateRunRequestBody(body) {
   if (!Number.isInteger(body.max_review_retries) || body.max_review_retries < 0) {
     return 'max_review_retries must be a non-negative integer';
+  }
+  if (body.agent_timeout_ms !== undefined && (!Number.isInteger(body.agent_timeout_ms) || body.agent_timeout_ms <= 0)) {
+    return 'agent timeout must be a positive integer number of milliseconds';
   }
   if (body.agent && body.agent_command) {
     return 'agent and agent_command are mutually exclusive';

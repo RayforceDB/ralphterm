@@ -65,6 +65,8 @@ enum Command {
         review_command: Option<String>,
         #[arg(long)]
         require_review: bool,
+        #[arg(long, value_parser = parse_positive_duration_ms)]
+        agent_timeout_ms: Option<std::time::Duration>,
         #[arg(
             long,
             default_value_t = 1,
@@ -198,6 +200,7 @@ struct CreateRunRequest {
     review_command: Option<String>,
     require_review: Option<bool>,
     max_review_retries: Option<usize>,
+    agent_timeout_ms: Option<u64>,
     no_commit: Option<bool>,
     dry_run: Option<bool>,
 }
@@ -221,6 +224,7 @@ async fn main() -> anyhow::Result<()> {
             review_agent,
             review_command,
             require_review,
+            agent_timeout_ms,
             max_review_retries,
             no_commit,
             dry_run,
@@ -259,6 +263,7 @@ async fn main() -> anyhow::Result<()> {
                 plan_path: plan,
                 agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
                 review_command: review_command.or_else(|| review_agent.map(RunAgentKind::command)),
+                agent_timeout: agent_timeout_ms,
                 require_review,
                 max_review_retries,
                 no_commit,
@@ -301,6 +306,16 @@ fn validate_workspace_plan_path(cwd_relative: &FsPath, plan: &FsPath) -> anyhow:
     }
 
     Ok(())
+}
+
+fn parse_positive_duration_ms(value: &str) -> Result<std::time::Duration, String> {
+    let millis = value
+        .parse::<u64>()
+        .map_err(|_| "timeout must be a positive integer number of milliseconds".to_string())?;
+    if millis == 0 {
+        return Err("timeout must be greater than 0 milliseconds".to_string());
+    }
+    Ok(std::time::Duration::from_millis(millis))
 }
 
 fn run_workspace_command(command: WorkspaceCommand) -> anyhow::Result<()> {
@@ -426,6 +441,15 @@ async fn create_run(
             "review_command or review_agent is required when require_review is true",
         ));
     }
+    let agent_timeout = match req.agent_timeout_ms {
+        Some(0) => {
+            return Err(ApiError::bad_request(
+                "agent_timeout_ms must be greater than 0 milliseconds",
+            ))
+        }
+        Some(millis) => Some(std::time::Duration::from_millis(millis)),
+        None => None,
+    };
     let effective_agent_command_for_validation = agent_command
         .clone()
         .or_else(|| dry_run.then(|| DEFAULT_PLAN_AGENT_COMMAND.to_string()));
@@ -590,6 +614,7 @@ async fn create_run(
                 plan_path: plan_path.clone(),
                 agent_command,
                 review_command: review_command.clone(),
+                agent_timeout,
                 require_review,
                 max_review_retries,
                 no_commit,
