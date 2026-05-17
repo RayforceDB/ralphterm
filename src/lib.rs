@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod config;
+pub mod docker;
 pub mod notify;
 pub mod plan;
 pub mod pty_agent;

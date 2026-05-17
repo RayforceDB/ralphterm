@@ -239,6 +239,23 @@ struct Cli {
         help = "Notification: comma-separated event filter (plan_done,task_failed,review_failed,rate_limit)"
     )]
     compat_notify_on: Vec<String>,
+    #[arg(
+        long = "docker",
+        help = "Run the implementer/reviewer inside a docker container"
+    )]
+    compat_docker: bool,
+    #[arg(
+        long = "docker-image",
+        requires = "compat_docker",
+        help = "Docker image to use (default: ralphterm:latest)"
+    )]
+    compat_docker_image: Option<String>,
+    #[arg(
+        long = "preserve-anthropic-api-key",
+        requires = "compat_docker",
+        help = "Forward ANTHROPIC_API_KEY into the container"
+    )]
+    compat_preserve_anthropic_api_key: bool,
     #[arg(value_name = "plan-file")]
     compat_plan_file: Option<PathBuf>,
 }
@@ -881,6 +898,22 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         None
     };
 
+    let (agent_command, review_command) = if cli.compat_docker {
+        let docker_cfg = build_docker_config(&cli);
+        let working_dir = std::env::current_dir().context("read current directory")?;
+        let agent_command = agent_command
+            .as_deref()
+            .map(|cmd| wrap_command_for_docker(&docker_cfg, &working_dir, cmd))
+            .transpose()?;
+        let review_command = review_command
+            .as_deref()
+            .map(|cmd| wrap_command_for_docker(&docker_cfg, &working_dir, cmd))
+            .transpose()?;
+        (agent_command, review_command)
+    } else {
+        (agent_command, review_command)
+    };
+
     run_plan_cli(RunCliOptions {
         plan: final_plan_path.clone(),
         agent: None,
@@ -961,6 +994,68 @@ fn build_notify_config(
             .clone()
             .or_else(|| config.notify_webhook_url.clone()),
         notify_on,
+    }
+}
+
+fn build_docker_config(cli: &Cli) -> crate::docker::DockerConfig {
+    let extra_volumes = std::env::var("RALPHEX_EXTRA_VOLUMES")
+        .ok()
+        .and_then(|raw| crate::docker::parse_extra_volumes(&raw).ok())
+        .unwrap_or_default();
+    let extra_env = std::env::var("RALPHEX_EXTRA_ENV")
+        .map(|raw| crate::docker::parse_extra_env(&raw))
+        .unwrap_or_default();
+    let tz = std::env::var("TZ").ok();
+    let aws_profile = std::env::var("AWS_PROFILE").ok();
+    let aws_region = std::env::var("AWS_REGION").ok();
+    let image = cli
+        .compat_docker_image
+        .clone()
+        .unwrap_or_else(|| crate::docker::DockerConfig::DEFAULT_IMAGE.to_string());
+    crate::docker::DockerConfig {
+        enabled: true,
+        image,
+        preserve_anthropic_api_key: cli.compat_preserve_anthropic_api_key,
+        extra_volumes,
+        extra_env,
+        tz,
+        aws_profile,
+        aws_region,
+    }
+}
+
+fn wrap_command_for_docker(
+    cfg: &crate::docker::DockerConfig,
+    working_dir: &FsPath,
+    raw_command: &str,
+) -> anyhow::Result<String> {
+    let mut parts = shlex::split(raw_command)
+        .ok_or_else(|| anyhow::anyhow!("could not shell-split agent command for docker"))?;
+    if parts.is_empty() {
+        bail!("agent command is empty");
+    }
+    let inner_command = parts.remove(0);
+    let (docker_cmd, docker_args) =
+        crate::docker::docker_wrap_command(cfg, working_dir, &inner_command, &parts);
+    let mut quoted = vec![shlex_quote(&docker_cmd)];
+    for arg in docker_args {
+        quoted.push(shlex_quote(&arg));
+    }
+    Ok(quoted.join(" "))
+}
+
+fn shlex_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let safe = value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/' | '.' | ':' | '=' | '+'));
+    if safe {
+        value.to_string()
+    } else {
+        let escaped = value.replace('\'', "'\\''");
+        format!("'{escaped}'")
     }
 }
 
