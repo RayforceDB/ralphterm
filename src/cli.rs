@@ -69,18 +69,21 @@ struct Cli {
     #[arg(
         short = 'r',
         long = "review",
+        conflicts_with_all = ["compat_tasks_only", "compat_external_only", "compat_codex_only"],
         help = "ralphex-compatible: skip task phase and run reviewer once"
     )]
     compat_review: bool,
     #[arg(
         short = 'e',
         long = "external-only",
+        conflicts_with_all = ["compat_tasks_only", "compat_codex_only"],
         help = "ralphex-compatible: run external review loop only"
     )]
     compat_external_only: bool,
     #[arg(
         short = 'c',
         long = "codex-only",
+        conflicts_with = "compat_tasks_only",
         help = "ralphex-compatible alias for --external-only"
     )]
     compat_codex_only: bool,
@@ -356,6 +359,8 @@ pub async fn run() -> anyhow::Result<()> {
             dry_run,
             workspace_id,
             review_patience: None,
+            mode: crate::runner::RunMode::Full,
+            max_external_iterations: None,
         }),
         Some(Command::Smoke {
             agent,
@@ -385,6 +390,8 @@ struct RunCliOptions {
     dry_run: bool,
     workspace_id: Option<String>,
     review_patience: Option<usize>,
+    mode: crate::runner::RunMode,
+    max_external_iterations: Option<usize>,
 }
 
 fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
@@ -401,6 +408,8 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
         dry_run,
         workspace_id,
         review_patience,
+        mode,
+        max_external_iterations,
     } = options;
 
     if let Some(id) = workspace_id {
@@ -449,6 +458,8 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
         event_sink: None,
         cancellation_check: None,
         review_patience,
+        mode,
+        max_external_iterations,
     })?;
     print!("{output}");
     Ok(())
@@ -497,29 +508,53 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         _ => None,
     };
 
-    // Default full mode requires an independent reviewer unless --tasks-only is set.
+    let mode = if cli.compat_tasks_only {
+        crate::runner::RunMode::TasksOnly
+    } else if cli.compat_review {
+        crate::runner::RunMode::ReviewOnly
+    } else if cli.compat_external_only || cli.compat_codex_only {
+        crate::runner::RunMode::ExternalOnly
+    } else {
+        crate::runner::RunMode::Full
+    };
+
+    // Default full mode requires an independent reviewer unless --tasks-only is
+    // set. --review and --external-only/--codex-only also require a reviewer.
     let mut require_review = false;
-    if !cli.compat_tasks_only {
-        match (external_review_tool.as_deref(), review_command.as_deref()) {
-            (Some("custom"), Some(_)) => {
-                require_review = true;
-            }
-            (Some("custom"), None) => {
-                bail!(
-                    "ralphex-compatible full mode requires --external-review-tool=custom \
+    match mode {
+        crate::runner::RunMode::TasksOnly => {}
+        crate::runner::RunMode::Full => {
+            match (external_review_tool.as_deref(), review_command.as_deref()) {
+                (Some("custom"), Some(_)) => {
+                    require_review = true;
+                }
+                (Some("custom"), None) => {
+                    bail!(
+                        "ralphex-compatible full mode requires --external-review-tool=custom \
 --custom-review-script <cmd>, or pass --tasks-only"
-                );
-            }
-            (Some("none"), _) => {
-                eprintln!(
-                    "[warning] running without independent review because \
-                     external-review-tool=none"
-                );
-            }
-            _ => {
-                bail!(
-                    "ralphex-compatible full mode requires --external-review-tool=custom \
+                    );
+                }
+                (Some("none"), _) => {
+                    eprintln!(
+                        "[warning] running without independent review because \
+                         external-review-tool=none"
+                    );
+                }
+                _ => {
+                    bail!(
+                        "ralphex-compatible full mode requires --external-review-tool=custom \
 --custom-review-script <cmd>, or pass --tasks-only"
+                    );
+                }
+            }
+        }
+        crate::runner::RunMode::ReviewOnly | crate::runner::RunMode::ExternalOnly => {
+            if !matches!(external_review_tool.as_deref(), Some("custom"))
+                || review_command.is_none()
+            {
+                bail!(
+                    "--review and --external-only require --external-review-tool=custom \
+--custom-review-script <cmd>"
                 );
             }
         }
@@ -622,15 +657,6 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         cli.compat_max_external_iterations
             .or(config.max_external_iterations)
     };
-    if max_external_iterations_value.is_some() {
-        eprintln!("[warning] --max-external-iterations is accepted but external loop is pending");
-    }
-    if cli.compat_review {
-        eprintln!("[warning] --review is accepted but review-only mode is pending");
-    }
-    if cli.compat_external_only || cli.compat_codex_only {
-        eprintln!("[warning] --external-only/--codex-only accepted but mode is pending");
-    }
     // max-iterations is stored on the future RunOptions; reading here keeps the
     // option live until later tasks wire it into the retry budget.
     let _ = if cli_provided("compat_max_iterations") {
@@ -657,6 +683,8 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         dry_run: false,
         workspace_id: None,
         review_patience: Some(review_patience_value),
+        mode,
+        max_external_iterations: max_external_iterations_value,
     })
 }
 
@@ -1089,6 +1117,8 @@ async fn create_run(
                 event_sink: Some(event_sink),
                 cancellation_check: Some(cancellation_check),
                 review_patience: None,
+                mode: crate::runner::RunMode::Full,
+                max_external_iterations: None,
             }) {
                 Ok(output) => output,
                 Err(err) => {

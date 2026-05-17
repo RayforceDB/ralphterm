@@ -198,6 +198,20 @@ impl PlanRunEvent {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RunMode {
+    /// Default mode: task phase plus review gate.
+    #[default]
+    Full,
+    /// Run task phase only; skip the review gate.
+    TasksOnly,
+    /// Skip the task phase; run the reviewer once against the current state.
+    ReviewOnly,
+    /// Skip the task phase; iterate implementer + reviewer until the reviewer
+    /// accepts or the iteration ceiling is reached.
+    ExternalOnly,
+}
+
 #[derive(Clone)]
 pub struct RunOptions {
     pub plan_path: PathBuf,
@@ -214,9 +228,22 @@ pub struct RunOptions {
     /// (matched on the first line of the REVIEW_FAIL reason) before the run
     /// aborts with a stalemate error. `None` disables the guard.
     pub review_patience: Option<usize>,
+    /// Selects how the runner orchestrates implementer and reviewer phases.
+    pub mode: RunMode,
+    /// Ceiling on external review-loop iterations when `mode` is
+    /// `RunMode::ExternalOnly`.
+    pub max_external_iterations: Option<usize>,
 }
 
 pub fn run_plan(options: RunOptions) -> Result<String> {
+    match options.mode {
+        RunMode::Full | RunMode::TasksOnly => run_plan_default(options),
+        RunMode::ReviewOnly => run_plan_review_only(options),
+        RunMode::ExternalOnly => run_plan_external_only(options),
+    }
+}
+
+fn run_plan_default(options: RunOptions) -> Result<String> {
     let input = fs::read_to_string(&options.plan_path)
         .with_context(|| format!("read plan {}", options.plan_path.display()))?;
     let mut plan_text = input;
@@ -892,6 +919,189 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
     )?;
 
     Ok(output)
+}
+
+fn run_plan_review_only(options: RunOptions) -> Result<String> {
+    let plan_path = options.plan_path.clone();
+    let plan_text = fs::read_to_string(&plan_path)
+        .with_context(|| format!("read plan {}", plan_path.display()))?;
+    let plan_name = plan_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let review_command = options.review_command.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("--review requires --external-review-tool=custom --custom-review-script")
+    })?;
+    validate_interactive_agent_command(review_command)?;
+    let timeout = options.agent_timeout.unwrap_or_else(agent_timeout);
+    check_for_cancellation(&options)?;
+    let mut output = format!("Reviewing {plan_name} (review-only mode)\n");
+    let decision = run_standalone_review(review_command, plan_name, &plan_text, timeout)?;
+    output.push_str(&decision.transcript);
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    match decision.accepted {
+        Some(true) => {
+            output.push_str("Review passed\n");
+            Ok(output)
+        }
+        Some(false) => {
+            bail!(
+                "review-only run failed: reviewer rejected current state\n{}",
+                decision.transcript
+            );
+        }
+        None => {
+            bail!(
+                "review-only run failed: reviewer did not emit REVIEW_PASS or REVIEW_FAIL\n{}",
+                decision.transcript
+            );
+        }
+    }
+}
+
+fn run_plan_external_only(options: RunOptions) -> Result<String> {
+    let plan_path = options.plan_path.clone();
+    let plan_text = fs::read_to_string(&plan_path)
+        .with_context(|| format!("read plan {}", plan_path.display()))?;
+    let plan_name = plan_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let agent_command = options
+        .agent_command
+        .clone()
+        .unwrap_or_else(|| DEFAULT_PLAN_AGENT_COMMAND.to_string());
+    let review_command = options.review_command.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "--external-only requires --external-review-tool=custom --custom-review-script"
+        )
+    })?;
+    validate_interactive_agent_command(&agent_command)?;
+    validate_interactive_agent_command(review_command)?;
+    if agent_commands_equivalent(&agent_command, review_command)? {
+        bail!("independent review command must differ from agent command");
+    }
+    let max_iterations = options.max_external_iterations.unwrap_or(10).max(1);
+    let timeout = options.agent_timeout.unwrap_or_else(agent_timeout);
+    let mut output = format!("External-only review loop for {plan_name}\n");
+    let mut latest_feedback: Option<String> = None;
+    for iteration in 1..=max_iterations {
+        check_for_cancellation(&options)?;
+        output.push_str(&format!("Iteration {iteration}/{max_iterations}\n"));
+        let decision = run_standalone_review(review_command, plan_name, &plan_text, timeout)?;
+        output.push_str(&decision.transcript);
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+        match decision.accepted {
+            Some(true) => {
+                output.push_str(&format!(
+                    "External review accepted after {iteration} iteration(s)\n"
+                ));
+                return Ok(output);
+            }
+            Some(false) => {
+                latest_feedback = Some(decision.transcript.clone());
+                if iteration == max_iterations {
+                    break;
+                }
+                let prompt = build_external_loop_prompt(
+                    plan_name,
+                    &plan_text,
+                    iteration,
+                    latest_feedback.as_deref(),
+                );
+                check_for_cancellation(&options)?;
+                let agent_run = run_agent_command_with_timeout(&agent_command, &prompt, timeout)
+                    .with_context(|| {
+                        format!("run external-only implementer iteration {iteration}")
+                    })?;
+                output.push_str(&agent_run.transcript);
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+                if agent_run.timed_out {
+                    bail!(
+                        "external-only implementer iteration {iteration} timed out after {timeout:?}"
+                    );
+                }
+                if agent_run.exit_code != 0 {
+                    bail!(
+                        "external-only implementer iteration {iteration} exited with {}",
+                        agent_run.exit_code
+                    );
+                }
+            }
+            None => {
+                bail!(
+                    "external-only reviewer did not emit REVIEW_PASS or REVIEW_FAIL on iteration {iteration}:\n{}",
+                    decision.transcript
+                );
+            }
+        }
+    }
+    bail!(
+        "external-only loop did not converge within {max_iterations} iterations\n{}",
+        latest_feedback.unwrap_or_default()
+    );
+}
+
+struct StandaloneReviewDecision {
+    transcript: String,
+    accepted: Option<bool>,
+}
+
+fn run_standalone_review(
+    review_command: &str,
+    plan_name: &str,
+    plan_text: &str,
+    timeout: Duration,
+) -> Result<StandaloneReviewDecision> {
+    let prompt = build_standalone_review_prompt(plan_name, plan_text, &git_state_for_review());
+    let agent_run = run_agent_command_with_timeout(review_command, &prompt, timeout)
+        .context("run external reviewer")?;
+    if agent_run.timed_out {
+        bail!("review command timed out after {timeout:?}");
+    }
+    if agent_run.exit_code != 0 {
+        bail!("review command exited with {}", agent_run.exit_code);
+    }
+    let accepted = review_output_decision(&agent_run.transcript, &prompt);
+    Ok(StandaloneReviewDecision {
+        transcript: agent_run.transcript,
+        accepted,
+    })
+}
+
+fn build_standalone_review_prompt(plan_name: &str, plan_text: &str, git_diff: &str) -> String {
+    format!(
+        "You are independently reviewing the current working-tree state for the RalphTerm plan {plan_name}.\n\nPlan contents:\n{plan_text}\n\nCurrent git diff:\n{git_diff}\n\n{}\n",
+        review_instruction()
+    )
+}
+
+fn build_external_loop_prompt(
+    plan_name: &str,
+    plan_text: &str,
+    iteration: usize,
+    feedback: Option<&str>,
+) -> String {
+    let mut prompt = format!(
+        "You are iterating on the external review loop for plan {plan_name}.\n\nIteration {iteration}.\n\nPlan contents:\n{plan_text}\n\n"
+    );
+    if let Some(feedback) = feedback {
+        prompt.push_str("Reviewer feedback from the previous iteration:\n");
+        prompt.push_str(feedback);
+        if !feedback.ends_with('\n') {
+            prompt.push('\n');
+        }
+        prompt.push_str("\nAddress the reviewer's findings, then print COMPLETED.\n");
+    } else {
+        prompt.push_str("Make the working tree match the plan, then print COMPLETED.\n");
+    }
+    prompt
 }
 
 pub fn run_smoke(agent_command: &str) -> Result<String> {
