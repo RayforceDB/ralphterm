@@ -37,6 +37,73 @@ fn smoke_command_runs_fake_agent_and_reports_completed_signal() {
 }
 
 #[test]
+fn smoke_command_with_builtin_claude_uses_path_cli_without_one_shot_args() {
+    let repo = TempRepo::new();
+    let bin_dir = repo.path.join("bin");
+    fs::create_dir(&bin_dir).expect("create fake bin dir");
+    let claude_shim = bin_dir.join("claude");
+    fs::write(
+        &claude_shim,
+        r#"#!/bin/sh
+if [ -t 0 ]; then
+  printf 'tty\n' > claude-stdin-kind.txt
+else
+  printf 'not-tty\n' > claude-stdin-kind.txt
+fi
+printf '%s\n' "$@" > claude-argv.txt
+cat > claude-stdin.txt
+printf 'fake claude interactive session\nCOMPLETED\n'
+"#,
+    )
+    .expect("write fake claude shim");
+    let mut permissions = fs::metadata(&claude_shim)
+        .expect("stat fake claude shim")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&claude_shim, permissions).expect("chmod fake claude shim");
+    let path = format!(
+        "{}:{}",
+        bin_dir.to_str().expect("utf8 bin path"),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("PATH", path)
+        .args(["smoke", "--agent", "claude"])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm smoke");
+
+    assert!(
+        output.status.success(),
+        "ralphterm smoke failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let argv = fs::read_to_string(repo.path.join("claude-argv.txt")).expect("read argv capture");
+    assert_eq!(argv, "\n", "built-in claude smoke must not add argv flags");
+    assert!(!argv.contains("--print"), "{argv}");
+    assert!(!argv.contains("-p"), "{argv}");
+
+    let stdin_kind = fs::read_to_string(repo.path.join("claude-stdin-kind.txt"))
+        .expect("read stdin kind capture");
+    assert_eq!(stdin_kind, "tty\n", "built-in claude smoke must use a PTY");
+
+    let stdin_prompt =
+        fs::read_to_string(repo.path.join("claude-stdin.txt")).expect("read stdin capture");
+    assert!(
+        stdin_prompt.contains("RalphTerm PTY smoke check"),
+        "{stdin_prompt}"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Smoke: claude"), "{stdout}");
+    assert!(stdout.contains("Signal: COMPLETED"), "{stdout}");
+}
+
+#[test]
 fn smoke_command_rejects_one_shot_print_mode() {
     let repo = TempRepo::new();
     let command = format!(
