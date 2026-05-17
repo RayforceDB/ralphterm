@@ -64,7 +64,22 @@
     </aside>
     <article class="rt-doc">
       <h1>Providers</h1>
-      <p>RalphTerm ships wrapper scripts in <code>scripts/wrappers/</code> for the providers ralphex users already rely on. Pick one with <code>--agent &lt;name&gt;</code>; <code>--claude-command</code> still wins when both are set. Each provider owns its own auth and credentials.</p>
+      <p>RalphTerm runs the official Anthropic Claude Code CLI by default — no wrapper needed. For other providers (Codex, Copilot, Gemini, OpenCode), RalphTerm ships small POSIX wrapper scripts in <code>scripts/wrappers/</code>. Pick one with <code>--agent &lt;name&gt;</code>; <code>--claude-command</code> still wins when both are set. Each provider owns its own auth and credentials.</p>
+
+      <h2>claude <span style="font-family:var(--rt-font-mono);font-size:11px;color:var(--rt-muted);letter-spacing:0.08em;text-transform:uppercase">— default</span></h2>
+      <p>The default provider. Running <code>ralphterm &lt;plan&gt;</code> with no <code>--claude-command</code> and no <code>[agent] provider</code> invokes the <code>claude</code> binary directly inside a PTY.</p>
+      <pre><code># install (one of)
+npm install -g @anthropic-ai/claude-code
+# or download from https://github.com/anthropics/claude-code
+
+# auth — either interactive or env
+claude login
+# or:
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# CLI usage — no wrapper, no flags needed
+ralphterm docs/plans/feature.md
+ralphterm --tasks-only docs/plans/feature.md</code></pre>
 
       <h2>codex</h2>
       <p>Install OpenAI Codex CLI and log in once. Then either use <code>--agent codex</code> or set <code>agent = codex</code> in config.</p>

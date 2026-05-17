@@ -1,12 +1,22 @@
-# Provider wrappers
+# Providers
 
-RalphTerm drives the OpenAI Codex, GitHub Copilot, Google Gemini, and OpenCode CLIs through small POSIX wrapper scripts. The wrappers translate RalphTerm's PTY-driven loop into the upstream CLI's plain interactive mode, and emit the `COMPLETED` / `FAILED` markers that the orchestrator listens for.
+RalphTerm runs the official Anthropic Claude Code CLI by default — no wrapper needed; the `claude` binary already emits the same PTY-friendly output RalphTerm expects. For other providers (OpenAI Codex, GitHub Copilot, Google Gemini, OpenCode), RalphTerm ships small POSIX wrapper scripts that translate the PTY-driven loop into each upstream CLI's interactive mode and emit the `COMPLETED` / `FAILED` markers the orchestrator listens for.
+
+| Provider | How it runs | Required env | Wrapper script |
+| --- | --- | --- | --- |
+| **Claude Code** *(default)* | Native — the `claude` CLI runs unmodified | `ANTHROPIC_API_KEY` *(or interactive `claude login`)* | — *(no wrapper)* |
+| OpenAI Codex | Via `scripts/wrappers/codex.sh` | `OPENAI_API_KEY` | `codex.sh` |
+| GitHub Copilot | Via `scripts/wrappers/copilot.sh` (targets `gh copilot suggest`) | `GH_TOKEN` *(or prior `gh auth login`)* | `copilot.sh` |
+| Google Gemini | Via `scripts/wrappers/gemini.sh` | `GEMINI_API_KEY` | `gemini.sh` |
+| OpenCode | Via `scripts/wrappers/opencode.sh` | Provider-specific (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …) | `opencode.sh` |
 
 The wrappers ship in `scripts/wrappers/` in this repository and (when installed via the standard layout) at `<exe_dir>/../share/ralphterm/wrappers/`.
 
 ## Selecting a provider
 
-You can point `--claude-command` at any wrapper directly:
+Claude Code is the default — running `ralphterm <plan>` with no `--claude-command` and no `[agent] provider` invokes the `claude` binary directly.
+
+For any other provider, point `--claude-command` at the wrapper:
 
 ```
 ralphterm --claude-command "$(pwd)/scripts/wrappers/codex.sh" --no-commit plan.md
@@ -19,7 +29,7 @@ For convenience, the global ralphex-compatible config (`$XDG_CONFIG_HOME/ralphex
 provider = codex
 ```
 
-Supported values for `provider`: `codex`, `copilot`, `gemini`, `opencode`. Unknown values are ignored with a `tracing::warn!` and RalphTerm continues with `claude_command = None` (so an explicit `--claude-command` or an explicit `claude_command =` setting is still required).
+Supported values for `provider`: `codex`, `copilot`, `gemini`, `opencode`. Unknown values are ignored with a `tracing::warn!` and RalphTerm continues with `claude_command = None` (so an explicit `--claude-command` or an explicit `claude_command =` setting is still required). Setting `provider = claude` is also accepted and is a no-op since Claude is the default.
 
 ## Wrapper contract
 
@@ -38,14 +48,14 @@ Each wrapper:
 
 ## Required environment per provider
 
-| Wrapper | Required env | Notes |
-| --- | --- | --- |
-| `codex.sh` | `OPENAI_API_KEY` | Targets the OpenAI Codex CLI. |
-| `copilot.sh` | `GH_TOKEN` (or a prior `gh auth login`) | Targets `gh copilot suggest`. |
-| `gemini.sh` | `GEMINI_API_KEY` | Targets Google's Gemini CLI. |
-| `opencode.sh` | Provider-specific (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) | OpenCode picks up its own provider credentials from the environment. |
+`ANTHROPIC_API_KEY` is only honoured by the default `claude` integration; it is not used by the wrappers below.
 
-`ANTHROPIC_API_KEY` is only honoured by the default `claude` integration; it is not used by the wrappers above.
+The provider summary table at the top of this page lists the required env per provider. Additional notes:
+
+- **`codex.sh`** — targets the OpenAI Codex CLI.
+- **`copilot.sh`** — targets `gh copilot suggest`.
+- **`gemini.sh`** — targets Google's Gemini CLI.
+- **`opencode.sh`** — OpenCode picks up its own provider credentials from the environment.
 
 ## Override knobs
 
