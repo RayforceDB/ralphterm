@@ -610,12 +610,13 @@ async fn create_run(
             };
 
             if dry_run {
+                let summary_json = dry_run_summary_json(&run_output);
                 match RunStore::write_result(
                     &base_dir,
                     run_id,
                     RunResultArtifacts {
                         summary_markdown: run_output,
-                        summary_json: None,
+                        summary_json: Some(summary_json),
                         diff_patch: String::new(),
                     },
                 ) {
@@ -722,6 +723,44 @@ async fn create_run(
     });
 
     Ok(Json(started))
+}
+
+fn dry_run_summary_json(output: &str) -> String {
+    let mut plan = "";
+    let mut review = "skipped";
+    let mut validation = Vec::new();
+    let mut tasks = Vec::new();
+
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("Dry run: ") {
+            plan = value;
+        } else if let Some(value) = line.strip_prefix("Review: ") {
+            review = value;
+        } else if let Some(value) = line.strip_prefix("Validation: ") {
+            if value != "none" {
+                validation.push(value.to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("Task ") {
+            if let Some((number, title)) = value.split_once(": ") {
+                if let Ok(number) = number.parse::<usize>() {
+                    tasks.push(serde_json::json!({
+                        "number": number,
+                        "title": title,
+                    }));
+                }
+            }
+        }
+    }
+
+    let summary_json = serde_json::json!({
+        "result": "passed",
+        "dry_run": true,
+        "plan": plan,
+        "review": review,
+        "validation": validation,
+        "tasks": tasks,
+    });
+    serde_json::to_string_pretty(&summary_json).expect("serialize dry-run summary json") + "\n"
 }
 
 fn copy_progress_artifacts(

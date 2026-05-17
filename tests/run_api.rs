@@ -3419,6 +3419,36 @@ fn assert_api_dry_run_artifacts_and_clean_repo(
         summary_response.body
     );
 
+    let summary_json_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/summary.json HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        summary_json_response.status, 200,
+        "{}",
+        summary_json_response.body
+    );
+    assert!(
+        summary_json_response
+            .content_type
+            .starts_with("application/json"),
+        "{}",
+        summary_json_response.content_type
+    );
+    let summary_json: serde_json::Value =
+        serde_json::from_str(&summary_json_response.body).expect("dry run summary json");
+    assert_eq!(summary_json["result"], "passed");
+    assert_eq!(summary_json["dry_run"], true);
+    assert_eq!(summary_json["plan"], "plan.md");
+    assert_eq!(summary_json["review"], "skipped");
+    assert_eq!(
+        summary_json["validation"],
+        serde_json::json!(["test -f first.txt"])
+    );
+    assert_eq!(summary_json["tasks"][0]["number"], 1);
+    assert_eq!(summary_json["tasks"][0]["title"], "Create first file");
+
     let diff_response = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
     assert_eq!(diff_response.status, 200, "{}", diff_response.body);
     assert_eq!(diff_response.body, "");
