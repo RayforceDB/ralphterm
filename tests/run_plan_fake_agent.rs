@@ -3420,6 +3420,23 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
         summary_json["tasks"][0]["review_transcript"],
         ".ralphterm/progress/plan-task-1-review.transcript"
     );
+    assert_eq!(summary_json["tasks"][0]["accepted"], true);
+    assert_eq!(
+        summary_json["tasks"][0]["acceptance_gates"]["agent"],
+        "passed"
+    );
+    assert_eq!(
+        summary_json["tasks"][0]["acceptance_gates"]["validation"],
+        "passed"
+    );
+    assert_eq!(
+        summary_json["tasks"][0]["acceptance_gates"]["review"],
+        "passed"
+    );
+    assert_eq!(
+        summary_json["tasks"][0]["acceptance_gates"]["commit"],
+        "skipped"
+    );
 }
 
 #[test]
@@ -4390,6 +4407,28 @@ fn max_review_retries_zero_blocks_after_first_review_fail() {
     assert!(
         summary.contains(&format!("Validation: {validation_path}")),
         "post-validation review failure summary should link validation output artifact:\n{summary}"
+    );
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed machine-readable run summary"),
+    )
+    .expect("parse failed machine-readable run summary");
+    assert_eq!(summary_json["failed_task"]["accepted"], false);
+    assert_eq!(
+        summary_json["failed_task"]["acceptance_gates"]["agent"],
+        "passed"
+    );
+    assert_eq!(
+        summary_json["failed_task"]["acceptance_gates"]["validation"],
+        "passed"
+    );
+    assert_eq!(
+        summary_json["failed_task"]["acceptance_gates"]["review"],
+        "failed"
+    );
+    assert_eq!(
+        summary_json["failed_task"]["acceptance_gates"]["commit"],
+        "skipped"
     );
 }
 

@@ -422,6 +422,10 @@ fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
             "{name} should make clear summary.json is produced by the plan runner"
         );
         assert!(
+            text.contains("accepted") && text.contains("acceptance_gates"),
+            "{name} should document machine-readable acceptance gates instead of forcing API callers to infer task acceptance"
+        );
+        assert!(
             text.contains("review_command") && text.contains("require_review"),
             "{name} should show how API callers require independent review"
         );

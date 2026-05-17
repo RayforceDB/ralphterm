@@ -1132,18 +1132,26 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
     let summary_json_tasks: Vec<_> = tasks
         .iter()
         .map(|task| {
+            let review_status = passed_task_review_status(&task.review_transcript_display);
             json!({
                 "number": task.number,
                 "title": task.title,
                 "status": "passed",
+                "accepted": true,
                 "attempts": task.attempts,
                 "review_attempts": task.review_attempts,
                 "transcript": task.transcript_display,
                 "validation": task.validation_output_display,
-                "review_status": passed_task_review_status(&task.review_transcript_display),
+                "review_status": review_status,
                 "review_transcript": task.review_transcript_display,
                 "commit": task.commit,
                 "commit_status": task.commit_status,
+                "acceptance_gates": {
+                    "agent": "passed",
+                    "validation": "passed",
+                    "review": review_status,
+                    "commit": task.commit_status,
+                },
             })
         })
         .collect();
@@ -1292,35 +1300,47 @@ fn write_failed_run_summary(
     let passed_json_tasks: Vec<_> = passed_tasks
         .iter()
         .map(|task| {
+            let review_status = passed_task_review_status(&task.review_transcript_display);
             json!({
                 "number": task.number,
                 "title": task.title,
                 "status": "passed",
+                "accepted": true,
                 "attempts": task.attempts,
                 "review_attempts": task.review_attempts,
                 "transcript": task.transcript_display,
                 "validation": task.validation_output_display,
-                "review_status": passed_task_review_status(&task.review_transcript_display),
+                "review_status": review_status,
                 "review_transcript": task.review_transcript_display,
                 "commit": task.commit,
                 "commit_status": task.commit_status,
+                "acceptance_gates": {
+                    "agent": "passed",
+                    "validation": "passed",
+                    "review": review_status,
+                    "commit": task.commit_status,
+                },
             })
         })
         .collect();
+    let review_status = failed_task_review_status(phase, link_review_transcript);
+    let commit_status = failed_task_commit_status(phase);
     let failed_task = json!({
         "number": task.number,
         "title": task.title,
         "status": "failed",
+        "accepted": false,
         "attempts": attempts,
         "review_attempts": review_attempts,
         "phase": phase,
         "reason": reason,
         "transcript": transcript_display,
         "validation": link_validation_output.then(|| progress.validation_output_display.clone()),
-        "review_status": failed_task_review_status(phase, link_review_transcript),
+        "review_status": review_status,
         "review_transcript": failed_review_transcript_display,
         "commit": null,
-        "commit_status": failed_task_commit_status(phase),
+        "commit_status": commit_status,
+        "acceptance_gates": failed_task_acceptance_gates(phase, review_status, commit_status),
     });
     let summary_json = json!({
         "plan": plan_name,
@@ -1363,7 +1383,7 @@ fn passed_task_review_status(review_transcript_display: &Option<String>) -> &'st
 }
 
 fn failed_task_review_status(phase: &str, link_review_transcript: bool) -> &'static str {
-    if phase == "review" {
+    if phase == "review" || phase == "review retry cleanup" {
         "failed"
     } else if link_review_transcript {
         "passed"
@@ -1377,6 +1397,48 @@ fn failed_task_commit_status(phase: &str) -> &'static str {
         "failed"
     } else {
         "skipped"
+    }
+}
+
+fn failed_task_acceptance_gates(
+    phase: &str,
+    review_status: &str,
+    commit_status: &str,
+) -> serde_json::Value {
+    json!({
+        "agent": failed_task_agent_gate(phase),
+        "validation": failed_task_validation_gate(phase),
+        "review": review_status,
+        "commit": commit_status,
+    })
+}
+
+fn failed_task_agent_gate(phase: &str) -> &'static str {
+    if phase == "agent execution" || phase == "agent completion" {
+        "failed"
+    } else {
+        "passed"
+    }
+}
+
+fn failed_task_validation_gate(phase: &str) -> &'static str {
+    match phase {
+        "agent execution" | "agent completion" => "skipped",
+        "validation" => "failed",
+        _ => "passed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn review_retry_cleanup_failure_keeps_review_gate_failed() {
+        assert_eq!(
+            failed_task_review_status("review retry cleanup", true),
+            "failed"
+        );
     }
 }
 
