@@ -386,7 +386,57 @@ pub(crate) fn locate_wrapper_script(provider: &str) -> Option<PathBuf> {
         }
     }
 
-    None
+    // Final fallback: extract the wrapper from the binary itself. `cargo install`
+    // only deposits the executable, so the on-disk scripts/ directory does not
+    // exist for crates.io installs. The wrapper sources are embedded via
+    // `include_str!` at compile time and written to an XDG cache directory on
+    // first use.
+    extract_embedded_wrapper(provider)
+}
+
+fn embedded_wrapper(provider: &str) -> Option<&'static str> {
+    match provider {
+        "codex" => Some(include_str!("../scripts/wrappers/codex.sh")),
+        "copilot" => Some(include_str!("../scripts/wrappers/copilot.sh")),
+        "gemini" => Some(include_str!("../scripts/wrappers/gemini.sh")),
+        "opencode" => Some(include_str!("../scripts/wrappers/opencode.sh")),
+        _ => None,
+    }
+}
+
+fn extract_embedded_wrapper(provider: &str) -> Option<PathBuf> {
+    let content = embedded_wrapper(provider)?;
+
+    let cache_root = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+
+    // Version-suffix the directory so a binary upgrade automatically refreshes
+    // the cached wrappers instead of running a stale copy.
+    let wrapper_dir = cache_root
+        .join("ralphterm")
+        .join(format!("wrappers-{}", env!("CARGO_PKG_VERSION")));
+    fs::create_dir_all(&wrapper_dir).ok()?;
+    let path = wrapper_dir.join(format!("{provider}.sh"));
+
+    // Idempotent: skip rewriting if the cached content already matches.
+    let needs_write = match fs::read_to_string(&path) {
+        Ok(existing) => existing != content,
+        Err(_) => true,
+    };
+    if needs_write {
+        fs::write(&path, content).ok()?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&path).ok()?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).ok()?;
+    }
+
+    Some(path)
 }
 
 fn walk_up_for_wrapper(start: &Path, filename: &str) -> Option<PathBuf> {
@@ -523,6 +573,69 @@ fn strip_quotes(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_wrapper_returns_script_for_each_known_provider() {
+        for provider in &["codex", "copilot", "gemini", "opencode"] {
+            let content = embedded_wrapper(provider)
+                .unwrap_or_else(|| panic!("missing embedded wrapper for {provider}"));
+            assert!(
+                content.starts_with("#!/usr/bin/env sh"),
+                "wrapper {provider} should start with a POSIX sh shebang"
+            );
+        }
+        assert!(embedded_wrapper("unknown-provider").is_none());
+    }
+
+    #[test]
+    fn extract_embedded_wrapper_writes_executable_script_into_cache() {
+        let tmp = std::env::temp_dir().join(format!(
+            "ralphterm-wrapper-extract-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
+        // SAFETY: tests in this binary are single-threaded by default in
+        // cargo nextest's per-test process model, and the integration tests
+        // do not read XDG_CACHE_HOME concurrently. We restore the prior
+        // value before returning.
+        unsafe {
+            std::env::set_var("XDG_CACHE_HOME", &tmp);
+        }
+
+        let path = extract_embedded_wrapper("codex").expect("codex wrapper should extract");
+
+        assert!(path.is_file(), "extracted wrapper should exist: {path:?}");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("COMPLETED"),
+            "wrapper should contain the COMPLETED marker"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o755, "wrapper should be executable: mode={mode:o}");
+        }
+        assert!(
+            path.starts_with(&tmp),
+            "wrapper should land under XDG_CACHE_HOME: {path:?}"
+        );
+
+        // restore
+        // SAFETY: see note above.
+        unsafe {
+            match prev_xdg {
+                Some(v) => std::env::set_var("XDG_CACHE_HOME", v),
+                None => std::env::remove_var("XDG_CACHE_HOME"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn parse_ini_extracts_known_keys_and_ignores_unknown() {

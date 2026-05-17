@@ -104,7 +104,7 @@ fn version_flag_prints_crate_version() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("0.1.1"), "stdout: {stdout}");
+    assert!(stdout.contains("0.1.2"), "stdout: {stdout}");
 }
 
 #[test]
