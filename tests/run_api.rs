@@ -1175,6 +1175,18 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
     );
     assert_eq!(progress_transcript_response.body, transcript);
 
+    let progress_validation_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-1-validation.txt HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        progress_validation_response.status, 200,
+        "{}",
+        progress_validation_response.body
+    );
+    assert_eq!(progress_validation_response.body, validation);
+
     let progress_log_response = request_json(
         port,
         &format!("GET /v1/runs/{id}/progress/plan.log HTTP/1.1"),
@@ -1207,6 +1219,27 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
         !unrelated_progress_response.body.contains(".ralphterm"),
         "{}",
         unrelated_progress_response.body
+    );
+
+    let traversal_progress_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/..%2Fsummary.md HTTP/1.1"),
+        None,
+    );
+    assert_ne!(
+        traversal_progress_response.status, 200,
+        "path traversal must not expose summary artifact: {}",
+        traversal_progress_response.body
+    );
+    assert!(
+        !traversal_progress_response.body.contains(".ralphterm"),
+        "{}",
+        traversal_progress_response.body
+    );
+    assert!(
+        !traversal_progress_response.body.contains(&id.to_string()),
+        "{}",
+        traversal_progress_response.body
     );
 
     let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
