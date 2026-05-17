@@ -344,6 +344,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         output.push_str(&format!("Task {}: {}\n", task.number, task.title));
         let mut review_feedback = None;
         let mut attempt = 1;
+        let mut completed_review_attempts = 0;
         let final_transcript_display: String;
         let final_review_transcript_display: String;
         let (_transcript, _validation_output) = loop {
@@ -385,7 +386,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &executed_tasks,
                         task,
                         attempt,
-                        0,
+                        completed_review_attempts,
                         "agent execution",
                         &detail,
                         &progress,
@@ -439,7 +440,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &executed_tasks,
                     task,
                     attempt,
-                    0,
+                    completed_review_attempts,
                     "agent execution",
                     &detail,
                     &progress,
@@ -468,7 +469,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &executed_tasks,
                     task,
                     attempt,
-                    0,
+                    completed_review_attempts,
                     "agent execution",
                     &detail,
                     &progress,
@@ -499,7 +500,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &executed_tasks,
                     task,
                     attempt,
-                    0,
+                    completed_review_attempts,
                     "agent completion",
                     &detail,
                     &progress,
@@ -546,7 +547,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &executed_tasks,
                         task,
                         attempt,
-                        0,
+                        completed_review_attempts,
                         "validation",
                         &validation_error,
                         &progress,
@@ -575,7 +576,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     &options,
                     PlanRunEvent::for_task("review_started", task, Some(attempt)),
                 )?;
-                match run_review_command(
+                let review_result = run_review_command(
                     review_command,
                     plan_name,
                     task,
@@ -584,7 +585,9 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     timeout,
                     &progress,
                     &attempt_progress,
-                ) {
+                );
+                completed_review_attempts += 1;
+                match review_result {
                     Ok(review_output) => {
                         output.push_str(&review_output);
                         append_progress(&progress.log_path, "review result=passed")?;
@@ -648,7 +651,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                                         &executed_tasks,
                                         task,
                                         attempt,
-                                        attempt,
+                                        completed_review_attempts,
                                         "review retry cleanup",
                                         &cleanup_message,
                                         &progress,
@@ -682,7 +685,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                             &executed_tasks,
                             task,
                             attempt,
-                            attempt,
+                            completed_review_attempts,
                             "review",
                             &err.to_string(),
                             &progress,
@@ -764,11 +767,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                         &executed_tasks,
                         task,
                         attempt,
-                        if options.review_command.is_some() {
-                            attempt
-                        } else {
-                            0
-                        },
+                        completed_review_attempts,
                         "commit",
                         &reason,
                         &progress,
@@ -799,11 +798,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             &options,
             PlanRunEvent::for_task("task_succeeded", task, None),
         )?;
-        let review_attempts = if options.review_command.is_some() {
-            attempt
-        } else {
-            0
-        };
+        let review_attempts = completed_review_attempts;
         executed_tasks.push(ExecutedTask {
             number: task.number,
             title: task.title.clone(),

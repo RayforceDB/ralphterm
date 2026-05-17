@@ -4559,6 +4559,114 @@ fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
 }
 
 #[test]
+fn failed_run_summary_records_review_attempts_when_retry_fails_before_review() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    let agent_path = repo.path.join("retry-agent-fails-before-second-review.sh");
+    fs::write(
+        &agent_path,
+        r#"#!/usr/bin/env sh
+set -eu
+prompt=$(cat)
+state_dir=.ralphterm/retry-agent-fails-before-second-review
+mkdir -p "$state_dir"
+count_file="$state_dir/count.txt"
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$count_file"
+printf '%s\n' "$count" > agent-count.txt
+printf '%s\n' "$prompt" > "agent-prompt-$count.txt"
+if [ "$count" -eq 1 ]; then
+  printf 'needs review fix\n' > first.txt
+  printf 'COMPLETED\n'
+else
+  if ! printf '%s\n' "$prompt" | grep -q 'Previous review failed'; then
+    printf 'retry prompt missing review feedback\n' >&2
+    exit 43
+  fi
+  printf 'retry failed before review\n'
+  exit 42
+fi
+"#,
+    )
+    .expect("write retry-failing agent");
+    let mut permissions = fs::metadata(&agent_path)
+        .expect("stat retry-failing agent")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&agent_path, permissions).expect("chmod retry-failing agent");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            agent_path.to_str().expect("utf8 agent path"),
+            "--review-command",
+            fixture_path("review-fail-once.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run should fail when retry implementation exits before review\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("agent-count.txt")).expect("read agent count"),
+        "2\n"
+    );
+    assert!(
+        fs::read_to_string(
+            repo.path
+                .join(".ralphterm/progress/plan-task-1-attempt-1-review.transcript"),
+        )
+        .expect("read first review transcript")
+        .contains("REVIEW_FAIL"),
+        "first attempt should have run and failed review"
+    );
+    assert!(
+        !repo
+            .path
+            .join(".ralphterm/progress/plan-task-1-attempt-2-review.transcript")
+            .exists(),
+        "retry attempt should fail before a second review runs"
+    );
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed machine-readable run summary"),
+    )
+    .expect("parse failed machine-readable run summary");
+    assert_eq!(summary_json["result"], "failed");
+    assert_eq!(summary_json["failed_task"]["phase"], "agent execution");
+    assert_eq!(summary_json["failed_task"]["attempts"], 2);
+    assert_eq!(summary_json["failed_task"]["review_attempts"], 1);
+}
+
+#[test]
 fn failed_run_summary_records_attempt_counts_after_review_retry_failure() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
