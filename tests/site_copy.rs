@@ -454,6 +454,36 @@ fn dashboard_run_form_supports_isolated_workspace_runs() {
 }
 
 #[test]
+fn dashboard_run_table_surfaces_workspace_path() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dashboard_html =
+        std::fs::read_to_string(root.join("dashboard/index.html")).expect("read dashboard html");
+    let dashboard_js =
+        std::fs::read_to_string(root.join("dashboard/app.js")).expect("read dashboard js");
+
+    assert!(
+        dashboard_html.contains("<th scope=\"col\">Workspace</th>"),
+        "dashboard runs table should expose the workspace path recorded on run intake"
+    );
+    assert!(
+        dashboard_js.contains("cell(run.workspace_path)"),
+        "dashboard runs table should render the workspace_path field from run records"
+    );
+    assert!(
+        dashboard_html.contains("<tr><td colspan=\"7\">Loading runs…</td></tr>"),
+        "dashboard loading row should span all run table columns"
+    );
+    assert!(
+        dashboard_js.contains("renderEmptyRow(runsBody, 'No runs yet.', 7)"),
+        "dashboard empty row should span all run table columns"
+    );
+    assert!(
+        dashboard_js.contains("renderErrorRow(runsBody, error.message, 7)"),
+        "dashboard error row should span all run table columns"
+    );
+}
+
+#[test]
 fn dashboard_run_form_validates_review_retry_budget_before_post() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let dashboard_html =

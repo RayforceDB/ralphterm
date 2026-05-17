@@ -74,6 +74,8 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
         js.body
     );
     assert!(js.body.contains("/v1/runs/${run.id}/events"), "{}", js.body);
+    assert!(html.body.contains("Workspace"), "{}", html.body);
+    assert!(js.body.contains("cell(run.workspace_path)"), "{}", js.body);
     assert!(
         js.body.contains("Summary artifact for run ${run.id}"),
         "{}",
@@ -87,7 +89,7 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
     );
     assert!(
         js.body
-            .contains("renderErrorRow(runsBody, error.message, 6)"),
+            .contains("renderErrorRow(runsBody, error.message, 7)"),
         "{}",
         js.body
     );

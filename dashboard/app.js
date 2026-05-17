@@ -140,7 +140,7 @@ function renderRunRows(runs) {
   runsBody.replaceChildren();
 
   if (!runs.length) {
-    renderEmptyRow(runsBody, 'No runs yet.', 6);
+    renderEmptyRow(runsBody, 'No runs yet.', 7);
     return;
   }
 
@@ -152,6 +152,7 @@ function renderRunRows(runs) {
       cell(run.status),
       cell(runGateLabel(run)),
       cell(run.plan_path),
+      cell(run.workspace_path),
       runArtifactCell(run),
     );
     runsBody.append(row);
@@ -206,7 +207,7 @@ async function loadRuns() {
   } catch (error) {
     runsStatus.textContent = 'Error';
     runsBody.replaceChildren();
-    renderErrorRow(runsBody, error.message, 6);
+    renderErrorRow(runsBody, error.message, 7);
   }
 }
 
