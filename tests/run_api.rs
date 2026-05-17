@@ -126,6 +126,7 @@ fn dashboard_run_form_posts_reviewed_plan_run_request() {
         "name=\"agent_command\"",
         "id=\"run-review-agent\"",
         "name=\"review_agent\"",
+        "<option value=\"codex\" selected>codex</option>",
         "id=\"run-review-command\"",
         "name=\"review_command\"",
         "id=\"run-require-review\"",
@@ -160,6 +161,10 @@ fn dashboard_run_form_posts_reviewed_plan_run_request() {
         "dry_run",
         "no_commit",
         "max_review_retries",
+        "runSubmit.disabled = true",
+        "runSubmit.disabled = false",
+        "agent and agent_command are mutually exclusive",
+        "review_agent and review_command are mutually exclusive",
         "loadRuns()",
     ] {
         assert!(

@@ -1,4 +1,5 @@
 const runForm = document.querySelector('#run-form');
+const runSubmit = document.querySelector('#run-submit');
 const runFormStatus = document.querySelector('#run-form-status');
 const runsBody = document.querySelector('#runs-body');
 const runsStatus = document.querySelector('#runs-status');
@@ -248,15 +249,44 @@ function runRequestBody(form) {
   return body;
 }
 
+function validateRunRequestBody(body) {
+  if (body.agent && body.agent_command) {
+    return 'agent and agent_command are mutually exclusive';
+  }
+  if (body.review_agent && body.review_command) {
+    return 'review_agent and review_command are mutually exclusive';
+  }
+  if (body.require_review && !body.review_agent && !body.review_command) {
+    return 'review_agent or review_command is required when review is required';
+  }
+  return null;
+}
+
+let runSubmitInFlight = false;
+
 async function submitRunForm(event) {
   event.preventDefault();
+
+  if (runSubmitInFlight) {
+    return;
+  }
+
+  const body = runRequestBody(runForm);
+  const validationError = validateRunRequestBody(body);
+  if (validationError) {
+    runFormStatus.textContent = validationError;
+    return;
+  }
+
+  runSubmitInFlight = true;
+  if (runSubmit) runSubmit.disabled = true;
 
   try {
     runFormStatus.textContent = 'Starting…';
     const response = await fetch('/v1/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(runRequestBody(runForm)),
+      body: JSON.stringify(body),
     });
     const responseBody = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -267,6 +297,9 @@ async function submitRunForm(event) {
     await loadRuns();
   } catch (error) {
     runFormStatus.textContent = error.message;
+  } finally {
+    runSubmitInFlight = false;
+    if (runSubmit) runSubmit.disabled = false;
   }
 }
 
