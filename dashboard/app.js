@@ -241,7 +241,7 @@ function runRequestBody(form) {
     max_review_retries: Number(formData.get('max_review_retries') || 1),
   };
 
-  for (const name of ['plan_path', 'agent', 'agent_command', 'review_agent', 'review_command']) {
+  for (const name of ['plan_path', 'workspace_id', 'agent', 'agent_command', 'review_agent', 'review_command']) {
     const value = optionalText(formData, name);
     if (value) body[name] = value;
   }

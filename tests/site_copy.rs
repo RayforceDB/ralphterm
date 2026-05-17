@@ -428,6 +428,28 @@ fn getting_started_shows_minimal_plan_file_shape() {
 }
 
 #[test]
+fn dashboard_run_form_supports_isolated_workspace_runs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dashboard_html =
+        std::fs::read_to_string(root.join("dashboard/index.html")).expect("read dashboard html");
+    let dashboard_js =
+        std::fs::read_to_string(root.join("dashboard/app.js")).expect("read dashboard js");
+
+    assert!(
+        dashboard_html.contains("name=\"workspace_id\""),
+        "dashboard reviewed run form should let maintainers choose an isolated workspace id"
+    );
+    assert!(
+        dashboard_html.contains("placeholder=\"docs-slice\""),
+        "workspace id field should show the same concrete example used in docs"
+    );
+    assert!(
+        dashboard_js.contains("workspace_id"),
+        "dashboard run request body should send workspace_id to POST /v1/runs"
+    );
+}
+
+#[test]
 fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let api_markdown = std::fs::read_to_string(root.join("docs/api.md")).expect("read api docs");
