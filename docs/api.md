@@ -80,11 +80,12 @@ GET  /v1/runs/:id/summary
 GET  /v1/runs/:id/summary.json
 GET  /v1/runs/:id/diff
 GET  /v1/runs/:id/progress
+GET  /v1/runs/:id/progress/:artifact
 GET  /v1/runs/:id/events
 POST /v1/runs/:id/cancel
 ```
 
-`GET /v1/runs/:id/events` returns run lifecycle events such as `run_created`, `run_succeeded`, `run_failed`, and `run_cancelled`. Plan-runner executions write `summary.md` and `diff.patch` under `.ralphterm/runs/<id>/`; agent-backed runs also preserve the runner-generated `summary.json` when the runner produced one. `GET /v1/runs/:id/summary` returns `summary.md` as plain text; `GET /v1/runs/:id/summary.json` returns the machine-readable task result summary when present; `GET /v1/runs/:id/diff` returns `diff.patch` as plain text. `GET /v1/runs/:id/progress` returns a JSON index of copied progress artifacts with `name`, `kind`, and `url` fields for transcripts, validation output, review transcripts, and the progress log. Runs that exist but do not have an artifact yet return 404 with an artifact-specific message.
+`GET /v1/runs/:id/events` returns run lifecycle events such as `run_created`, `run_succeeded`, `run_failed`, and `run_cancelled`. Plan-runner executions write `summary.md` and `diff.patch` under `.ralphterm/runs/<id>/`; agent-backed runs also preserve the runner-generated `summary.json` when the runner produced one. `GET /v1/runs/:id/summary` returns `summary.md` as plain text; `GET /v1/runs/:id/summary.json` returns the machine-readable task result summary when present; `GET /v1/runs/:id/diff` returns `diff.patch` as plain text. `GET /v1/runs/:id/progress` returns a JSON index of copied progress artifacts with `name`, `kind`, and `url` fields for transcripts, validation output, review transcripts, and the progress log. Follow an artifact `url`, or call `GET /v1/runs/:id/progress/:artifact`, to fetch the copied transcript, validation output, review transcript, or progress log directly. Runs that exist but do not have an artifact yet return 404 with an artifact-specific message.
 
 ## Create a raw session
 

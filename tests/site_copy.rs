@@ -268,11 +268,16 @@ fn docs_describe_run_api_as_asynchronous_and_expose_artifacts() {
         "GET  /v1/runs/:id/summary",
         "GET  /v1/runs/:id/diff",
         "GET  /v1/runs/:id/progress",
+        "GET  /v1/runs/:id/progress/:artifact",
         "POST /v1/runs/:id/cancel",
     ] {
         assert!(
             readme.contains(endpoint),
             "README current API list should expose run endpoint {endpoint}"
+        );
+        assert!(
+            api_markdown.contains(endpoint),
+            "API markdown current API list should expose run endpoint {endpoint}"
         );
         assert!(
             api_html.contains(endpoint),

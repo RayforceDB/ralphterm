@@ -68,6 +68,7 @@ GET  /v1/runs/:id/summary
 GET  /v1/runs/:id/summary.json
 GET  /v1/runs/:id/diff
 GET  /v1/runs/:id/progress
+GET  /v1/runs/:id/progress/:artifact
 POST /v1/runs/:id/cancel
 POST /v1/sessions
 GET  /v1/sessions
