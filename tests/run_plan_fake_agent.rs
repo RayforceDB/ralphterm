@@ -6315,7 +6315,7 @@ fn failed_task_resume_is_logged_before_retry_start_and_completes_task() {
 }
 
 #[test]
-fn ralphex_compat_full_mode_without_reviewer_refuses_to_run_agent() {
+fn ralphex_compat_custom_review_tool_without_script_refuses_to_run_agent() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
     fs::write(
@@ -6338,6 +6338,7 @@ fn ralphex_compat_full_mode_without_reviewer_refuses_to_run_agent() {
             fixture_path("fake-agent.sh")
                 .to_str()
                 .expect("utf8 fixture path"),
+            "--external-review-tool=custom",
             "--no-commit",
             plan_path.to_str().expect("utf8 plan path"),
         ])
@@ -6347,7 +6348,7 @@ fn ralphex_compat_full_mode_without_reviewer_refuses_to_run_agent() {
 
     assert!(
         !output.status.success(),
-        "ralphex-compatible full mode without a reviewer must error before running the agent\nstdout:\n{}\nstderr:\n{}",
+        "--external-review-tool=custom without --custom-review-script must error before running the agent\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -6370,6 +6371,64 @@ fn ralphex_compat_full_mode_without_reviewer_refuses_to_run_agent() {
     assert!(
         plan.contains("- [ ] Write first.txt"),
         "plan task should remain unmarked:\n{plan}"
+    );
+}
+
+#[test]
+fn ralphex_compat_full_mode_defaults_to_codex_reviewer() {
+    // Drop-in parity with ralphex: `ralphterm <plan>` with no explicit
+    // --external-review-tool must default to codex. We swap the codex CLI
+    // for review-pass.sh via PROVIDER_OVERRIDE so the codex wrapper's
+    // PTY-driven flow accepts the task without needing a real codex install.
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let review_pass = fixture_path("review-pass.sh");
+    let review_pass_str = review_pass.to_str().expect("utf8 review-pass path");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .env("PROVIDER_OVERRIDE", review_pass_str)
+        .args([
+            "--claude-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            plan_path.to_str().expect("utf8 plan path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "default full mode should pick up the bundled codex.sh wrapper as the reviewer\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        repo.path.join("first.txt").exists(),
+        "implementer should have produced first.txt"
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(
+        plan.contains("- [x] Write first.txt"),
+        "task should be marked complete after default codex review passes:\n{plan}"
     );
 }
 

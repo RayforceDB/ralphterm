@@ -59,7 +59,7 @@ struct Cli {
         help = "ralphex-compatible alias for run --review-command"
     )]
     compat_custom_review_script: Option<String>,
-    #[arg(long = "external-review-tool", value_parser = ["custom", "none"], help = "ralphex-compatible external review selector")]
+    #[arg(long = "external-review-tool", value_parser = ["codex", "custom", "none"], help = "ralphex-compatible external review selector (default: codex)")]
     compat_external_review_tool: Option<String>,
     #[arg(
         long = "no-commit",
@@ -689,13 +689,18 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         }
     };
 
+    // Ralphex defaults `external_review_tool` to `codex` so plans run with an
+    // independent reviewer out of the box. We match that — the drop-in promise
+    // requires `ralphterm <plan>` to work for users with codex installed,
+    // without forcing them to add flags ralphex never required.
     let external_review_tool = cli_provided_or(
         "compat_external_review_tool",
         cli.compat_external_review_tool.clone(),
         config.external_review_tool.clone(),
-    );
+    )
+    .or_else(|| Some("codex".to_string()));
     if let Some(tool) = external_review_tool.as_deref() {
-        if !matches!(tool, "custom" | "none") {
+        if !matches!(tool, "codex" | "custom" | "none") {
             bail!("unsupported external review tool: {tool}");
         }
     }
@@ -706,6 +711,8 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
     );
     let review_command = match external_review_tool.as_deref() {
         Some("custom") => custom_review_script.clone(),
+        Some("codex") => crate::config::locate_wrapper_script("codex")
+            .map(|path| path.to_string_lossy().into_owned()),
         _ => None,
     };
 
@@ -719,6 +726,14 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         crate::runner::RunMode::Full
     };
 
+    // Tasks-only never invokes the reviewer; drop any defaulted command so the
+    // runner doesn't try to spawn it.
+    let review_command = if matches!(mode, crate::runner::RunMode::TasksOnly) {
+        None
+    } else {
+        review_command
+    };
+
     // Default full mode requires an independent reviewer unless --tasks-only is
     // set. --review and --external-only/--codex-only also require a reviewer.
     let mut require_review = false;
@@ -726,8 +741,17 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         crate::runner::RunMode::TasksOnly => {}
         crate::runner::RunMode::Full => {
             match (external_review_tool.as_deref(), review_command.as_deref()) {
-                (Some("custom"), Some(_)) => {
+                (Some("custom") | Some("codex"), Some(_)) => {
                     require_review = true;
+                }
+                (Some("codex"), None) => {
+                    bail!(
+                        "ralphex-compatible full mode defaults to external-review-tool=codex but \
+the bundled codex wrapper could not be located. Install ralphterm via cargo or one of the \
+prebuilt installers so scripts/wrappers/codex.sh ships alongside the binary, or pass \
+--external-review-tool=custom --custom-review-script <cmd>, --external-review-tool=none, or \
+--tasks-only."
+                    );
                 }
                 (Some("custom"), None) => {
                     bail!(
@@ -743,19 +767,22 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
                 }
                 _ => {
                     bail!(
-                        "ralphex-compatible full mode requires --external-review-tool=custom \
---custom-review-script <cmd>, or pass --tasks-only"
+                        "ralphex-compatible full mode requires --external-review-tool=codex (the \
+default), --external-review-tool=custom --custom-review-script <cmd>, or \
+--external-review-tool=none, or pass --tasks-only"
                     );
                 }
             }
         }
         crate::runner::RunMode::ReviewOnly | crate::runner::RunMode::ExternalOnly => {
-            if !matches!(external_review_tool.as_deref(), Some("custom"))
-                || review_command.is_none()
+            if !matches!(
+                external_review_tool.as_deref(),
+                Some("custom") | Some("codex")
+            ) || review_command.is_none()
             {
                 bail!(
-                    "--review and --external-only require --external-review-tool=custom \
---custom-review-script <cmd>"
+                    "--review and --external-only require --external-review-tool=codex (with \
+codex installed) or --external-review-tool=custom --custom-review-script <cmd>"
                 );
             }
         }

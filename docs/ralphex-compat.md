@@ -25,7 +25,7 @@ RalphTerm aims to be a drop-in replacement for [ralphex](https://github.com/umpu
 | `--review-model` | `--review-model` | Supported | Exported as `$CLAUDE_REVIEW_MODEL` to the reviewer. |
 | `--claude-command` | `--claude-command` | Supported | PTY command, never `-p`/`--print`. |
 | `--claude-args` | `--claude-args` | Supported | Shell-split; appended to `--claude-command`. |
-| `--external-review-tool` | `--external-review-tool` | Supported (`custom`, `none`) | `codex` value is currently rejected — pass `custom` with `--custom-review-script "codex …"`. |
+| `--external-review-tool` | `--external-review-tool` | Supported (`codex`, `custom`, `none`) | Defaults to `codex` (matches ralphex). `codex` auto-wires the bundled `scripts/wrappers/codex.sh`. |
 | `--custom-review-script` | `--custom-review-script` | Supported | Required by `--external-review-tool=custom`. |
 | `-b`, `--base-ref` | `-b`, `--base-ref` | Accepted (no-op, warned) | Stored, but full diff-range support is pending. |
 | `--session-timeout` | `--session-timeout` | Supported | Parsed (e.g. `30s`, `5m`, `1h`) and applied per agent session. |
@@ -94,7 +94,7 @@ Known keys:
 | --- | --- | --- |
 | `claude_command` | string | Implementer command. |
 | `claude_args` | string | Shell-split extra args. |
-| `external_review_tool` | string | `custom` or `none`. |
+| `external_review_tool` | string | `codex` (default), `custom`, or `none`. |
 | `custom_review_script` | string | Reviewer command. |
 | `max_iterations` | int | |
 | `max_external_iterations` | int | |

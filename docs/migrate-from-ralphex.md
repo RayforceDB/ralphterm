@@ -40,7 +40,13 @@ If you see warnings about unsupported flags or missing config keys, see [ralphex
 
 ## 4. Re-enable the review gate
 
-Ralphex's default (full) mode runs implementation **and** review. RalphTerm matches that default, but it requires the reviewer to be configured explicitly:
+Ralphex's default (full) mode runs implementation **and** review. RalphTerm matches that default — including the `external_review_tool = codex` default — so `ralphterm docs/plans/<your-plan>.md` works out of the box if you have `codex` installed:
+
+```bash
+ralphterm docs/plans/<your-plan>.md
+```
+
+To pin a different reviewer:
 
 ```bash
 ralphterm \
@@ -49,11 +55,17 @@ ralphterm \
   docs/plans/<your-plan>.md
 ```
 
-You can also keep these settings in `~/.config/ralphex/config`:
+You can keep these settings in `~/.config/ralphex/config`:
 
 ```ini
 external_review_tool = custom
 custom_review_script = codex exec review-task
+```
+
+To disable the review gate (matches `ralphex --tasks-only` semantics) without `--tasks-only`:
+
+```ini
+external_review_tool = none
 ```
 
 ## 5. Confirm `.ralphex/` is read
@@ -104,7 +116,6 @@ The compatibility matrix in [ralphex-compat.md](ralphex-compat.md) is the author
 - **`--base-ref` is accepted without full diff-range support yet.** It is forwarded but does not narrow the review diff.
 - **`--init`, `--reset`, `--dump-defaults`, and `--skip-finalize` are not yet implemented.** Passing them produces a clap error.
 - **HTTPS notification endpoints are skipped by default.** The built-in notifier is non-TLS to avoid pulling in a heavy crate. Use plain `http://` endpoints, set `RALPHTERM_TELEGRAM_BASE` to a local proxy, or terminate TLS in front of RalphTerm.
-- **`--external-review-tool=codex` is rejected.** Pass `custom` with `--custom-review-script "codex exec review-task"` instead.
 - **`-V` is the short form of `--version`.** ralphex uses `-v`; clap reserves `-v` for future verbosity flags.
 
 ## Rolling back

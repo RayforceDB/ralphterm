@@ -1,6 +1,6 @@
 [package]
 name = "ralphterm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Drop-in replacement for ralphex. Runs Claude Code / Codex / Gemini in real PTYs with independent review gates."
