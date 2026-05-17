@@ -337,6 +337,28 @@ fn public_api_endpoint_list_includes_list_sessions() {
 }
 
 #[test]
+fn api_docs_describe_session_approval_pending_field() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let api_markdown = std::fs::read_to_string(root.join("docs/api.md")).expect("read api docs");
+    let api_html =
+        std::fs::read_to_string(root.join("site/docs/api.html")).expect("read public api docs");
+
+    for (name, text) in [
+        ("markdown api docs", api_markdown.as_str()),
+        ("public api docs", api_html.as_str()),
+    ] {
+        assert!(
+            text.contains("approval_pending"),
+            "{name} should document the session approval_pending response field"
+        );
+        assert!(
+            text.contains("pending approval"),
+            "{name} should explain that approval_pending means a session is waiting for approval"
+        );
+    }
+}
+
+#[test]
 fn getting_started_shows_minimal_plan_file_shape() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let docs_markdown =

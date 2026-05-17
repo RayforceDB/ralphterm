@@ -113,6 +113,16 @@ content-type: application/json
   "cols": 120,
   "rows": 40
 }</code></pre>
+      <h2>Session records</h2>
+      <p><code>GET /v1/sessions</code> and <code>GET /v1/sessions/:id</code> return session records with <code>approval_pending</code>. It is <code>true</code> while the session has pending approval and is waiting for an explicit approval response; otherwise it is <code>false</code>.</p>
+      <pre><code>{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "agent": "claude",
+  "status": "running",
+  "signal": null,
+  "approval_pending": false,
+  "exit_code": null
+}</code></pre>
       <h2>Send input</h2>
       <pre><code>POST /v1/sessions/:id/input
 

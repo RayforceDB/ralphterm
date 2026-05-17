@@ -133,11 +133,14 @@ Response shape:
   "agent": "claude",
   "status": "running",
   "signal": null,
+  "approval_pending": false,
   "exit_code": null,
   "created_at_ms": 0,
   "updated_at_ms": 0
 }
 ```
+
+`approval_pending` is `true` while the session has pending approval and is waiting for an explicit approval response; otherwise it is `false`.
 
 ## Send input
 
@@ -170,6 +173,7 @@ Returns the in-memory session records for the running daemon. The dashboard uses
     "agent": "claude",
     "status": "running",
     "signal": null,
+    "approval_pending": false,
     "exit_code": null
   }
 ]
