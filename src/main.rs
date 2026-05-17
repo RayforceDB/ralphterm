@@ -525,6 +525,20 @@ async fn create_run(
             let event_progress_dir = progress_dir.clone();
             let event_slug = slug.clone();
             let event_sink = Arc::new(move |event: PlanRunEvent| {
+                match RunStore::get(&event_base_dir, run_id)? {
+                    Some(record) if record.status == RunStatus::Running => {}
+                    Some(_) => anyhow::bail!("run was cancelled"),
+                    None => anyhow::bail!("run disappeared"),
+                }
+                if let Err(copy_err) = copy_progress_artifacts(
+                    &event_base_dir,
+                    run_id,
+                    &event_progress_dir,
+                    &event_slug,
+                    None,
+                ) {
+                    tracing::error!(%run_id, error = %copy_err, "failed to copy live run progress artifacts");
+                }
                 let appended = RunStore::append_progress_event(
                     &event_base_dir,
                     run_id,
@@ -539,15 +553,6 @@ async fn create_run(
                 )?;
                 if appended.is_none() {
                     anyhow::bail!("run was cancelled");
-                }
-                if let Err(copy_err) = copy_progress_artifacts(
-                    &event_base_dir,
-                    run_id,
-                    &event_progress_dir,
-                    &event_slug,
-                    None,
-                ) {
-                    tracing::error!(%run_id, error = %copy_err, "failed to copy live run progress artifacts");
                 }
                 Ok(())
             });
@@ -762,13 +767,58 @@ fn copy_progress_artifacts(
             continue;
         }
         let destination = artifact_dir.join(&artifact_name);
-        fs::copy(&source, &destination).with_context(|| {
+        atomic_copy_file(&source, &destination).with_context(|| {
             format!(
                 "copy progress artifact {} to {}",
                 source.display(),
                 destination.display()
             )
         })?;
+    }
+
+    Ok(())
+}
+
+fn atomic_copy_file(source: &FsPath, destination: &FsPath) -> anyhow::Result<()> {
+    let parent = destination.parent().with_context(|| {
+        format!(
+            "determine parent directory for destination {}",
+            destination.display()
+        )
+    })?;
+    let file_name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| {
+            format!(
+                "determine file name for destination {}",
+                destination.display()
+            )
+        })?;
+    let temp_path = parent.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+
+    let copy_result = fs::copy(source, &temp_path).with_context(|| {
+        format!(
+            "copy {} to temporary file {}",
+            source.display(),
+            temp_path.display()
+        )
+    });
+    if let Err(err) = copy_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(err);
+    }
+
+    let rename_result = fs::rename(&temp_path, destination).with_context(|| {
+        format!(
+            "rename temporary progress artifact {} to {}",
+            temp_path.display(),
+            destination.display()
+        )
+    });
+    if let Err(err) = rename_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(err);
     }
 
     Ok(())
@@ -1372,5 +1422,41 @@ impl IntoResponse for ApiError {
             Json(serde_json::json!({"error": self.message})),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::atomic_copy_file;
+    use std::fs;
+
+    #[test]
+    fn atomic_copy_file_overwrites_destination_without_leaving_temps() {
+        let temp = std::env::temp_dir().join(format!(
+            "ralphterm-atomic-copy-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp).unwrap();
+
+        let source = temp.join("source.log");
+        let destination = temp.join("destination.log");
+        fs::write(&source, "new progress").unwrap();
+        fs::write(&destination, "old progress").unwrap();
+
+        atomic_copy_file(&source, &destination).unwrap();
+
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "new progress");
+        let leftover_temps: Vec<_> = fs::read_dir(&temp)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp"))
+            .collect();
+        assert!(
+            leftover_temps.is_empty(),
+            "leftover temp files: {leftover_temps:?}"
+        );
+
+        fs::remove_dir_all(temp).unwrap();
     }
 }
