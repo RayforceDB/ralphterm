@@ -23,6 +23,7 @@ pub struct RalphexConfig {
     pub idle_timeout: Option<String>,
     pub wait: Option<String>,
     pub base_ref: Option<String>,
+    pub move_plan_on_completion: Option<bool>,
 }
 
 impl RalphexConfig {
@@ -66,6 +67,9 @@ impl RalphexConfig {
         if override_with.base_ref.is_some() {
             self.base_ref = override_with.base_ref;
         }
+        if override_with.move_plan_on_completion.is_some() {
+            self.move_plan_on_completion = override_with.move_plan_on_completion;
+        }
     }
 
     fn set_known_key(&mut self, key: &str, value: String) {
@@ -95,6 +99,11 @@ impl RalphexConfig {
             "idle_timeout" => self.idle_timeout = Some(value),
             "wait" => self.wait = Some(value),
             "base_ref" => self.base_ref = Some(value),
+            "move_plan_on_completion" => {
+                if let Some(parsed) = parse_bool(&value) {
+                    self.move_plan_on_completion = Some(parsed);
+                }
+            }
             _ => {}
         }
     }
@@ -128,6 +137,12 @@ struct ProjectConfigDocument {
     wait: Option<String>,
     #[serde(default)]
     base_ref: Option<String>,
+    #[serde(
+        default,
+        alias = "movePlanOnCompletion",
+        alias = "move_plan_on_completion"
+    )]
+    move_plan_on_completion: Option<bool>,
 }
 
 impl From<ProjectConfigDocument> for RalphexConfig {
@@ -146,7 +161,16 @@ impl From<ProjectConfigDocument> for RalphexConfig {
             idle_timeout: value.idle_timeout,
             wait: value.wait,
             base_ref: value.base_ref,
+            move_plan_on_completion: value.move_plan_on_completion,
         }
+    }
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
 

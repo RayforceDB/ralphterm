@@ -199,6 +199,11 @@ struct Cli {
         help = "ralphex-compatible: announce filesystem path(s) to monitor while serving"
     )]
     compat_watch: Vec<PathBuf>,
+    #[arg(
+        long = "move-completed",
+        help = "ralphex-compatible: move successfully completed plan files into <plan-dir>/completed/"
+    )]
+    compat_move_completed: bool,
     #[arg(value_name = "plan-file")]
     compat_plan_file: Option<PathBuf>,
 }
@@ -760,8 +765,19 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         .as_ref()
         .map(|info| info.worktree_path.clone());
 
+    let move_plan_on_completion = if cli.compat_move_completed {
+        true
+    } else {
+        config.move_plan_on_completion.unwrap_or(false)
+    };
+
+    let move_eligible = matches!(
+        mode,
+        crate::runner::RunMode::Full | crate::runner::RunMode::TasksOnly
+    );
+
     run_plan_cli(RunCliOptions {
-        plan: final_plan_path,
+        plan: final_plan_path.clone(),
         agent: None,
         agent_command,
         review_agent: None,
@@ -779,10 +795,41 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
 
     install_ralphex_progress_symlink();
 
+    let mut moved_dest: Option<PathBuf> = None;
+    if move_plan_on_completion && move_eligible {
+        let dest = move_completed_plan(&final_plan_path)?;
+        moved_dest = Some(dest);
+    }
+
     if let Some(path) = worktree_path_for_print {
         println!("Worktree: {}", path.display());
     }
+    if let Some(dest) = moved_dest {
+        println!("Moved plan to {}", dest.display());
+    }
     Ok(())
+}
+
+fn move_completed_plan(plan: &FsPath) -> anyhow::Result<PathBuf> {
+    let plan_name = plan
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("plan path has no filename: {}", plan.display()))?;
+    let parent = plan.parent().unwrap_or(FsPath::new("."));
+    let completed_dir = parent.join("completed");
+    fs::create_dir_all(&completed_dir)
+        .with_context(|| format!("create completed directory {}", completed_dir.display()))?;
+    let dest = completed_dir.join(plan_name);
+    if dest.exists() {
+        bail!(
+            "cannot move plan to {}: destination already exists",
+            dest.display()
+        );
+    }
+    fs::rename(plan, &dest)
+        .with_context(|| format!("move plan from {} to {}", plan.display(), dest.display()))?;
+    // Prefer the canonical (absolute) path in user-facing output so tooling
+    // can compare against an absolute filesystem location.
+    Ok(dest.canonicalize().unwrap_or(dest))
 }
 
 /// Surface ralphterm progress artifacts under `.ralphex/progress` so legacy
