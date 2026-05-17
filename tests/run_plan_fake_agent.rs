@@ -6314,6 +6314,170 @@ fn failed_task_resume_is_logged_before_retry_start_and_completes_task() {
     );
 }
 
+#[test]
+fn ralphex_compat_full_mode_without_reviewer_refuses_to_run_agent() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "--claude-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+            plan_path.to_str().expect("utf8 plan path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphex-compatible full mode without a reviewer must error before running the agent\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "ralphex-compatible full mode requires --external-review-tool=custom \
+--custom-review-script <cmd>, or pass --tasks-only"
+        ),
+        "error message should explain the required flags:\n{stderr}"
+    );
+
+    assert!(
+        !repo.path.join("first.txt").exists(),
+        "agent must not run when the review gate refuses the configuration"
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(
+        plan.contains("- [ ] Write first.txt"),
+        "plan task should remain unmarked:\n{plan}"
+    );
+}
+
+#[test]
+fn ralphex_compat_full_mode_with_passing_reviewer_accepts_task() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "--claude-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--external-review-tool",
+            "custom",
+            "--custom-review-script",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+            plan_path.to_str().expect("utf8 plan path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphex-compatible full mode with reviewer should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(plan.contains("- [x] Write first.txt"), "{plan}");
+}
+
+#[test]
+fn ralphex_compat_full_mode_with_failing_reviewer_keeps_task_open() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "--claude-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--external-review-tool",
+            "custom",
+            "--custom-review-script",
+            fixture_path("review-fail.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+            plan_path.to_str().expect("utf8 plan path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphex-compatible full mode with failing reviewer must error\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let plan = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(
+        plan.contains("- [ ] Write first.txt"),
+        "task should remain unmarked when review fails:\n{plan}"
+    );
+}
+
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")

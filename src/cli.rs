@@ -446,11 +446,40 @@ fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
     let Some(plan) = cli.compat_plan_file else {
         bail!("plan file required for ralphex-compatible execution");
     };
-    let review_command = match cli.compat_external_review_tool.as_deref() {
-        Some("custom") => cli.compat_custom_review_script,
+    let review_tool = cli.compat_external_review_tool.as_deref();
+    let review_command = match review_tool {
+        Some("custom") => cli.compat_custom_review_script.clone(),
         Some("none") | None => None,
         Some(other) => bail!("unsupported external review tool: {other}"),
     };
+
+    // Default full mode requires an independent reviewer unless --tasks-only is set.
+    let mut require_review = false;
+    if !cli.compat_tasks_only {
+        match (review_tool, review_command.as_deref()) {
+            (Some("custom"), Some(_)) => {
+                require_review = true;
+            }
+            (Some("custom"), None) => {
+                bail!(
+                    "ralphex-compatible full mode requires --external-review-tool=custom \
+--custom-review-script <cmd>, or pass --tasks-only"
+                );
+            }
+            (Some("none"), _) => {
+                eprintln!(
+                    "[warning] running without independent review because \
+                     external-review-tool=none"
+                );
+            }
+            _ => {
+                bail!(
+                    "ralphex-compatible full mode requires --external-review-tool=custom \
+--custom-review-script <cmd>, or pass --tasks-only"
+                );
+            }
+        }
+    }
 
     // Compose the implementer command with optional --claude-args appended.
     let agent_command = match (cli.compat_claude_command, cli.compat_claude_args.as_deref()) {
@@ -530,7 +559,7 @@ fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
         agent_command,
         review_agent: None,
         review_command,
-        require_review: false,
+        require_review,
         agent_timeout_ms: agent_timeout,
         max_review_retries: 1,
         no_commit: cli.compat_no_commit,
