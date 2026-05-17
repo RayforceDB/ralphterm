@@ -1,75 +1,103 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#050507" />
-  <meta property="og:site_name" content="RalphTerm" />
-  <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/styles.css" />
-  <title>Getting started — RalphTerm Docs</title>
-  <meta name="description" content="Build and run RalphTerm locally." />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RalphTerm Documentation</title>
+  <meta name="description" content="RalphTerm documentation index — architecture, CLI reference, ralphex compatibility, providers, docker, notifications, workflows.">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="/assets/favicon.ico" type="image/x-icon">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
+  <header class="rt-header">
+    <a class="rt-brand" href="/" aria-label="RalphTerm home">
+      <svg viewBox="0 0 96 96" aria-hidden="true">
+        <rect x="8"  y="8"  width="16" height="16" fill="currentColor"/><rect x="28" y="8"  width="16" height="16" fill="currentColor"/>
+        <rect x="8"  y="28" width="16" height="16" fill="currentColor"/><rect x="48" y="28" width="16" height="16" fill="currentColor"/>
+        <rect x="8"  y="48" width="16" height="16" fill="currentColor"/><rect x="28" y="48" width="16" height="16" fill="currentColor"/>
+        <rect x="8"  y="68" width="16" height="16" fill="currentColor"/><rect x="48" y="68" width="16" height="16" fill="currentColor"/><rect x="68" y="68" width="16" height="16" fill="currentColor"/>
+      </svg>
+      <span class="rt-brand-name">ralphterm</span>
+    </a>
+    <nav class="rt-nav" aria-label="Primary navigation">
+      <a href="/">Home</a>
+      <a href="/docs/">Docs</a>
+      <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+    </nav>
+  </header>
 
-  <nav class="nav">
-    <div class="container nav-inner">
-      <a class="brand" href="/">
-        <span class="brand-mark">↯</span>
-        <span>RalphTerm</span>
-      </a>
-      <div class="nav-links">
-        <a href="/#how">Why</a>
-        <a href="/#what">Product</a>
-        <a href="/#api">Workflow</a>
-        <a href="/docs/">Docs</a>
+  <div class="rt-docs">
+    <aside class="rt-sidebar" aria-label="Docs navigation">
+      <div class="rt-sidebar-group">
+        <p class="rt-sidebar-group-label">Overview</p>
+        <ul>
+          <li><a href="/docs/architecture.html">Architecture</a></li>
+          <li><a href="/docs/security.html">Security</a></li>
+          <li><a href="/docs/milestone-one.html">Milestone 1</a></li>
+        </ul>
       </div>
-      <div class="nav-cta">
-        <a class="btn ghost" href="/docs/">Read docs</a>
-        <a class="btn primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+      <div class="rt-sidebar-group">
+        <p class="rt-sidebar-group-label">CLI</p>
+        <ul>
+          <li><a href="/docs/cli.html">CLI reference</a></li>
+          <li><a href="/docs/ralphex-compat.html">Ralphex compat</a></li>
+          <li><a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a></li>
+        </ul>
       </div>
-    </div>
-  </nav>
+      <div class="rt-sidebar-group">
+        <p class="rt-sidebar-group-label">Run</p>
+        <ul>
+          <li><a href="/docs/workflows.html">Workflows</a></li>
+          <li><a href="/docs/providers.html">Providers</a></li>
+          <li><a href="/docs/docker.html">Docker</a></li>
+          <li><a href="/docs/notifications.html">Notifications</a></li>
+        </ul>
+      </div>
+      <div class="rt-sidebar-group">
+        <p class="rt-sidebar-group-label">API</p>
+        <ul>
+          <li><a href="/docs/api.html" class="is-active">HTTP API</a></li>
+        </ul>
+      </div>
+    </aside>
 
-  <main class="container docs-shell">
+    <article class="rt-doc">
+      <h1>Documentation</h1>
+      <p class="rt-lead">RalphTerm is a drop-in replacement for ralphex with PTY-native execution. Start with <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a> if you already have a ralphex setup; otherwise <a href="/docs/cli.html">CLI reference</a> covers every supported flag.</p>
 
-      <aside class="sidebar">
-        <a href="/docs/">Getting started</a>
-        <a href="/docs/api.html">API</a>
-        <a href="/docs/architecture.html">Architecture</a>
-        <a href="/docs/security.html">Security</a>
-        <a href="/docs/workflows.html">Workflows</a>
-        <a href="/docs/milestone-one.html">Milestone 1</a>
-        <p class="sidebar-section">Drop-in</p>
-        <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
-        <a href="/docs/ralphex-compat.html">Ralphex compatibility</a>
-        <a href="/docs/cli.html">CLI reference</a>
-        <a href="/docs/providers.html">Providers</a>
-        <a href="/docs/notifications.html">Notifications</a>
-        <a href="/docs/docker.html">Docker isolation</a>
-        <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
-      </aside>
+      <h2>Overview</h2>
+      <p><strong>Architecture.</strong> <a href="/docs/architecture.html">How the daemon, PTY runtime, runner, and event store fit together.</a></p>
+      <p><strong>Security.</strong> <a href="/docs/security.html">Authentication, rate-limiting boundaries, isolation guarantees.</a></p>
+      <p><strong>Milestone 1.</strong> <a href="/docs/milestone-one.html">Autonomous engineering workflow shipped on the PTY core.</a></p>
 
-    <article class="article">
+      <h2>CLI</h2>
+      <p><strong>CLI reference.</strong> <a href="/docs/cli.html">Every flag from <code>--help</code>, grouped by purpose.</a></p>
+      <p><strong>Ralphex compatibility.</strong> <a href="/docs/ralphex-compat.html">Per-flag status table: supported, accepted, pending.</a></p>
+      <p><strong>Migration guide.</strong> <a href="/docs/migrate-from-ralphex.html">Step-by-step from an existing ralphex install.</a></p>
 
-      <div class="eyebrow"><span class="dot"></span> docs</div>
-      <h1>Getting started</h1>
+      <h2>Run</h2>
+      <p><strong>Workflows.</strong> <a href="/docs/workflows.html">Plan run, review-only, external-only modes.</a></p>
+      <p><strong>Providers.</strong> <a href="/docs/providers.html">Codex, Copilot, Gemini, OpenCode wrappers.</a></p>
+      <p><strong>Docker.</strong> <a href="/docs/docker.html">Isolated container execution.</a></p>
+      <p><strong>Notifications.</strong> <a href="/docs/notifications.html">Telegram / Slack / Email / Webhook configuration.</a></p>
+
+      <h2>API</h2>
+      <p><strong>HTTP API.</strong> <a href="/docs/api.html">Session and run endpoints, transcripts, events.</a></p>
+
+      <h2>Getting started</h2>
       <p>RalphTerm is a local Rust daemon that launches official AI CLIs inside real PTYs and exposes an API for orchestration.</p>
-      <h2>Install from source</h2>
+      <h3>Install from source</h3>
       <pre><code>git clone git@github.com:RayforceDB/ralphterm.git
 cd ralphterm
 cargo build --release</code></pre>
-      <h2>Start the daemon</h2>
+      <h3>Start the daemon</h3>
       <pre><code>cargo run -- serve --bind 127.0.0.1:7878</code></pre>
-      <h2>Health check</h2>
+      <h3>Health check</h3>
       <pre><code>curl http://127.0.0.1:7878/health
 # {"ok":true}</code></pre>
-      <h2>Deterministic smoke test</h2>
+      <h3>Deterministic smoke test</h3>
       <p>Use a shell command override before testing real agents.</p>
       <pre><code>cat > /tmp/ralphterm-smoke.json <<'JSON'
 {
@@ -87,14 +115,14 @@ ID=$(curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
 
 curl http://127.0.0.1:7878/v1/sessions/$ID
 curl http://127.0.0.1:7878/v1/sessions/$ID/transcript</code></pre>
-      <h2>Real agent smoke check</h2>
+      <h3>Real agent smoke check</h3>
       <p>After authenticating the official CLI, verify it can start in a real PTY, receive input, emit <code>COMPLETED</code>, and exit.</p>
       <pre><code>ralphterm smoke --agent claude
 ralphterm smoke --agent codex</code></pre>
-      <h2>Preview a plan</h2>
+      <h3>Preview a plan</h3>
       <pre><code>ralphterm run docs/plans/example.md --dry-run</code></pre>
       <p>That prints pending tasks, review mode, review retry budget, and validation commands only. It does not start an agent, edit the plan, write <code>.ralphterm/progress/</code>, or commit.</p>
-      <h2>Workspace-isolated plan run</h2>
+      <h3>Workspace-isolated plan run</h3>
       <pre><code>ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude</code></pre>
       <p>RalphTerm creates a managed git worktree at <code>.ralphterm/workspaces/&lt;id&gt;</code>, resolves the caller-relative plan path before switching directories, and runs from the matching path inside that worktree. It does not auto-clean the worktree after the run; inspect it or remove it later with <code>ralphterm workspace cleanup &lt;id&gt;</code>. With <code>--dry-run --workspace-id &lt;id&gt;</code>, dry run only previews the workspace path and plan work without creating the worktree or running an agent.</p>
       <p>A minimal plan is just a validation block plus unchecked task items:</p>
@@ -108,7 +136,7 @@ ralphterm smoke --agent codex</code></pre>
 - [ ] Implement the slice
 - [ ] Run the validation command</code></pre>
       <p>RalphTerm sends the pending task to the implementation agent, then runs the validation commands. If review is required, the reviewer sees the transcript, validation output, and git diff before it can print <code>REVIEW_PASS</code>.</p>
-      <h2>Plan run with review</h2>
+      <h3>Plan run with review</h3>
       <p>Use <code>--require-review</code> for real plan runs that must have an independent reviewer. RalphTerm fails before agent execution unless <code>--review-command</code> or <code>--review-agent</code> is supplied.</p>
       <pre><code>ralphterm run docs/plans/example.md --agent claude \
   --require-review \
@@ -118,7 +146,7 @@ ralphterm run docs/plans/example.md --agent claude \
   --require-review \
   --review-command "codex exec review-task"</code></pre>
       <p>The reviewer starts after validation and must print an exact <code>REVIEW_PASS</code> line. By default, <code>REVIEW_FAIL</code> triggers one retry with reviewer feedback; if review still fails, the task stays unchecked and no commit is made. Use <code>--max-review-retries N</code> to allow more review-driven retries, or <code>--max-review-retries 0</code> to block on the first failed review.</p>
-      <h2>Real agent sessions</h2>
+      <h3>Real agent sessions</h3>
       <p>Install and authenticate the official CLI first. RalphTerm does not own provider credentials.</p>
       <pre><code>claude auth login
 codex login
@@ -126,16 +154,13 @@ codex login
 curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
   -H 'content-type: application/json' \
   -d '{"agent":"claude","prompt":"Say hello and end with COMPLETED"}'</code></pre>
-
     </article>
-  </main>
+  </div>
 
-  <footer class="footer">
-    <div class="container">
-      <span>RalphTerm by RayforceDB</span>
-      <span><a href="https://github.com/RayforceDB/ralphterm">GitHub</a> · <a href="/docs/">Docs</a> · Local-first, terminal-native, vendor-respectful</span>
-    </div>
+  <footer class="rt-footer">
+    <span>MIT License</span>
+    <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
+    <a href="/">Home</a>
   </footer>
-
 </body>
 </html>
