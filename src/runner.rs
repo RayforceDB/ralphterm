@@ -1227,6 +1227,10 @@ fn write_failed_run_summary(
             ));
         }
     }
+    summary.push_str(&format!(
+        "  - Commit: {}\n",
+        failed_task_commit_status(phase)
+    ));
     fs::write(&summary_path, summary)
         .with_context(|| format!("write failed run summary {}", summary_path.display()))?;
 
@@ -1258,7 +1262,7 @@ fn write_failed_run_summary(
         "review_status": failed_task_review_status(phase, link_review_transcript),
         "review_transcript": failed_review_transcript_display,
         "commit": null,
-        "commit_status": "skipped",
+        "commit_status": failed_task_commit_status(phase),
     });
     let summary_json = json!({
         "plan": plan_name,
@@ -1305,6 +1309,14 @@ fn failed_task_review_status(phase: &str, link_review_transcript: bool) -> &'sta
         "failed"
     } else if link_review_transcript {
         "passed"
+    } else {
+        "skipped"
+    }
+}
+
+fn failed_task_commit_status(phase: &str) -> &'static str {
+    if phase == "commit" {
+        "failed"
     } else {
         "skipped"
     }

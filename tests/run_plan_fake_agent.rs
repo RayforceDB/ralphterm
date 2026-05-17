@@ -738,6 +738,7 @@ fn commit_failure_keeps_task_unchecked_and_records_failed_commit_phase() {
     assert!(summary.contains("Result: failed"), "{summary}");
     assert!(summary.contains("Phase: commit"), "{summary}");
     assert!(summary.contains("failing pre-commit"), "{summary}");
+    assert!(summary.contains("Commit: failed"), "{summary}");
 
     let summary_json: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
@@ -747,6 +748,7 @@ fn commit_failure_keeps_task_unchecked_and_records_failed_commit_phase() {
     assert_eq!(summary_json["result"], "failed");
     assert_eq!(summary_json["failed_task"]["number"], 1);
     assert_eq!(summary_json["failed_task"]["phase"], "commit");
+    assert_eq!(summary_json["failed_task"]["commit_status"], "failed");
     assert!(
         summary_json["failed_task"]["reason"]
             .as_str()
