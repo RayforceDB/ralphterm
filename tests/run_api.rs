@@ -1005,6 +1005,18 @@ fn run_api_records_task_marked_complete_before_task_success() {
         .iter()
         .position(|event| event["type"] == "validation_passed")
         .expect("validation_passed event");
+    let review_skipped_pos = events
+        .iter()
+        .position(|event| {
+            event["type"] == "review_skipped"
+                && event["task_number"] == 1
+                && event["task_title"] == "Create first file"
+                && event["attempt"] == 1
+                && event["message"].as_str().is_some_and(|message| {
+                    message.contains("review") && message.contains("configured")
+                })
+        })
+        .expect("review_skipped event");
     let marked_pos = events
         .iter()
         .position(|event| {
@@ -1018,8 +1030,10 @@ fn run_api_records_task_marked_complete_before_task_success() {
         .position(|event| event["type"] == "task_succeeded")
         .expect("task_succeeded event");
     assert!(
-        validation_pos < marked_pos && marked_pos < succeeded_pos,
-        "task_marked_complete should be recorded after validation and before task success: {events_json}"
+        validation_pos < review_skipped_pos
+            && review_skipped_pos < marked_pos
+            && marked_pos < succeeded_pos,
+        "review_skipped should be recorded after validation and before task_marked_complete/task success: {events_json}"
     );
 
     let progress_log = request_json(

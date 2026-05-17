@@ -673,6 +673,11 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             } else {
                 output.push_str("Review: skipped\n");
                 append_progress(&progress.log_path, "review result=skipped")?;
+                emit_plan_event(
+                    &options,
+                    PlanRunEvent::for_task("review_skipped", task, Some(attempt))
+                        .with_message("review not configured"),
+                )?;
                 final_transcript_display = current_transcript_display;
                 final_review_transcript_display = progress.review_transcript_display.clone();
                 break (transcript, validation_output);
