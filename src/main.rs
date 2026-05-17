@@ -522,6 +522,8 @@ async fn create_run(
                 return;
             };
             let event_base_dir = base_dir.clone();
+            let event_progress_dir = progress_dir.clone();
+            let event_slug = slug.clone();
             let event_sink = Arc::new(move |event: PlanRunEvent| {
                 let appended = RunStore::append_progress_event(
                     &event_base_dir,
@@ -537,6 +539,15 @@ async fn create_run(
                 )?;
                 if appended.is_none() {
                     anyhow::bail!("run was cancelled");
+                }
+                if let Err(copy_err) = copy_progress_artifacts(
+                    &event_base_dir,
+                    run_id,
+                    &event_progress_dir,
+                    &event_slug,
+                    None,
+                ) {
+                    tracing::error!(%run_id, error = %copy_err, "failed to copy live run progress artifacts");
                 }
                 Ok(())
             });
