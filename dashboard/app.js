@@ -232,13 +232,19 @@ function optionalText(formData, name) {
   return value ? value : null;
 }
 
+function parseMaxReviewRetries(value) {
+  const text = value === null ? '' : String(value).trim();
+  if (!text) return 1;
+  return Number(text);
+}
+
 function runRequestBody(form) {
   const formData = new FormData(form);
   const body = {
     require_review: formData.has('require_review'),
     dry_run: formData.has('dry_run'),
     no_commit: formData.has('no_commit'),
-    max_review_retries: Number(formData.get('max_review_retries') || 1),
+    max_review_retries: parseMaxReviewRetries(formData.get('max_review_retries')),
   };
 
   for (const name of ['plan_path', 'workspace_id', 'agent', 'agent_command', 'review_agent', 'review_command']) {
@@ -250,6 +256,9 @@ function runRequestBody(form) {
 }
 
 function validateRunRequestBody(body) {
+  if (!Number.isInteger(body.max_review_retries) || body.max_review_retries < 0) {
+    return 'max_review_retries must be a non-negative integer';
+  }
   if (body.agent && body.agent_command) {
     return 'agent and agent_command are mutually exclusive';
   }

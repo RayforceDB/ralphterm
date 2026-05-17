@@ -450,6 +450,43 @@ fn dashboard_run_form_supports_isolated_workspace_runs() {
 }
 
 #[test]
+fn dashboard_run_form_validates_review_retry_budget_before_post() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dashboard_html =
+        std::fs::read_to_string(root.join("dashboard/index.html")).expect("read dashboard html");
+    let dashboard_js =
+        std::fs::read_to_string(root.join("dashboard/app.js")).expect("read dashboard js");
+
+    assert!(
+        dashboard_html.contains("name=\"max_review_retries\"")
+            && dashboard_html.contains("type=\"number\"")
+            && dashboard_html.contains("min=\"0\"")
+            && dashboard_html.contains("value=\"1\""),
+        "dashboard retry budget field should preserve the visible default and nonnegative hint"
+    );
+    assert!(
+        dashboard_js.contains("parseMaxReviewRetries(formData.get('max_review_retries'))"),
+        "dashboard should parse max_review_retries explicitly so blank values can default to 1"
+    );
+    assert!(
+        dashboard_js.contains("Number.isInteger(body.max_review_retries)")
+            && dashboard_js.contains("body.max_review_retries < 0"),
+        "dashboard should reject non-integer and negative retry budgets before POST /v1/runs"
+    );
+
+    let validation_index = dashboard_js
+        .find("const validationError = validateRunRequestBody(body);")
+        .expect("dashboard should validate the run request body");
+    let post_index = dashboard_js
+        .find("method: 'POST'")
+        .expect("dashboard should POST valid run requests");
+    assert!(
+        validation_index < post_index,
+        "dashboard should validate retry budget before POST /v1/runs"
+    );
+}
+
+#[test]
 fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let api_markdown = std::fs::read_to_string(root.join("docs/api.md")).expect("read api docs");
