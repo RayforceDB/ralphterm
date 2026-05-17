@@ -48,3 +48,27 @@ path = "src/main.rs"
 [[bin]]
 name = "ralphex"
 path = "src/bin/ralphex.rs"
+
+# The profile that 'cargo dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+# Config for 'cargo dist'
+[workspace.metadata.dist]
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "powershell"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Path that installers should place binaries in
+install-path = "$HOME/.local/bin"
+# Which actions to run on pull requests
+pr-run-mode = "plan"
+# Skip checking whether the specified configuration files are up to date
+allow-dirty = ["ci"]
+# Whether to install an updater program
+install-updater = false
+# The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.22.0"
