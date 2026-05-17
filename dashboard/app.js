@@ -42,6 +42,11 @@ function runArtifactCell(run) {
       ariaLabel: `Diff artifact for run ${run.id}`,
     },
     {
+      label: 'progress',
+      href: `/v1/runs/${run.id}/progress`,
+      ariaLabel: `Progress artifact index for run ${run.id}`,
+    },
+    {
       label: 'events',
       href: `/v1/runs/${run.id}/events`,
       ariaLabel: `Event log for run ${run.id}`,

@@ -68,9 +68,20 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
         js.body
     );
     assert!(js.body.contains("/v1/runs/${run.id}/diff"), "{}", js.body);
+    assert!(
+        js.body.contains("/v1/runs/${run.id}/progress"),
+        "{}",
+        js.body
+    );
     assert!(js.body.contains("/v1/runs/${run.id}/events"), "{}", js.body);
     assert!(
         js.body.contains("Summary artifact for run ${run.id}"),
+        "{}",
+        js.body
+    );
+    assert!(
+        js.body
+            .contains("Progress artifact index for run ${run.id}"),
         "{}",
         js.body
     );
