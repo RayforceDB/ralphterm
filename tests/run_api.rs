@@ -94,6 +94,83 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
 }
 
 #[test]
+fn dashboard_run_form_posts_reviewed_plan_run_request() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let html = request_json(port, "GET /dashboard HTTP/1.1", None);
+    assert_eq!(html.status, 200, "{}", html.body);
+    assert!(
+        html.body.contains("Start reviewed plan run"),
+        "{}",
+        html.body
+    );
+    for expected in [
+        "id=\"run-form\"",
+        "id=\"run-plan-path\"",
+        "name=\"plan_path\"",
+        "id=\"run-agent\"",
+        "name=\"agent\"",
+        "id=\"run-agent-command\"",
+        "name=\"agent_command\"",
+        "id=\"run-review-agent\"",
+        "name=\"review_agent\"",
+        "id=\"run-review-command\"",
+        "name=\"review_command\"",
+        "id=\"run-require-review\"",
+        "name=\"require_review\"",
+        "id=\"run-dry-run\"",
+        "name=\"dry_run\"",
+        "id=\"run-no-commit\"",
+        "name=\"no_commit\"",
+        "id=\"run-max-review-retries\"",
+        "name=\"max_review_retries\"",
+        "value=\"1\"",
+        "id=\"run-submit\"",
+        "id=\"run-form-status\"",
+    ] {
+        assert!(
+            html.body.contains(expected),
+            "missing {expected}: {}",
+            html.body
+        );
+    }
+
+    let js = request_json(port, "GET /dashboard/app.js HTTP/1.1", None);
+    assert_eq!(js.status, 200, "{}", js.body);
+    for expected in [
+        "document.querySelector('#run-form')",
+        "fetch('/v1/runs', {",
+        "method: 'POST'",
+        "plan_path",
+        "agent_command",
+        "review_command",
+        "require_review",
+        "dry_run",
+        "no_commit",
+        "max_review_retries",
+        "loadRuns()",
+    ] {
+        assert!(
+            js.body.contains(expected),
+            "missing {expected}: {}",
+            js.body
+        );
+    }
+}
+
+#[test]
 fn dashboard_lists_active_sessions_and_javascript_renders_them() {
     let _guard = server_test_lock();
     let repo = TempDir::new();

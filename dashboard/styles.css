@@ -69,6 +69,56 @@ h1 {
   margin-bottom: 1rem;
 }
 
+.run-form-panel {
+  grid-column: 1 / -1;
+}
+
+.run-form {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.run-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+.run-form input,
+.run-form select,
+.run-form button {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  background: rgba(15, 23, 42, 0.72);
+  color: #e5edf8;
+}
+
+.run-form .checkbox-label {
+  align-content: center;
+  grid-template-columns: auto 1fr;
+}
+
+.run-form .checkbox-label input {
+  width: auto;
+}
+
+.run-form button {
+  align-self: end;
+  border-color: rgba(125, 211, 252, 0.5);
+  background: rgba(14, 165, 233, 0.24);
+  color: #bae6fd;
+  cursor: pointer;
+}
+
+.run-form button:hover,
+.run-form button:focus {
+  background: rgba(14, 165, 233, 0.34);
+}
+
 .status,
 .empty-state {
   color: #a8b3c7;

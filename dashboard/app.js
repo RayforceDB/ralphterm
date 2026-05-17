@@ -1,3 +1,5 @@
+const runForm = document.querySelector('#run-form');
+const runFormStatus = document.querySelector('#run-form-status');
 const runsBody = document.querySelector('#runs-body');
 const runsStatus = document.querySelector('#runs-status');
 const sessionsBody = document.querySelector('#sessions-body');
@@ -222,6 +224,54 @@ async function loadSessions() {
     sessionsBody.replaceChildren();
     renderErrorRow(sessionsBody, error.message, 5);
   }
+}
+
+function optionalText(formData, name) {
+  const value = String(formData.get(name) || '').trim();
+  return value ? value : null;
+}
+
+function runRequestBody(form) {
+  const formData = new FormData(form);
+  const body = {
+    require_review: formData.has('require_review'),
+    dry_run: formData.has('dry_run'),
+    no_commit: formData.has('no_commit'),
+    max_review_retries: Number(formData.get('max_review_retries') || 1),
+  };
+
+  for (const name of ['plan_path', 'agent', 'agent_command', 'review_agent', 'review_command']) {
+    const value = optionalText(formData, name);
+    if (value) body[name] = value;
+  }
+
+  return body;
+}
+
+async function submitRunForm(event) {
+  event.preventDefault();
+
+  try {
+    runFormStatus.textContent = 'Starting…';
+    const response = await fetch('/v1/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(runRequestBody(runForm)),
+    });
+    const responseBody = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(responseBody.error || `POST /v1/runs failed with ${response.status}`);
+    }
+
+    runFormStatus.textContent = `Created ${responseBody.id || 'run'} (${responseBody.status || 'queued'})`;
+    await loadRuns();
+  } catch (error) {
+    runFormStatus.textContent = error.message;
+  }
+}
+
+if (runForm) {
+  runForm.addEventListener('submit', submitRunForm);
 }
 
 loadRuns();

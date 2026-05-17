@@ -14,6 +14,60 @@
     </header>
 
     <main class="dashboard-grid">
+      <section class="panel run-form-panel" aria-labelledby="run-form-title">
+        <div class="panel-heading">
+          <h2 id="run-form-title">Start reviewed plan run</h2>
+          <span id="run-form-status" class="status" aria-live="polite"></span>
+        </div>
+        <form id="run-form" class="run-form">
+          <label>
+            Plan path
+            <input id="run-plan-path" name="plan_path" type="text" placeholder="plans/task.md" required />
+          </label>
+          <label>
+            Agent
+            <select id="run-agent" name="agent">
+              <option value="">Custom command</option>
+              <option value="claude">claude</option>
+              <option value="codex">codex</option>
+            </select>
+          </label>
+          <label>
+            Agent command
+            <input id="run-agent-command" name="agent_command" type="text" />
+          </label>
+          <label>
+            Review agent
+            <select id="run-review-agent" name="review_agent">
+              <option value="">Custom command</option>
+              <option value="claude">claude</option>
+              <option value="codex">codex</option>
+            </select>
+          </label>
+          <label>
+            Review command
+            <input id="run-review-command" name="review_command" type="text" />
+          </label>
+          <label>
+            Review retries
+            <input id="run-max-review-retries" name="max_review_retries" type="number" min="0" value="1" />
+          </label>
+          <label class="checkbox-label">
+            <input id="run-require-review" name="require_review" type="checkbox" checked />
+            Require review
+          </label>
+          <label class="checkbox-label">
+            <input id="run-dry-run" name="dry_run" type="checkbox" checked />
+            Dry run
+          </label>
+          <label class="checkbox-label">
+            <input id="run-no-commit" name="no_commit" type="checkbox" />
+            No commit
+          </label>
+          <button id="run-submit" type="submit">Start run</button>
+        </form>
+      </section>
+
       <section class="panel" aria-labelledby="runs-title">
         <div class="panel-heading">
           <h2 id="runs-title">Runs</h2>
