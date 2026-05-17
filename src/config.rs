@@ -8,6 +8,11 @@ use serde::Deserialize;
 
 use crate::notify::NotifyOn;
 
+/// Provider names recognised by the wrapper auto-detection logic. Each one
+/// corresponds to a shipped `scripts/wrappers/<name>.sh` script (also
+/// installed under `<exe_dir>/../share/ralphterm/wrappers/<name>.sh`).
+const KNOWN_WRAPPER_PROVIDERS: &[&str] = &["codex", "copilot", "gemini", "opencode"];
+
 /// Subset of ralphex configuration keys this CLI understands. Unknown keys are
 /// ignored silently so forward-compatible config files do not break older binaries.
 #[derive(Debug, Default, Clone)]
@@ -35,6 +40,9 @@ pub struct RalphexConfig {
     pub notify_email_from: Option<String>,
     pub notify_email_to: Option<String>,
     pub notify_on: Vec<NotifyOn>,
+    /// `[agent] provider = ...` value when set. Drives wrapper auto-detection
+    /// when `claude_command` is otherwise unset.
+    pub agent_provider: Option<String>,
 }
 
 impl RalphexConfig {
@@ -108,10 +116,26 @@ impl RalphexConfig {
         if !override_with.notify_on.is_empty() {
             self.notify_on = override_with.notify_on;
         }
+        if override_with.agent_provider.is_some() {
+            self.agent_provider = override_with.agent_provider;
+        }
+    }
+
+    fn set_known_key_in_section(&mut self, section: Option<&str>, key: &str, value: String) {
+        // Inside `[agent]`, surface the `provider` shorthand as
+        // `agent_provider` so wrapper auto-detection can resolve it later.
+        if section == Some("agent") && key == "provider" {
+            self.agent_provider = Some(value);
+            return;
+        }
+        // Otherwise treat keys as belonging to a flat namespace for ralphex
+        // compatibility (matching the legacy parser).
+        self.set_known_key(key, value);
     }
 
     fn set_known_key(&mut self, key: &str, value: String) {
         match key {
+            "agent_provider" => self.agent_provider = Some(value),
             "claude_command" => self.claude_command = Some(value),
             "claude_args" => self.claude_args = Some(value),
             "external_review_tool" => self.external_review_tool = Some(value),
@@ -220,6 +244,8 @@ struct ProjectConfigDocument {
     notify_email_to: Option<String>,
     #[serde(default)]
     notify_on: Vec<String>,
+    #[serde(default, alias = "provider")]
+    agent_provider: Option<String>,
 }
 
 impl From<ProjectConfigDocument> for RalphexConfig {
@@ -252,6 +278,7 @@ impl From<ProjectConfigDocument> for RalphexConfig {
                 .iter()
                 .filter_map(|s| NotifyOn::parse(s))
                 .collect(),
+            agent_provider: value.agent_provider,
         }
     }
 }
@@ -276,7 +303,106 @@ pub fn load(config_dir: Option<&Path>, project_root: &Path) -> Result<RalphexCon
     if let Some(local) = load_project(project_root)? {
         config.merge(local);
     }
+    apply_provider_wrapper(&mut config);
     Ok(config)
+}
+
+/// When `claude_command` is unset but `[agent] provider = ...` is set in the
+/// loaded ralphex-compatible config, resolve the bundled wrapper script for
+/// the requested provider and populate `claude_command` with its absolute
+/// path. Unknown providers or missing wrapper files are logged with
+/// `tracing::warn!` and leave `claude_command` untouched.
+fn apply_provider_wrapper(config: &mut RalphexConfig) {
+    if config.claude_command.is_some() {
+        return;
+    }
+    let Some(provider_raw) = config.agent_provider.as_deref() else {
+        return;
+    };
+    let provider = provider_raw.trim().to_ascii_lowercase();
+    if provider.is_empty() {
+        return;
+    }
+    if !KNOWN_WRAPPER_PROVIDERS.contains(&provider.as_str()) {
+        tracing::warn!(
+            provider = %provider_raw,
+            "unknown agent provider; leaving claude_command unset"
+        );
+        return;
+    }
+    match locate_wrapper_script(&provider) {
+        Some(path) => {
+            config.claude_command = Some(path.to_string_lossy().into_owned());
+        }
+        None => {
+            tracing::warn!(
+                provider = %provider,
+                "no wrapper script found for provider; leaving claude_command unset"
+            );
+        }
+    }
+}
+
+/// Walk outward from the current executable and a few common ancestor
+/// locations looking for a wrapper script. Returns the first path that
+/// exists. Both the installed layout (`<exe_dir>/../share/ralphterm/wrappers/`)
+/// and the development layout (`<repo_root>/scripts/wrappers/`) are
+/// supported.
+pub(crate) fn locate_wrapper_script(provider: &str) -> Option<PathBuf> {
+    let filename = format!("{provider}.sh");
+
+    let exe_path = std::env::current_exe().ok();
+
+    if let Some(exe) = exe_path.as_ref() {
+        let exe_dir = exe.parent();
+        if let Some(dir) = exe_dir {
+            // Installed layout: <exe_dir>/../share/ralphterm/wrappers/<name>.sh
+            let installed = dir
+                .join("..")
+                .join("share")
+                .join("ralphterm")
+                .join("wrappers")
+                .join(&filename);
+            if installed.is_file() {
+                return Some(canonicalize_or_keep(installed));
+            }
+        }
+
+        // Dev fallback: walk up from the executable looking for a
+        // `scripts/wrappers/<name>.sh` sibling. Cargo builds put the binary
+        // in `target/<profile>/<binary>`, so we may need to climb several
+        // levels before finding the repo root.
+        if let Some(found) = walk_up_for_wrapper(exe, &filename) {
+            return Some(canonicalize_or_keep(found));
+        }
+    }
+
+    // Last-ditch: walk up from the current working directory. This makes the
+    // dev fallback useful for cargo-run-from-checkout scenarios where
+    // current_exe() resolves into a tmp dir without nearby wrappers.
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(found) = walk_up_for_wrapper(&cwd, &filename) {
+            return Some(canonicalize_or_keep(found));
+        }
+    }
+
+    None
+}
+
+fn walk_up_for_wrapper(start: &Path, filename: &str) -> Option<PathBuf> {
+    let mut current: Option<&Path> = Some(start);
+    while let Some(dir) = current {
+        let candidate = dir.join("scripts").join("wrappers").join(filename);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+fn canonicalize_or_keep(path: PathBuf) -> PathBuf {
+    fs::canonicalize(&path).unwrap_or(path)
 }
 
 fn load_global(config_dir: Option<&Path>) -> Result<Option<RalphexConfig>> {
@@ -331,14 +457,23 @@ fn load_project(project_root: &Path) -> Result<Option<RalphexConfig>> {
 
 fn parse_ini(text: &str) -> RalphexConfig {
     let mut config = RalphexConfig::default();
+    let mut current_section: Option<String> = None;
     for raw_line in text.lines() {
         let trimmed = raw_line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
             continue;
         }
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            // Section headers are tolerated but not currently used. We treat all
-            // keys as living in a flat namespace for ralphex compatibility.
+            // Section headers (other than [agent]) are tolerated for ralphex
+            // compatibility: keys outside [agent] still live in a flat
+            // namespace, so we only need to track whether we are inside the
+            // [agent] block.
+            let header = trimmed
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .trim()
+                .to_ascii_lowercase();
+            current_section = Some(header);
             continue;
         }
         let Some((key, value)) = trimmed.split_once('=') else {
@@ -350,7 +485,7 @@ fn parse_ini(text: &str) -> RalphexConfig {
         if key.is_empty() {
             continue;
         }
-        config.set_known_key(key, value);
+        config.set_known_key_in_section(current_section.as_deref(), key, value);
     }
     config
 }
