@@ -954,6 +954,14 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
     .expect("write plan");
     git(&repo.path, ["add", "plan.md"]);
     git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+    std::fs::create_dir_all(repo.path.join(".ralphterm/progress"))
+        .expect("create stale progress dir");
+    std::fs::write(
+        repo.path
+            .join(".ralphterm/progress/unrelated-task-99.transcript"),
+        "stale unrelated transcript\n",
+    )
+    .expect("write unrelated stale progress artifact");
 
     let port = free_port();
     let bind = format!("127.0.0.1:{port}");
@@ -1032,6 +1040,29 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
     let diff_response = request_json(port, &format!("GET /v1/runs/{id}/diff HTTP/1.1"), None);
     assert_eq!(diff_response.status, 200, "{}", diff_response.body);
     assert_eq!(diff_response.body, diff);
+
+    let run_progress_dir = repo.path.join(format!(".ralphterm/runs/{id}/progress"));
+    let transcript = std::fs::read_to_string(run_progress_dir.join("plan-task-1.transcript"))
+        .expect("read copied implementation transcript from run artifact directory");
+    assert!(transcript.contains("COMPLETED"), "{transcript}");
+    let validation = std::fs::read_to_string(run_progress_dir.join("plan-task-1-validation.txt"))
+        .expect("read copied validation output from run artifact directory");
+    assert!(
+        validation.contains("Validation: test -f first.txt"),
+        "{validation}"
+    );
+    let progress_log = std::fs::read_to_string(run_progress_dir.join("plan.log"))
+        .expect("read copied progress log from run artifact directory");
+    assert!(
+        progress_log.contains("task_start number=1"),
+        "{progress_log}"
+    );
+    assert!(
+        !run_progress_dir
+            .join("unrelated-task-99.transcript")
+            .exists(),
+        "run artifact directory must not copy stale progress files from unrelated runs"
+    );
 
     let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
     assert_eq!(events.status, 200, "{}", events.body);
@@ -1546,6 +1577,15 @@ fn run_api_executes_plan_with_review_command_and_persists_review_transcript() {
     let summary = std::fs::read_to_string(&summary_path).expect("read run summary artifact");
     assert!(summary.contains("Result: passed"), "{summary}");
     assert!(summary.contains("Review transcript:"), "{summary}");
+
+    let run_progress_dir = repo.path.join(format!(".ralphterm/runs/{id}/progress"));
+    let review_transcript =
+        std::fs::read_to_string(run_progress_dir.join("plan-task-1-review.transcript"))
+            .expect("read copied review transcript from run artifact directory");
+    assert!(
+        review_transcript.contains("REVIEW_PASS"),
+        "{review_transcript}"
+    );
 }
 
 #[test]

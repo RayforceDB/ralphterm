@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
@@ -554,6 +555,15 @@ async fn create_run(
                     let summary_markdown = fs::read_to_string(&summary_path).ok();
                     let summary_json = fs::read_to_string(&summary_json_path).ok();
                     let diff_patch = fs::read_to_string(&diff_path).ok();
+                    if let Err(copy_err) = copy_progress_artifacts(
+                        &base_dir,
+                        run_id,
+                        &progress_dir,
+                        &slug,
+                        summary_json.as_deref(),
+                    ) {
+                        tracing::error!(%run_id, error = %copy_err, "failed to copy run progress artifacts");
+                    }
                     match RunStore::write_failure(
                         &base_dir,
                         run_id,
@@ -599,6 +609,11 @@ async fn create_run(
                 Ok(summary_markdown) => summary_markdown,
                 Err(err) => {
                     let error = anyhow::Error::new(err).context("read run summary artifact");
+                    if let Err(copy_err) =
+                        copy_progress_artifacts(&base_dir, run_id, &progress_dir, &slug, None)
+                    {
+                        tracing::error!(%run_id, error = %copy_err, "failed to copy run progress artifacts");
+                    }
                     let _ = RunStore::write_failure(&base_dir, run_id, None, None, None);
                     tracing::error!(%run_id, error = %error, "background plan run failed");
                     return;
@@ -608,6 +623,11 @@ async fn create_run(
                 Ok(diff_patch) => diff_patch,
                 Err(err) => {
                     let error = anyhow::Error::new(err).context("read run diff artifact");
+                    if let Err(copy_err) =
+                        copy_progress_artifacts(&base_dir, run_id, &progress_dir, &slug, None)
+                    {
+                        tracing::error!(%run_id, error = %copy_err, "failed to copy run progress artifacts");
+                    }
                     let _ = RunStore::write_failure(
                         &base_dir,
                         run_id,
@@ -623,6 +643,11 @@ async fn create_run(
                 Ok(summary_json) => summary_json,
                 Err(err) => {
                     let error = anyhow::Error::new(err).context("read run summary json artifact");
+                    if let Err(copy_err) =
+                        copy_progress_artifacts(&base_dir, run_id, &progress_dir, &slug, None)
+                    {
+                        tracing::error!(%run_id, error = %copy_err, "failed to copy run progress artifacts");
+                    }
                     let _ = RunStore::write_failure(
                         &base_dir,
                         run_id,
@@ -634,6 +659,20 @@ async fn create_run(
                     return;
                 }
             };
+            if let Err(err) =
+                copy_progress_artifacts(&base_dir, run_id, &progress_dir, &slug, Some(&summary_json))
+            {
+                let error = err.context("copy run progress artifacts");
+                let _ = RunStore::write_failure(
+                    &base_dir,
+                    run_id,
+                    Some(summary_markdown),
+                    Some(summary_json),
+                    Some(diff_patch),
+                );
+                tracing::error!(%run_id, error = %error, "background plan run failed");
+                return;
+            }
             match RunStore::write_result(
                 &base_dir,
                 run_id,
@@ -658,6 +697,105 @@ async fn create_run(
     });
 
     Ok(Json(started))
+}
+
+fn copy_progress_artifacts(
+    base_dir: &FsPath,
+    run_id: Uuid,
+    progress_dir: &FsPath,
+    plan_slug: &str,
+    summary_json: Option<&str>,
+) -> anyhow::Result<()> {
+    if !progress_dir.exists() {
+        return Ok(());
+    }
+
+    let artifact_names = progress_artifact_names(plan_slug, summary_json)?;
+    if artifact_names.is_empty() {
+        return Ok(());
+    }
+
+    let artifact_dir = base_dir
+        .join(".ralphterm")
+        .join("runs")
+        .join(run_id.to_string())
+        .join("progress");
+    fs::create_dir_all(&artifact_dir).with_context(|| {
+        format!(
+            "create run progress artifact directory {}",
+            artifact_dir.display()
+        )
+    })?;
+
+    for entry in fs::read_dir(progress_dir)
+        .with_context(|| format!("read progress directory {}", progress_dir.display()))?
+    {
+        let entry = entry.with_context(|| format!("read entry in {}", progress_dir.display()))?;
+        let artifact_name = entry.file_name().to_string_lossy().into_owned();
+        if !artifact_names.contains(&artifact_name)
+            && !is_current_run_progress_artifact(plan_slug, &artifact_name)
+        {
+            continue;
+        }
+        let source = entry.path();
+        let metadata = fs::symlink_metadata(&source)
+            .with_context(|| format!("read metadata for {}", source.display()))?;
+        if !metadata.is_file() {
+            continue;
+        }
+        let destination = artifact_dir.join(&artifact_name);
+        fs::copy(&source, &destination).with_context(|| {
+            format!(
+                "copy progress artifact {} to {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn is_current_run_progress_artifact(plan_slug: &str, artifact_name: &str) -> bool {
+    artifact_name.starts_with(&format!("{plan_slug}-task-"))
+        && (artifact_name.ends_with(".transcript") || artifact_name.ends_with("-validation.txt"))
+}
+
+fn progress_artifact_names(
+    plan_slug: &str,
+    summary_json: Option<&str>,
+) -> anyhow::Result<BTreeSet<String>> {
+    let mut names = BTreeSet::from([format!("{plan_slug}.log")]);
+    let Some(summary_json) = summary_json else {
+        return Ok(names);
+    };
+
+    let summary: serde_json::Value = match serde_json::from_str(summary_json) {
+        Ok(summary) => summary,
+        Err(_) => return Ok(names),
+    };
+    if let Some(tasks) = summary.get("tasks").and_then(|tasks| tasks.as_array()) {
+        for task in tasks {
+            collect_progress_artifact_names(task, &mut names);
+        }
+    }
+    if let Some(failed_task) = summary.get("failed_task") {
+        collect_progress_artifact_names(failed_task, &mut names);
+    }
+
+    Ok(names)
+}
+
+fn collect_progress_artifact_names(task: &serde_json::Value, names: &mut BTreeSet<String>) {
+    for field in ["transcript", "validation", "review_transcript"] {
+        let Some(path) = task.get(field).and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let Some(name) = FsPath::new(path).file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        names.insert(name.to_string());
+    }
 }
 
 struct CurrentDirGuard {
