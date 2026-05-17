@@ -1440,6 +1440,23 @@ mod tests {
             "failed"
         );
     }
+
+    #[test]
+    fn progress_log_for_review_reports_unavailable_log_without_failing() {
+        let missing_log = Path::new("definitely-missing-progress.log");
+
+        let progress_log = progress_log_for_review(missing_log);
+
+        assert!(
+            progress_log.contains("progress log unavailable"),
+            "{progress_log}"
+        );
+        assert!(progress_log.contains("failed to read"), "{progress_log}");
+        assert!(
+            progress_log.contains("definitely-missing-progress.log"),
+            "{progress_log}"
+        );
+    }
 }
 
 fn write_run_diff_patch(
@@ -2124,11 +2141,13 @@ fn run_review_command(
     progress: &ProgressPaths,
     attempt_progress: &AttemptProgressPaths,
 ) -> std::result::Result<String, ReviewCommandError> {
+    let progress_log = progress_log_for_review(&progress.log_path);
     let prompt = build_review_prompt(
         plan_name,
         task,
         agent_transcript,
         validation_output,
+        &progress_log,
         &git_state_for_review(),
     );
     let review_run = run_agent_command_with_timeout(review_command, &prompt, timeout)
@@ -2211,18 +2230,29 @@ fn build_review_prompt(
     task: &Task,
     agent_transcript: &str,
     validation_output: &str,
+    progress_log: &str,
     git_diff: &str,
 ) -> String {
     format!(
-        "You are independently reviewing one RalphTerm plan task from {plan_name}.\n\nTask {}: {}\n\nTask body:\n{}\n\nAgent transcript:\n{}\n\nValidation output:\n{}\n\nCurrent git diff:\n{}\n\n{}\n",
+        "You are independently reviewing one RalphTerm plan task from {plan_name}.\n\nTask {}: {}\n\nTask body:\n{}\n\nAgent transcript:\n{}\n\nValidation output:\n{}\n\nProgress log:\n{}\n\nCurrent git diff:\n{}\n\n{}\n",
         task.number,
         task.title,
         task.body,
         agent_transcript,
         validation_output,
+        progress_log,
         git_diff,
         review_instruction()
     )
+}
+
+fn progress_log_for_review(log_path: &Path) -> String {
+    fs::read_to_string(log_path).unwrap_or_else(|err| {
+        format!(
+            "[progress log unavailable: failed to read {}: {err}]\n",
+            log_path.display()
+        )
+    })
 }
 
 fn review_instruction() -> &'static str {

@@ -3440,6 +3440,68 @@ fn review_command_pass_allows_task_acceptance_after_validation() {
 }
 
 #[test]
+fn review_prompt_includes_progress_log_context() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-pass.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        output.status.success(),
+        "ralphterm run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let review_prompt = fs::read_to_string(repo.path.join("review-prompt.txt"))
+        .expect("review fixture should capture prompt");
+    assert!(
+        review_prompt.contains("Progress log:"),
+        "review prompt should include the current progress log section:\n{review_prompt}"
+    );
+    assert!(
+        review_prompt.contains("task_start number=1"),
+        "review prompt should include task start progress context:\n{review_prompt}"
+    );
+    assert!(
+        review_prompt.contains("validation result=passed"),
+        "review prompt should include validation progress context before review:\n{review_prompt}"
+    );
+}
+
+#[test]
 fn review_prompt_omits_large_untracked_file_contents_with_marker() {
     let repo = TempRepo::new();
     repo.init_git();
