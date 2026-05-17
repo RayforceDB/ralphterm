@@ -70,6 +70,18 @@ The detector watches terminal text for simple markers:
 
 This keeps orchestration independent from any one provider or CLI.
 
+### Notifier
+
+`src/notify.rs` provides a fire-and-forget notification fanout that supports Telegram, Slack, generic HTTP webhooks, and SMTP email. Each delivery runs on its own background thread with a 10-second timeout, so notification slowness or failure never blocks the run. The notifier is intentionally non-TLS (HTTPS endpoints are skipped with a warning) to avoid pulling a heavy HTTP/TLS crate into the core. See [`docs/notifications.md`](notifications.md).
+
+### Docker wrapper
+
+`src/docker.rs` translates an implementer or reviewer command into a `docker run` invocation. The wrapped command is handed back to the PTY runner unchanged, so the in-container CLI gets the same TTY-driven loop as the host path. The wrapper honors ralphex passthrough env vars (`RALPHEX_EXTRA_VOLUMES`, `RALPHEX_EXTRA_ENV`, `TZ`, `AWS_PROFILE`, `AWS_REGION`) and gates `ANTHROPIC_API_KEY` behind `--preserve-anthropic-api-key`. See [`docs/docker.md`](docker.md).
+
+### Provider wrappers
+
+POSIX scripts under `scripts/wrappers/` (and `<exe_dir>/../share/ralphterm/wrappers/` after installation) translate RalphTerm's PTY-driven loop into Codex, Copilot, Gemini, and OpenCode interactive sessions. Each wrapper accepts a single stdin prompt, runs the upstream CLI without `--print`/`--non-interactive` flags, forwards `CLAUDE_MODEL` to the upstream `--model` selector, and emits `COMPLETED` or `FAILED rc=<code>` on exit. `src/config.rs` auto-resolves a wrapper when the global config sets `[agent].provider = codex|copilot|gemini|opencode` and no `claude_command` is configured. See [`docs/providers.md`](providers.md).
+
 ### Approval policy engine
 
 Planned for Milestone 1.

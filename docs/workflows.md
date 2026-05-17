@@ -104,3 +104,72 @@ A completed run should produce:
 ## Future workflow adapters
 
 RalphTerm should integrate with any system that can call a command or HTTP API. The generic adapter reads a prompt from stdin, creates a RalphTerm session, streams output to stdout, and exits according to the final session status.
+
+## Review-only and external-only modes
+
+Ralphex exposes three operational modes besides the default full run, and RalphTerm honors all three.
+
+- `--tasks-only` (`-t`) runs only the implementation phase. Use it for quick iteration when the review gate would slow you down, or for plans that have no separate reviewer.
+- `--review` (`-r`) skips task execution and runs the reviewer pipeline once against the current working tree. This is the right mode when you want to validate an already-implemented plan against an independent reviewer.
+- `--external-only` (`-e`, alias `--codex-only` / `-c`) runs the external review/fixer loop without implementation. This is the ralphex pattern for handing a plan to a stricter reviewer in a second pass.
+
+All three modes accept the same configuration knobs. `--review` and `--external-only`/`--codex-only` require `--external-review-tool=custom --custom-review-script <cmd>` so RalphTerm has a reviewer to run.
+
+```bash
+ralphterm --review \
+  --external-review-tool=custom \
+  --custom-review-script "codex exec review-task" \
+  docs/plans/example.md
+```
+
+## Docker-isolated runs
+
+Add `--docker` to wrap the implementation and reviewer commands in a `docker run` invocation. RalphTerm passes the wrapped command to the same PTY runner, so the in-container CLI gets a real TTY.
+
+The default image is `ralphterm:latest` (build it from `docker/Dockerfile`); override with `--docker-image`. Use `--preserve-anthropic-api-key` to forward the host's `ANTHROPIC_API_KEY` env var into the container. The wrapper also honors `RALPHEX_EXTRA_VOLUMES`, `RALPHEX_EXTRA_ENV`, `TZ`, `AWS_PROFILE`, and `AWS_REGION` to match ralphex's passthrough semantics.
+
+See [docker.md](docker.md) for the full reference.
+
+```bash
+ralphterm --docker --docker-image ralphterm:latest \
+  --preserve-anthropic-api-key docs/plans/example.md
+```
+
+## Notifications
+
+RalphTerm can deliver plan-run events to Telegram, Slack, generic HTTP webhooks, and SMTP email. Each channel runs on its own background thread with a 10-second per-delivery timeout, so notification slowness or failure never blocks the run.
+
+Enable a channel with the matching CLI flag (`--notify-slack`, `--notify-webhook`, `--notify-telegram-token` + `--notify-telegram-chat`, or `--notify-email-smtp-url` + `--notify-email-from` + `--notify-email-to`). Filter the events with `--notify-on plan_done,task_failed,review_failed,rate_limit`. Configuration can also live in `~/.config/ralphex/config` or `.ralphex/config.json`.
+
+The core notifier is non-TLS — HTTPS Slack/webhook URLs and `smtps://` SMTP URLs are skipped with a warning. Front the integration with a local TLS proxy or use plain endpoints. See [notifications.md](notifications.md) for the full reference and event schemas.
+
+```bash
+ralphterm --tasks-only \
+  --notify-slack https://hooks.slack.example/T/B/X \
+  --notify-on plan_done,task_failed docs/plans/example.md
+```
+
+## Provider wrappers
+
+RalphTerm drives Codex, GitHub Copilot, Google Gemini, and OpenCode through small POSIX wrapper scripts in `scripts/wrappers/`. Each wrapper translates RalphTerm's PTY-driven loop into the upstream CLI's interactive mode and emits the `COMPLETED` / `FAILED` markers the orchestrator expects.
+
+Pick a wrapper by pointing `--claude-command` at it, or set `[agent].provider = codex|copilot|gemini|opencode` in `~/.config/ralphex/config` and RalphTerm resolves the bundled wrapper automatically. An explicit `claude_command` always wins.
+
+See [providers.md](providers.md) for the wrapper contract and per-provider env vars.
+
+```bash
+ralphterm --tasks-only \
+  --claude-command "$(pwd)/scripts/wrappers/codex.sh" \
+  docs/plans/example.md
+```
+
+## Plan completion
+
+Pass `--move-completed` (or set `move_plan_on_completion = true` in config) to move successfully completed plans into `<plan-dir>/completed/`. Only `--tasks-only` and full-mode runs are eligible to move — review-only and external-only modes never move plans because they did not produce acceptance.
+
+The move runs after the local checkpoint commit and after the ralphex progress symlink is refreshed, so dashboards that tail `.ralphex/progress/` continue to see the run summary even after the plan moves. RalphTerm prints the canonical destination path so scripts can update follow-up references.
+
+```bash
+ralphterm --tasks-only --move-completed docs/plans/example.md
+# => Moved plan to /…/docs/plans/completed/example.md
+```

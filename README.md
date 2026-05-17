@@ -6,11 +6,38 @@
 [![Website](https://img.shields.io/badge/website-ralphterm.rayforcedb.com-00d992)](https://ralphterm.rayforcedb.com)
 [![Social Preview](https://img.shields.io/badge/social-preview-818cf8)](https://ralphterm.rayforcedb.com/assets/social-preview.png)
 
-**A safer replacement for brittle one-shot AI CLI automation.**
+**Drop-in replacement for [ralphex](https://github.com/umputun/ralphex), with PTY-native CLI execution.**
 
-RalphTerm solves a concrete problem: many autonomous coding stacks depend on one-shot CLI prompt flags. That path gets fragile when the CLI asks for approval, changes output format, needs follow-up input, hits auth, or moves more behavior into the interactive terminal. RalphTerm runs Claude Code, Codex, and future terminal agents inside real PTYs, then gives orchestration systems a clean API around that session.
+RalphTerm runs your existing ralphex plans, configs, agents, prompts, and review pipelines unchanged — but it executes the official AI CLIs inside real PTYs instead of relying on brittle `claude -p` / `--print` one-shot flags. The bundled `ralphex` binary alias means you can swap binaries without touching scripts.
 
-The point is not to bypass the vendors. The point is to stop pretending the terminal is not there. The official CLI still owns login, rate limits, safety prompts, and account identity. RalphTerm owns session control, streaming, transcripts, signals, and approvals.
+## Drop in
+
+```sh
+# Before
+ralphex --tasks-only docs/plans/feature.md
+
+# After (literally the same command, ralphex is now a ralphterm alias)
+ralphex --tasks-only docs/plans/feature.md
+
+# Or use ralphterm directly
+ralphterm --tasks-only docs/plans/feature.md
+```
+
+Keep the rest of your `~/.config/ralphex/` setup. RalphTerm reads it.
+
+## Why
+
+AI coding tools are becoming interactive terminal products. Automation built around non-interactive prompt mode is fragile — the CLI may ask for approval, change output format, need follow-up input, hit auth, or move more behavior into the interactive terminal. RalphTerm takes the durable path: launch the real CLI in a real terminal and build a reliable control plane around it. The official CLI still owns login, rate limits, safety prompts, and account identity. RalphTerm owns session control, streaming, transcripts, signals, approvals, review gates, and notifications.
+
+## Features
+
+- ✓ Full ralphex CLI surface (see [`docs/ralphex-compat.md`](docs/ralphex-compat.md))
+- ✓ Notifications (Telegram, Slack, Email, Webhook)
+- ✓ Docker isolation
+- ✓ Alternate providers: Codex, Copilot, Gemini, OpenCode
+- ✓ Worktree-isolated runs
+- ✓ Review retry with patience
+- ✓ Plan auto-move on completion
 
 ## Links
 
@@ -18,21 +45,20 @@ The point is not to bypass the vendors. The point is to stop pretending the term
 - Documentation: [ralphterm.rayforcedb.com/docs/](https://ralphterm.rayforcedb.com/docs/)
 - Workflows: [ralphterm.rayforcedb.com/docs/workflows.html](https://ralphterm.rayforcedb.com/docs/workflows.html)
 - Social preview: [assets/social-preview.png](https://ralphterm.rayforcedb.com/assets/social-preview.png)
+- Migration guide: [`docs/migrate-from-ralphex.md`](docs/migrate-from-ralphex.md)
+- Ralphex compatibility: [`docs/ralphex-compat.md`](docs/ralphex-compat.md)
+- CLI reference: [`docs/cli-reference.md`](docs/cli-reference.md)
 - Milestone 1: [`docs/milestones/m1-autonomous-engineering.md`](docs/milestones/m1-autonomous-engineering.md)
 - Security model: [`docs/security.md`](docs/security.md)
-
-## Why RalphTerm exists
-
-AI coding tools are becoming interactive terminal products. Automation built around non-interactive prompt mode is fragile. RalphTerm takes the durable path: run the real CLI in a real terminal and build a reliable control plane around it.
 
 ## What RalphTerm does today
 
 - Replaces one-shot prompt-mode execution with one isolated PTY session per agent run.
-- Supports Claude Code and Codex as first-class agents.
+- Supports Claude Code and Codex as first-class agents, plus Copilot, Gemini, and OpenCode via bundled wrappers.
 - Sends prompts and follow-up input as terminal keystrokes.
 - Streams raw terminal output over WebSocket.
 - Keeps transcripts and status for every session.
-- Detects workflow signals such as `COMPLETED`, `FAILED`, `PLAN_READY`, `QUESTION`, and `REVIEW_DONE`.
+- Detects workflow signals such as `COMPLETED`, `FAILED`, `PLAN_READY`, `QUESTION`, `REVIEW_DONE`, and the `<<<RALPHEX:*>>>` aliases.
 - Exposes REST controls for create, input, resize, cancel, status, transcript, and events.
 - Binds to `127.0.0.1` by default because the API controls local terminals.
 
@@ -133,12 +159,18 @@ See [`docs/milestones/m1-autonomous-engineering.md`](docs/milestones/m1-autonomo
 
 ## Documentation
 
+- [`docs/getting-started.md`](docs/getting-started.md) — install and first run
+- [`docs/ralphex-compat.md`](docs/ralphex-compat.md) — flag, config, signal, and exit-code compatibility matrix
+- [`docs/cli-reference.md`](docs/cli-reference.md) — every flag from `--help`
+- [`docs/migrate-from-ralphex.md`](docs/migrate-from-ralphex.md) — step-by-step migration
+- [`docs/workflows.md`](docs/workflows.md) — run and review workflows
+- [`docs/notifications.md`](docs/notifications.md) — Telegram, Slack, webhook, SMTP
+- [`docs/docker.md`](docs/docker.md) — Docker-isolated runs
+- [`docs/providers.md`](docs/providers.md) — alternate-provider wrappers
 - [`docs/product.md`](docs/product.md) — product positioning and principles
 - [`docs/api.md`](docs/api.md) — current API contract
 - [`docs/architecture.md`](docs/architecture.md) — daemon, PTY runtime, events, storage
 - [`docs/security.md`](docs/security.md) — compliance and safety model
-- [`docs/getting-started.md`](docs/getting-started.md) — local development quickstart
-- [`docs/workflows.md`](docs/workflows.md) — run and review workflows
 - [`site/`](site/) — static landing website and hosted docs
 
 ## Development
