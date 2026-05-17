@@ -2273,6 +2273,94 @@ fn run_api_dry_run_resolves_relative_plan_path_inside_repo_path() {
 }
 
 #[test]
+fn run_api_rejects_repo_path_with_workspace_id() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    std::fs::write(repo.path.join("plan.md"), "# Plan\n").expect("write plan");
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "repo_path": repo.path.to_string_lossy(),
+        "workspace_id": "ambiguous-workspace",
+        "plan_path": "plan.md",
+        "dry_run": true
+    })
+    .to_string();
+
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+    let error: serde_json::Value = serde_json::from_str(&response.body).expect("error json");
+    assert!(
+        error["error"].as_str().is_some_and(|message| {
+            message.contains("repo_path") && message.contains("workspace_id")
+        }),
+        "{}",
+        response.body
+    );
+}
+
+#[test]
+fn run_api_dry_run_canonicalizes_symlink_repo_path_in_metadata() {
+    let _guard = server_test_lock();
+    let daemon_dir = TempDir::new();
+    let root = TempDir::new();
+    let target_repo = root.path.join("repo");
+    let symlink_repo = root.path.join("repo-link");
+    std::fs::create_dir(&target_repo).expect("create target repo");
+    std::fs::write(
+        target_repo.join("plan.md"),
+        r#"# Symlink repo plan
+
+### Task 1: Symlink repo task
+- [ ] Read plan through canonical repo path
+"#,
+    )
+    .expect("write plan");
+    symlink(&target_repo, &symlink_repo).expect("create repo symlink");
+    let canonical_repo = target_repo.canonicalize().expect("canonical repo path");
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&daemon_dir.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "repo_path": symlink_repo.to_string_lossy(),
+        "plan_path": "plan.md",
+        "dry_run": true
+    })
+    .to_string();
+
+    let id = create_and_wait_for_dry_run(port, &body);
+    let run_response = request_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), None);
+    assert_eq!(run_response.status, 200, "{}", run_response.body);
+    let run_json: serde_json::Value =
+        serde_json::from_str(&run_response.body).expect("run response json");
+    assert_eq!(
+        run_json["repo_path"],
+        canonical_repo.to_string_lossy().as_ref()
+    );
+}
+
+#[test]
 fn run_api_rejects_repo_path_symlink_plan_path_that_escapes_repo() {
     let _guard = server_test_lock();
     let daemon_dir = TempDir::new();

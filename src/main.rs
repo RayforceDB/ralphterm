@@ -415,8 +415,13 @@ async fn create_run(
 ) -> Result<Json<CreatedRunRecord>, ApiError> {
     let plan_path = req.plan_path.clone();
     let base_dir = state.run_base_dir.as_ref().clone();
-    let repo_path = req.repo_path.clone();
+    let mut repo_path = req.repo_path.clone();
     let requested_repo_dir = repo_path.as_deref().map(PathBuf::from);
+    if req.repo_path.is_some() && req.workspace_id.is_some() {
+        return Err(ApiError::bad_request(
+            "repo_path cannot be combined with workspace_id",
+        ));
+    }
     let mut canonical_requested_repo_dir = None;
     if let Some(repo_dir) = requested_repo_dir.as_deref() {
         if !repo_dir.is_absolute() {
@@ -434,6 +439,7 @@ async fn create_run(
                 repo_dir.display()
             ))
         })?;
+        repo_path = Some(canonical_repo_dir.to_string_lossy().to_string());
         canonical_requested_repo_dir = Some(canonical_repo_dir);
     }
     if req.agent.is_some() && req.agent_command.is_some() {
@@ -458,7 +464,7 @@ async fn create_run(
             "plan_path is required when agent, agent_command, or dry_run is set",
         ));
     }
-    if let Some(repo_dir) = requested_repo_dir.as_deref() {
+    if requested_repo_dir.is_some() {
         if !dry_run {
             return Err(ApiError::bad_request(
                 "repo_path currently supports dry_run only",
@@ -478,7 +484,7 @@ async fn create_run(
         let canonical_repo_dir = canonical_requested_repo_dir.as_deref().ok_or_else(|| {
             ApiError::bad_request("unable to resolve repo_path for plan_path validation")
         })?;
-        let canonical_plan_path = repo_dir
+        let canonical_plan_path = canonical_repo_dir
             .join(&plan)
             .canonicalize()
             .map_err(|_| ApiError::bad_request("unable to resolve plan_path inside repo_path"))?;
@@ -588,7 +594,7 @@ async fn create_run(
 
     let executor_base_dir = base_dir.clone();
     let execution_dir = workspace_execution_dir
-        .or(requested_repo_dir)
+        .or(canonical_requested_repo_dir)
         .unwrap_or_else(|| executor_base_dir.clone());
     tokio::spawn(async move {
         let supervisor_base_dir = base_dir;
