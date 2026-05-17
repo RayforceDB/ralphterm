@@ -451,14 +451,22 @@ async fn create_run(
         ));
     }
     if requested_repo_dir.is_some() {
+        if !dry_run {
+            return Err(ApiError::bad_request(
+                "repo_path currently supports dry_run only",
+            ));
+        }
         let plan_path = plan_path
             .as_deref()
             .ok_or_else(|| ApiError::bad_request("plan_path is required when repo_path is set"))?;
-        if PathBuf::from(plan_path).is_absolute() {
+        let plan = PathBuf::from(plan_path);
+        if plan.is_absolute() {
             return Err(ApiError::bad_request(
                 "repo_path requires a relative plan_path",
             ));
         }
+        validate_workspace_plan_path(FsPath::new(""), &plan)
+            .map_err(|_| ApiError::bad_request("plan_path must stay inside repo_path"))?;
     }
     if req.require_review.unwrap_or(false) && review_command.is_none() {
         return Err(ApiError::bad_request(

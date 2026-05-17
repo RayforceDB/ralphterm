@@ -2273,6 +2273,89 @@ fn run_api_dry_run_resolves_relative_plan_path_inside_repo_path() {
 }
 
 #[test]
+fn run_api_rejects_repo_path_plan_path_that_escapes_repo() {
+    let _guard = server_test_lock();
+    let daemon_dir = TempDir::new();
+    let root = TempDir::new();
+    let target_repo = root.path.join("repo");
+    let outside_dir = root.path.join("outside");
+    std::fs::create_dir(&target_repo).expect("create target repo");
+    std::fs::create_dir(&outside_dir).expect("create outside dir");
+    std::fs::write(
+        outside_dir.join("plan.md"),
+        r#"# Outside plan
+
+### Task 1: Outside task
+- [ ] This plan must not be read
+"#,
+    )
+    .expect("write outside plan");
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&daemon_dir.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "repo_path": target_repo.to_string_lossy(),
+        "plan_path": "../outside/plan.md",
+        "dry_run": true
+    })
+    .to_string();
+
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+    let error: serde_json::Value = serde_json::from_str(&response.body).expect("error json");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("plan_path") && message.contains("repo_path")),
+        "{}",
+        response.body
+    );
+}
+
+#[test]
+fn run_api_rejects_repo_path_without_dry_run() {
+    let _guard = server_test_lock();
+    let daemon_dir = TempDir::new();
+    let target_repo = TempDir::new();
+    std::fs::create_dir(target_repo.path.join("docs")).expect("create docs dir");
+    std::fs::write(target_repo.path.join("docs/plan.md"), "# Plan\n").expect("write plan");
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&daemon_dir.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "repo_path": target_repo.path.to_string_lossy(),
+        "plan_path": "docs/plan.md",
+        "dry_run": false
+    })
+    .to_string();
+
+    let response = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(response.status, 400, "{}", response.body);
+    let error: serde_json::Value = serde_json::from_str(&response.body).expect("error json");
+    assert_eq!(error["error"], "repo_path currently supports dry_run only");
+}
+
+#[test]
 fn run_api_dry_run_with_workspace_id_does_not_create_workspace() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
