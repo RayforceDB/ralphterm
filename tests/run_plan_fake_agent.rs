@@ -526,6 +526,114 @@ fn run_command_with_workspace_id_runs_inside_managed_workspace() {
 }
 
 #[test]
+fn run_command_with_workspace_id_reuses_failed_managed_workspace_for_resume() {
+    let repo = TempRepo::new();
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    let original_plan = r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#;
+    fs::write(&plan_path, original_plan).expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add test plan"]);
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            "plan.md",
+            "--workspace-id",
+            "isolated",
+            "--agent-command",
+            fixture_path("fake-agent-no-completed.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm with failing agent");
+
+    assert!(
+        !first_output.status.success(),
+        "ralphterm run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+
+    let workspace_path = repo.path.join(".ralphterm/workspaces/isolated");
+    assert!(
+        workspace_path.exists(),
+        "failed run should create the managed workspace"
+    );
+    let first_progress_log =
+        fs::read_to_string(workspace_path.join(".ralphterm/progress/plan.log"))
+            .expect("read first workspace progress log");
+    assert!(
+        first_progress_log.contains("task_end number=1 result=failed"),
+        "{first_progress_log}"
+    );
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            "plan.md",
+            "--workspace-id",
+            "isolated",
+            "--agent-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("rerun ralphterm with passing agent");
+
+    assert!(
+        second_output.status.success(),
+        "ralphterm retry failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+    let second_stdout = String::from_utf8_lossy(&second_output.stdout);
+    assert!(
+        second_stdout.contains(&format!("Workspace: {}", workspace_path.display())),
+        "{second_stdout}"
+    );
+
+    let workspace_plan =
+        fs::read_to_string(workspace_path.join("plan.md")).expect("read workspace plan");
+    assert!(
+        workspace_plan.contains("- [x] Write first.txt"),
+        "{workspace_plan}"
+    );
+    let generated =
+        fs::read_to_string(workspace_path.join("first.txt")).expect("read workspace first.txt");
+    assert_eq!(generated, "created by fake agent\n");
+    let progress_log = fs::read_to_string(workspace_path.join(".ralphterm/progress/plan.log"))
+        .expect("read workspace progress log");
+    assert!(
+        progress_log.contains("resume number=1 previous_result=failed"),
+        "{progress_log}"
+    );
+
+    let source_plan = fs::read_to_string(&plan_path).expect("read source plan");
+    assert_eq!(source_plan, original_plan);
+    assert!(
+        !repo.path.join("first.txt").exists(),
+        "source repo must not receive generated file"
+    );
+    assert_eq!(repo.git_output(["status", "--short"]), "");
+}
+
+#[test]
 fn run_command_dry_run_with_workspace_id_does_not_create_workspace() {
     let repo = TempRepo::new();
     repo.init_git();

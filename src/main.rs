@@ -247,11 +247,16 @@ async fn main() -> anyhow::Result<()> {
                 })?;
                 validate_workspace_plan_path(cwd_relative, &plan)?;
 
+                let candidate = manager.workspace(&id)?;
                 if dry_run {
-                    let workspace = manager.workspace(id)?;
-                    println!("Workspace: {} (dry run)", workspace.path.display());
+                    println!("Workspace: {} (dry run)", candidate.path.display());
                 } else {
-                    let workspace = manager.create(id)?;
+                    let workspace = if candidate.path.exists() {
+                        manager.validate_existing_workspace(&candidate)?;
+                        candidate
+                    } else {
+                        manager.create(id)?
+                    };
                     println!("Workspace: {}", workspace.path.display());
                     let workspace_cwd = workspace.path.join(cwd_relative);
                     std::env::set_current_dir(&workspace_cwd).with_context(|| {
