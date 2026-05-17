@@ -394,6 +394,27 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         }
     }
 
+    if !matches!(mode, RunMode::TasksOnly | RunMode::ReviewOnly) {
+        let reviewer_cmd = derive_reviewer_command(&repo_root)?;
+        let outcome =
+            crate::review_phases::external_review(crate::review_phases::ExternalReviewArgs {
+                prompts: &prompts,
+                implementer_command: &agent_cmd,
+                reviewer_command: &reviewer_cmd,
+                plan_path: &plan_path,
+                progress_path: progress.path(),
+                default_branch: &preflight.default_branch,
+                agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+                max_iterations: 3,
+            })?;
+        if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
+            for f in findings {
+                eprintln!("[review-external] {f}");
+            }
+            anyhow::bail!("external review found critical issues");
+        }
+    }
+
     let elapsed = start.elapsed();
     let (files, additions, deletions) = git_shortstat(&repo_root, &preflight.default_branch)?;
 
@@ -461,90 +482,53 @@ fn run_plan_review_only(options: RunOptions) -> Result<String> {
 }
 
 fn run_plan_external_only(options: RunOptions) -> Result<String> {
-    let plan_path = options.plan_path.clone();
-    let plan_text = fs::read_to_string(&plan_path)
-        .with_context(|| format!("read plan {}", plan_path.display()))?;
-    let plan_name = plan_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("plan");
-    let agent_command = options
-        .agent_command
-        .clone()
-        .unwrap_or_else(|| DEFAULT_PLAN_AGENT_COMMAND.to_string());
-    let review_command = options.review_command.as_deref().ok_or_else(|| {
-        anyhow::anyhow!(
-            "--external-only requires --external-review-tool=custom --custom-review-script"
-        )
-    })?;
-    validate_interactive_agent_command(&agent_command)?;
-    validate_interactive_agent_command(review_command)?;
-    if agent_commands_equivalent(&agent_command, review_command)? {
-        bail!("independent review command must differ from agent command");
+    use crate::preflight::Preflight;
+    use crate::progress_log::ProgressLog;
+    use crate::prompts::Prompts;
+
+    let RunOptions {
+        plan_path,
+        agent_command,
+        review_command,
+        agent_timeout,
+        max_external_iterations,
+        ..
+    } = options;
+    let agent_cmd = agent_command.unwrap_or_else(|| DEFAULT_PLAN_AGENT_COMMAND.to_string());
+    let reviewer_cmd = review_command
+        .ok_or_else(|| anyhow::anyhow!("review command required for --external-only"))?;
+    let repo_root = std::env::current_dir()?;
+    let plan_path = plan_path.canonicalize()?;
+
+    let preflight = Preflight {
+        repo_root: &repo_root,
+        plan_path: &plan_path,
+        branch_override: None,
+        use_worktree: false,
+        allow_dirty: true,
     }
-    let max_iterations = options.max_external_iterations.unwrap_or(10).max(1);
-    let timeout = options.agent_timeout.unwrap_or_else(agent_timeout);
-    let mut output = format!("External-only review loop for {plan_name}\n");
-    let mut latest_feedback: Option<String> = None;
-    for iteration in 1..=max_iterations {
-        check_for_cancellation(&options)?;
-        output.push_str(&format!("Iteration {iteration}/{max_iterations}\n"));
-        let decision = run_standalone_review(review_command, plan_name, &plan_text, timeout)?;
-        output.push_str(&decision.transcript);
-        if !output.ends_with('\n') {
-            output.push('\n');
+    .check()?;
+    let progress = ProgressLog::open(&repo_root, &preflight.plan_slug)?;
+    let prompts = Prompts::load(&repo_root, None);
+
+    let outcome =
+        crate::review_phases::external_review(crate::review_phases::ExternalReviewArgs {
+            prompts: &prompts,
+            implementer_command: &agent_cmd,
+            reviewer_command: &reviewer_cmd,
+            plan_path: &plan_path,
+            progress_path: progress.path(),
+            default_branch: &preflight.default_branch,
+            agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+            max_iterations: max_external_iterations.unwrap_or(3),
+        })?;
+    if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
+        for f in findings {
+            eprintln!("[review-external] {f}");
         }
-        match decision.accepted {
-            Some(true) => {
-                output.push_str(&format!(
-                    "External review accepted after {iteration} iteration(s)\n"
-                ));
-                return Ok(output);
-            }
-            Some(false) => {
-                latest_feedback = Some(decision.transcript.clone());
-                if iteration == max_iterations {
-                    break;
-                }
-                let prompt = build_external_loop_prompt(
-                    plan_name,
-                    &plan_text,
-                    iteration,
-                    latest_feedback.as_deref(),
-                );
-                check_for_cancellation(&options)?;
-                let agent_run = run_agent_command_with_timeout(&agent_command, &prompt, timeout)
-                    .with_context(|| {
-                        format!("run external-only implementer iteration {iteration}")
-                    })?;
-                output.push_str(&agent_run.transcript);
-                if !output.ends_with('\n') {
-                    output.push('\n');
-                }
-                if agent_run.timed_out {
-                    bail!(
-                        "external-only implementer iteration {iteration} timed out after {timeout:?}"
-                    );
-                }
-                if agent_run.exit_code != 0 {
-                    bail!(
-                        "external-only implementer iteration {iteration} exited with {}",
-                        agent_run.exit_code
-                    );
-                }
-            }
-            None => {
-                bail!(
-                    "external-only reviewer did not emit REVIEW_PASS or REVIEW_FAIL on iteration {iteration}:\n{}",
-                    decision.transcript
-                );
-            }
-        }
+        anyhow::bail!("external-only review found critical issues");
     }
-    bail!(
-        "external-only loop did not converge within {max_iterations} iterations\n{}",
-        latest_feedback.unwrap_or_default()
-    );
+    Ok(String::new())
 }
 
 struct StandaloneReviewDecision {
@@ -581,6 +565,7 @@ fn build_standalone_review_prompt(plan_name: &str, plan_text: &str, git_diff: &s
     )
 }
 
+#[allow(dead_code)]
 fn build_external_loop_prompt(
     plan_name: &str,
     plan_text: &str,
@@ -2096,7 +2081,7 @@ fn review_instruction() -> &'static str {
     "Print REVIEW_PASS only if the task matches the spec and the validation output supports accepting it. Print REVIEW_FAIL with the reason otherwise."
 }
 
-fn review_output_decision(transcript: &str, _prompt: &str) -> Option<bool> {
+pub(crate) fn review_output_decision(transcript: &str, _prompt: &str) -> Option<bool> {
     let normalized = transcript.replace("\r\n", "\n").replace('\r', "\n");
     let reviewer_output = normalized
         .rfind(review_instruction())
@@ -2133,8 +2118,7 @@ fn review_output_decision(transcript: &str, _prompt: &str) -> Option<bool> {
 /// is the trimmed reason text after the first REVIEW_FAIL signal line; if the
 /// reviewer only emitted the bare signal, the category is empty so all bare
 /// REVIEW_FAIL responses count as the same category.
-#[allow(dead_code)]
-fn review_failure_category(feedback: &str) -> String {
+pub(crate) fn review_failure_category(feedback: &str) -> String {
     let normalized = feedback.replace("\r\n", "\n").replace('\r', "\n");
     for line in normalized.lines() {
         let trimmed = line.trim();

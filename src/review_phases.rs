@@ -144,8 +144,75 @@ pub struct ExternalReviewArgs<'a> {
 }
 
 pub fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutcome> {
-    // Stub — Task 9 implements this by lifting the fixer loop out of
-    // runner::run_plan_external_only.
-    let _ = args;
-    Ok(ReviewOutcome::Pass)
+    let plan_str = args.plan_path.to_string_lossy().to_string();
+    let progress_str = args.progress_path.to_string_lossy().to_string();
+    let default_branch = args.default_branch.to_string();
+
+    let mut last_category: Option<String> = None;
+    let mut consecutive = 0usize;
+
+    for iteration in 1..=args.max_iterations {
+        let mut vars: HashMap<&str, &str> = HashMap::new();
+        vars.insert("PLAN_FILE", &plan_str);
+        vars.insert("PROGRESS_FILE", &progress_str);
+        vars.insert("DEFAULT_BRANCH", &default_branch);
+
+        let review_prompt = substitute(&args.prompts.codex_review, &vars);
+        let review_run = crate::runner::run_agent_command_with_timeout(
+            args.reviewer_command,
+            &review_prompt,
+            args.agent_timeout,
+        )?;
+        if review_run.exit_code != 0 {
+            anyhow::bail!(
+                "external reviewer iteration {iteration} exited with {}",
+                review_run.exit_code
+            );
+        }
+
+        let decision =
+            crate::runner::review_output_decision(&review_run.transcript, &review_prompt);
+        match decision {
+            Some(true) => return Ok(ReviewOutcome::Pass),
+            Some(false) => {
+                let category = crate::runner::review_failure_category(&review_run.transcript);
+                if last_category.as_deref() == Some(category.as_str()) {
+                    consecutive += 1;
+                } else {
+                    consecutive = 1;
+                    last_category = Some(category.clone());
+                }
+                if consecutive >= 3 {
+                    return Ok(ReviewOutcome::Issues(vec![format!(
+                        "external review stalemate: category '{category}' repeated {consecutive} times"
+                    )]));
+                }
+                let findings = format!("Previous external review failed: {category}");
+                let mut fix_vars = vars.clone();
+                fix_vars.insert("REVIEW_FINDINGS", &findings);
+                let fix_prompt = substitute(&args.prompts.codex, &fix_vars);
+                let fix_run = crate::runner::run_agent_command_with_timeout(
+                    args.implementer_command,
+                    &fix_prompt,
+                    args.agent_timeout,
+                )?;
+                if fix_run.exit_code != 0 {
+                    anyhow::bail!(
+                        "external review fixer iteration {iteration} exited with {}",
+                        fix_run.exit_code
+                    );
+                }
+            }
+            None => {
+                anyhow::bail!(
+                    "external review iteration {iteration} did not emit REVIEW_PASS or REVIEW_FAIL"
+                );
+            }
+        }
+    }
+
+    Ok(ReviewOutcome::Issues(vec![format!(
+        "external review exhausted {} iterations without REVIEW_PASS",
+        args.max_iterations
+    )]))
 }
