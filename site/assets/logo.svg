@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="RalphTerm">
+  <rect x="8"  y="8"  width="16" height="16" fill="currentColor"/>
+  <rect x="28" y="8"  width="16" height="16" fill="currentColor"/>
+  <rect x="8"  y="28" width="16" height="16" fill="currentColor"/>
+  <rect x="48" y="28" width="16" height="16" fill="currentColor"/>
+  <rect x="8"  y="48" width="16" height="16" fill="currentColor"/>
+  <rect x="28" y="48" width="16" height="16" fill="currentColor"/>
+  <rect x="8"  y="68" width="16" height="16" fill="currentColor"/>
+  <rect x="48" y="68" width="16" height="16" fill="currentColor"/>
+  <rect x="68" y="68" width="16" height="16" fill="currentColor"/>
+</svg>
