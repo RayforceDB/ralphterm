@@ -4559,6 +4559,68 @@ fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
 }
 
 #[test]
+fn failed_run_summary_records_attempt_counts_after_review_retry_failure() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "run",
+            plan_path.to_str().expect("utf8 plan path"),
+            "--agent-command",
+            fixture_path("retry-after-review-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--review-command",
+            fixture_path("review-fail-twice.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "ralphterm run should fail after the retried implementation also fails review\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("agent-count.txt")).expect("read agent count"),
+        "2\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path.join("review-count.txt")).expect("read review count"),
+        "2\n"
+    );
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read failed machine-readable run summary"),
+    )
+    .expect("parse failed machine-readable run summary");
+    assert_eq!(summary_json["result"], "failed");
+    assert_eq!(summary_json["failed_task"]["phase"], "review");
+    assert_eq!(summary_json["failed_task"]["attempts"], 2);
+    assert_eq!(summary_json["failed_task"]["review_attempts"], 2);
+}
+
+#[test]
 fn review_retry_cleanup_preserves_preexisting_symlink() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
