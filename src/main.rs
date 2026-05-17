@@ -177,6 +177,13 @@ struct ApprovalResponse {
     approved: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct ProgressArtifactIndexItem {
+    name: String,
+    kind: &'static str,
+    url: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateRunRequest {
     plan_path: Option<String>,
@@ -329,6 +336,7 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
         .route("/v1/runs/:id/summary", get(get_run_summary))
         .route("/v1/runs/:id/summary.json", get(get_run_summary_json))
         .route("/v1/runs/:id/diff", get(get_run_diff))
+        .route("/v1/runs/:id/progress", get(list_run_progress))
         .route("/v1/runs/:id/progress/:artifact", get(get_run_progress))
         .route("/v1/runs/:id/events", get(get_run_events))
         .route("/v1/runs/:id/cancel", post(cancel_run))
@@ -887,6 +895,102 @@ async fn get_run_diff(
     read_run_artifact(path, "diff").await
 }
 
+async fn list_run_progress(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ProgressArtifactIndexItem>>, ApiError> {
+    let record = RunStore::get(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?;
+    let plan_slug = record
+        .plan_path
+        .as_deref()
+        .map(FsPath::new)
+        .map(plan_slug_for_artifacts)
+        .unwrap_or_else(|| "plan".to_string());
+    let summary_json = RunStore::summary_json_path(state.run_base_dir.as_ref(), id)?
+        .and_then(|path| fs::read_to_string(path).ok());
+    let allowed = progress_artifact_names(&plan_slug, summary_json.as_deref())?;
+    let progress_dir = state
+        .run_base_dir
+        .join(".ralphterm")
+        .join("runs")
+        .join(id.to_string())
+        .join("progress");
+
+    let mut artifacts = Vec::new();
+    match fs::read_dir(&progress_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.with_context(|| {
+                    format!(
+                        "read entry in progress directory {}",
+                        progress_dir.display()
+                    )
+                })?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !allowed.contains(&name) && !is_current_run_progress_artifact(&plan_slug, &name)
+                {
+                    continue;
+                }
+                let metadata = fs::symlink_metadata(entry.path()).with_context(|| {
+                    format!(
+                        "read metadata for progress artifact {}",
+                        entry.path().display()
+                    )
+                })?;
+                if !metadata.is_file() || metadata.file_type().is_symlink() {
+                    continue;
+                }
+                artifacts.push(ProgressArtifactIndexItem {
+                    kind: progress_artifact_kind(&name),
+                    url: format!(
+                        "/v1/runs/{id}/progress/{}",
+                        percent_encode_path_segment(&name)
+                    ),
+                    name,
+                });
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(anyhow::Error::new(error)
+                .context(format!(
+                    "read progress directory {}",
+                    progress_dir.display()
+                ))
+                .into())
+        }
+    }
+    artifacts.sort_by(|left, right| left.name.cmp(&right.name));
+
+    Ok(Json(artifacts))
+}
+
+fn progress_artifact_kind(name: &str) -> &'static str {
+    if name.ends_with("-validation.txt") {
+        "validation"
+    } else if name.ends_with("-review.transcript") {
+        "review"
+    } else if name.ends_with(".transcript") {
+        "transcript"
+    } else if name.ends_with(".log") {
+        "log"
+    } else {
+        "artifact"
+    }
+}
+
+fn percent_encode_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
 async fn get_run_progress(
     State(state): State<AppState>,
     Path((id, artifact)): Path<(Uuid, String)>,
@@ -920,6 +1024,21 @@ async fn get_run_progress(
         .join(id.to_string())
         .join("progress")
         .join(&artifact);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => return Err(ApiError::artifact_not_found("progress")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ApiError::artifact_not_found("progress"));
+        }
+        Err(error) => {
+            return Err(anyhow::Error::new(error)
+                .context(format!(
+                    "read progress artifact metadata {}",
+                    path.display()
+                ))
+                .into());
+        }
+    }
     read_run_artifact(path, "progress").await
 }
 

@@ -267,6 +267,7 @@ fn docs_describe_run_api_as_asynchronous_and_expose_artifacts() {
         "GET  /v1/runs/:id/events",
         "GET  /v1/runs/:id/summary",
         "GET  /v1/runs/:id/diff",
+        "GET  /v1/runs/:id/progress",
         "POST /v1/runs/:id/cancel",
     ] {
         assert!(

@@ -62,6 +62,7 @@ GET  /v1/runs/:id/events
 GET  /v1/runs/:id/summary
 GET  /v1/runs/:id/summary.json
 GET  /v1/runs/:id/diff
+GET  /v1/runs/:id/progress
 POST /v1/runs/:id/cancel
 POST /v1/sessions
 GET  /v1/sessions
@@ -101,9 +102,10 @@ GET  /v1/runs/:id
 GET  /v1/runs/:id/summary
 GET  /v1/runs/:id/summary.json
 GET  /v1/runs/:id/diff
+GET  /v1/runs/:id/progress
 GET  /v1/runs/:id/events
 POST /v1/runs/:id/cancel</code></pre>
-      <p><code>GET /v1/runs/:id/events</code> returns events such as <code>run_created</code>, <code>run_succeeded</code>, <code>run_failed</code>, and <code>run_cancelled</code>. Plan-runner executions write <code>summary.md</code> and <code>diff.patch</code>; agent-backed runs also preserve the runner-generated <code>summary.json</code> when the runner produced one. <code>GET /v1/runs/:id/summary</code> returns <code>summary.md</code> as plain text; <code>GET /v1/runs/:id/summary.json</code> returns the machine-readable task result summary when present; <code>GET /v1/runs/:id/diff</code> returns <code>diff.patch</code> as plain text. Runs that exist but do not have an artifact yet return 404 with an artifact-specific message.</p>
+      <p><code>GET /v1/runs/:id/events</code> returns events such as <code>run_created</code>, <code>run_succeeded</code>, <code>run_failed</code>, and <code>run_cancelled</code>. Plan-runner executions write <code>summary.md</code> and <code>diff.patch</code>; agent-backed runs also preserve the runner-generated <code>summary.json</code> when the runner produced one. <code>GET /v1/runs/:id/summary</code> returns <code>summary.md</code> as plain text; <code>GET /v1/runs/:id/summary.json</code> returns the machine-readable task result summary when present; <code>GET /v1/runs/:id/diff</code> returns <code>diff.patch</code> as plain text. <code>GET /v1/runs/:id/progress</code> returns a JSON index of copied progress artifacts with <code>name</code>, <code>kind</code>, and <code>url</code> fields for transcripts, validation output, review transcripts, and the progress log. Runs that exist but do not have an artifact yet return 404 with an artifact-specific message.</p>
       <h2>Create a raw session</h2>
       <pre><code>POST /v1/sessions
 content-type: application/json

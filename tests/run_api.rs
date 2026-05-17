@@ -1,6 +1,7 @@
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    os::unix::fs::symlink,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{Mutex, MutexGuard, OnceLock},
@@ -1400,6 +1401,62 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
             .exists(),
         "run artifact directory must not copy stale progress files from unrelated runs"
     );
+    symlink(
+        summary_path.as_path(),
+        run_progress_dir.join("plan-task-99.transcript"),
+    )
+    .expect("create allowed-name symlink artifact");
+
+    let progress_index_response =
+        request_json(port, &format!("GET /v1/runs/{id}/progress HTTP/1.1"), None);
+    assert_eq!(
+        progress_index_response.status, 200,
+        "{}",
+        progress_index_response.body
+    );
+    assert!(
+        progress_index_response
+            .content_type
+            .starts_with("application/json"),
+        "{}",
+        progress_index_response.content_type
+    );
+    let progress_index: serde_json::Value =
+        serde_json::from_str(&progress_index_response.body).expect("progress index json");
+    let progress_items = progress_index.as_array().expect("progress index array");
+    let progress_names: Vec<_> = progress_items
+        .iter()
+        .map(|item| item["name"].as_str().expect("progress artifact name"))
+        .collect();
+    assert_eq!(
+        progress_names,
+        vec![
+            "plan-task-1-attempt-1.transcript",
+            "plan-task-1-validation.txt",
+            "plan-task-1.transcript",
+            "plan.log"
+        ]
+    );
+    assert!(
+        !progress_names.contains(&"unrelated-task-99.transcript"),
+        "{progress_index}"
+    );
+    assert!(
+        !progress_names.contains(&"plan-task-99.transcript"),
+        "progress index must not list symlink artifacts: {progress_index}"
+    );
+    for item in progress_items {
+        let name = item["name"].as_str().expect("progress artifact name");
+        assert_eq!(
+            item["url"],
+            format!("/v1/runs/{id}/progress/{name}"),
+            "{item}"
+        );
+    }
+    assert_eq!(progress_items[0]["kind"], "transcript");
+    assert_eq!(progress_items[1]["kind"], "validation");
+    assert_eq!(progress_items[2]["kind"], "transcript");
+    assert_eq!(progress_items[3]["kind"], "log");
 
     let progress_transcript_response = request_json(
         port,
@@ -1457,6 +1514,22 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
         !unrelated_progress_response.body.contains(".ralphterm"),
         "{}",
         unrelated_progress_response.body
+    );
+
+    let symlink_progress_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-99.transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        symlink_progress_response.status, 404,
+        "symlink artifact must not be served: {}",
+        symlink_progress_response.body
+    );
+    assert!(
+        !symlink_progress_response.body.contains("Result: passed"),
+        "{}",
+        symlink_progress_response.body
     );
 
     let traversal_progress_response = request_json(
