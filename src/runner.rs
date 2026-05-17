@@ -372,6 +372,28 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         anyhow::bail!("hit max iterations ({max_iterations}) without ALL_TASKS_DONE");
     }
 
+    if !matches!(mode, RunMode::TasksOnly) {
+        crate::output_format::print_all_tasks_completed();
+        progress.write_control("all tasks completed, starting code review...")?;
+
+        let reviewer_cmd = derive_reviewer_command(&repo_root)?;
+
+        let outcome = crate::review_phases::first_review(crate::review_phases::FirstReviewArgs {
+            prompts: &prompts,
+            reviewer_command: &reviewer_cmd,
+            plan_path: &plan_path,
+            progress_path: progress.path(),
+            default_branch: &preflight.default_branch,
+            agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+        })?;
+        if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
+            for f in findings {
+                eprintln!("[review-first] {f}");
+            }
+            anyhow::bail!("first review found critical issues");
+        }
+    }
+
     let elapsed = start.elapsed();
     let (files, additions, deletions) = git_shortstat(&repo_root, &preflight.default_branch)?;
 
@@ -717,10 +739,10 @@ struct ResumeContext {
     review_transcript_display: Option<String>,
 }
 
-struct AgentRun {
-    transcript: String,
-    exit_code: u32,
-    timed_out: bool,
+pub(crate) struct AgentRun {
+    pub(crate) transcript: String,
+    pub(crate) exit_code: u32,
+    pub(crate) timed_out: bool,
 }
 
 #[derive(Debug)]
@@ -2243,7 +2265,7 @@ fn check_for_cancellation(options: &RunOptions) -> Result<()> {
     Ok(())
 }
 
-fn run_agent_command_with_timeout(
+pub(crate) fn run_agent_command_with_timeout(
     agent_command: &str,
     prompt: &str,
     timeout: Duration,
@@ -2426,6 +2448,19 @@ fn plan_first_h1(plan_path: &std::path::Path) -> Option<String> {
     let body = std::fs::read_to_string(plan_path).ok()?;
     body.lines()
         .find_map(|l| l.strip_prefix("# ").map(|s| s.trim().to_string()))
+}
+
+fn derive_reviewer_command(_repo_root: &std::path::Path) -> Result<String> {
+    // Default reviewer: bundled codex wrapper script. Same precedence the
+    // compat CLI uses today; centralised here so the new pipeline can call
+    // it without touching cli.rs.
+    if let Some(path) = crate::config::locate_wrapper_script("codex") {
+        return Ok(path.to_string_lossy().into_owned());
+    }
+    anyhow::bail!(
+        "default reviewer not available: install codex (provides scripts/wrappers/codex.sh) \
+         or pass --external-review-tool=custom --custom-review-script <cmd>"
+    )
 }
 
 fn git_shortstat(repo: &std::path::Path, base: &str) -> Result<(usize, usize, usize)> {

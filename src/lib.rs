@@ -26,6 +26,8 @@ pub mod prompts;
 #[doc(hidden)]
 pub mod pty_agent;
 #[doc(hidden)]
+pub mod review_phases;
+#[doc(hidden)]
 pub mod runner;
 #[doc(hidden)]
 pub mod runs;
