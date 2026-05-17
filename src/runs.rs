@@ -371,11 +371,22 @@ impl RunStore {
         let _guard = record_mutation_lock()
             .lock()
             .expect("run record lock poisoned");
-        let Some(record) = Self::get(base_dir.as_ref(), id)? else {
+        let Some(mut record) = Self::get(base_dir.as_ref(), id)? else {
             return Ok(None);
         };
         if record.status != RunStatus::Running {
             return Ok(None);
+        }
+        let next_phase = match event.event_type.as_str() {
+            "review_started" => Some(RunPhase::Reviewing),
+            "review_passed" | "review_failed" | "agent_retry_started" => Some(RunPhase::Executing),
+            _ => None,
+        };
+        if let Some(next_phase) = next_phase {
+            if record.phase != next_phase {
+                record.phase = next_phase;
+                write_record(base_dir.as_ref(), &record)?;
+            }
         }
         append_event(
             base_dir.as_ref(),

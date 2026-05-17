@@ -1519,6 +1519,94 @@ fn session_without_cwd_uses_server_base_dir_while_workspace_run_changes_process_
 }
 
 #[test]
+fn run_api_exposes_reviewing_phase_while_review_command_runs() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let review_path = repo.path.join("slow-review.sh");
+    std::fs::write(
+        &review_path,
+        "#!/usr/bin/env sh\nset -eu\ncat > review-prompt.txt\nsleep 3\nprintf 'Review: pass\\nREVIEW_PASS\\n'\n",
+    )
+    .expect("write slow review script");
+    let mut permissions = std::fs::metadata(&review_path)
+        .expect("slow review script metadata")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&review_path, permissions)
+        .expect("make slow review script executable");
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "review_command": review_path.to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+    assert_eq!(created_json["status"], "running");
+
+    wait_for_json(
+        port,
+        &format!("GET /v1/runs/{id}/events HTTP/1.1"),
+        |json| {
+            json.as_array()
+                .expect("event list")
+                .iter()
+                .any(|event| event["type"] == "review_started")
+                .then(|| json.clone())
+        },
+    );
+    let viewed = request_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), None);
+    assert_eq!(viewed.status, 200, "{}", viewed.body);
+    let reviewing: serde_json::Value = serde_json::from_str(&viewed.body).expect("run json");
+    assert_eq!(reviewing["phase"], "reviewing", "{reviewing}");
+    assert_eq!(reviewing["status"], "running", "{reviewing}");
+
+    let completed = wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+    assert_eq!(completed["phase"], "complete");
+}
+
+#[test]
 fn run_api_executes_plan_with_review_command_and_persists_review_transcript() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
