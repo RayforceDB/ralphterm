@@ -27,7 +27,26 @@ pub fn detect_signal(text: &str) -> Option<AgentSignal> {
     if upper.contains("FAILED") {
         return Some(AgentSignal::Failed);
     }
+    // Fall back to ralphex-style signals (RALPHEX:* with optional <<<...>>>
+    // delimiters). These are checked after the canonical aliases.
+    if contains_ralphex_signal(&upper, "ALL_TASKS_DONE") {
+        return Some(AgentSignal::Completed);
+    }
+    if contains_ralphex_signal(&upper, "TASK_FAILED") {
+        return Some(AgentSignal::Failed);
+    }
+    if contains_ralphex_signal(&upper, "REVIEW_DONE")
+        || contains_ralphex_signal(&upper, "CODEX_REVIEW_DONE")
+    {
+        return Some(AgentSignal::ReviewDone);
+    }
     None
+}
+
+fn contains_ralphex_signal(upper_text: &str, signal: &str) -> bool {
+    let bracketed = format!("<<<RALPHEX:{signal}>>>");
+    let bare = format!("RALPHEX:{signal}");
+    upper_text.contains(&bracketed) || upper_text.contains(&bare)
 }
 
 pub fn detect_approval_request(text: &str) -> bool {
@@ -60,6 +79,31 @@ mod tests {
     #[test]
     fn detects_review() {
         assert_eq!(detect_signal("REVIEW_DONE"), Some(AgentSignal::ReviewDone));
+    }
+
+    #[test]
+    fn detects_ralphex_signal_aliases() {
+        assert_eq!(
+            detect_signal("<<<RALPHEX:ALL_TASKS_DONE>>>"),
+            Some(AgentSignal::Completed)
+        );
+        assert_eq!(
+            detect_signal("noise\nRALPHEX:TASK_FAILED\nmore"),
+            Some(AgentSignal::Failed)
+        );
+        assert_eq!(
+            detect_signal("<<<RALPHEX:REVIEW_DONE>>>"),
+            Some(AgentSignal::ReviewDone)
+        );
+        assert_eq!(
+            detect_signal("RALPHEX:CODEX_REVIEW_DONE"),
+            Some(AgentSignal::ReviewDone)
+        );
+        // Original aliases still take precedence.
+        assert_eq!(
+            detect_signal("COMPLETED\n<<<RALPHEX:TASK_FAILED>>>"),
+            Some(AgentSignal::Completed)
+        );
     }
 
     #[test]

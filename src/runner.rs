@@ -2281,11 +2281,18 @@ fn review_output_decision(transcript: &str, _prompt: &str) -> Option<bool> {
         .lines()
         .filter_map(|line| {
             let line = line.trim();
-            if line == "REVIEW_PASS" {
+            if line == "REVIEW_PASS"
+                || line == "<<<RALPHEX:REVIEW_DONE>>>"
+                || line == "RALPHEX:REVIEW_DONE"
+                || line == "<<<RALPHEX:CODEX_REVIEW_DONE>>>"
+                || line == "RALPHEX:CODEX_REVIEW_DONE"
+            {
                 Some(true)
             } else if line == "REVIEW_FAIL"
                 || line.starts_with("REVIEW_FAIL ")
                 || line.starts_with("REVIEW_FAIL:")
+                || line == "<<<RALPHEX:TASK_FAILED>>>"
+                || line == "RALPHEX:TASK_FAILED"
             {
                 Some(false)
             } else {
