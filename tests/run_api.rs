@@ -1516,6 +1516,101 @@ fn run_api_archives_rejected_review_attempt_transcripts_after_retry_success() {
         "{}",
         attempt_one_review.body
     );
+
+    let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
+    assert_eq!(events.status, 200, "{}", events.body);
+    let events_json: serde_json::Value = serde_json::from_str(&events.body).expect("events json");
+    let review_failed = events_json
+        .as_array()
+        .expect("event list")
+        .iter()
+        .find(|event| event["type"] == "review_failed" && event["attempt"] == 1)
+        .expect("attempt 1 review_failed event");
+    assert_eq!(
+        review_failed["artifact_path"],
+        ".ralphterm/progress/plan-task-1-attempt-1-review.transcript",
+        "{events_json}"
+    );
+}
+
+#[test]
+fn run_api_terminal_review_failure_event_artifact_is_fetchable() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "review_command": fixture_path("review-fail.sh").to_string_lossy(),
+        "max_review_retries": 0,
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+
+    wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "failed").then(|| json.clone())
+    });
+
+    let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
+    assert_eq!(events.status, 200, "{}", events.body);
+    let events_json: serde_json::Value = serde_json::from_str(&events.body).expect("events json");
+    let review_failed = events_json
+        .as_array()
+        .expect("event list")
+        .iter()
+        .find(|event| event["type"] == "review_failed" && event["attempt"] == 1)
+        .expect("attempt 1 review_failed event");
+    let artifact_path = review_failed["artifact_path"]
+        .as_str()
+        .expect("review_failed artifact_path");
+    let artifact_name = std::path::Path::new(artifact_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("artifact file name");
+    let artifact = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/{artifact_name} HTTP/1.1"),
+        None,
+    );
+    assert_eq!(artifact.status, 200, "{}", artifact.body);
+    assert!(artifact.body.contains("REVIEW_FAIL"), "{}", artifact.body);
 }
 
 #[test]
@@ -2739,6 +2834,55 @@ fn run_api_plan_run_records_structured_task_progress_events() {
             .as_str()
             .is_some_and(|message| message.contains("task: Create first file")),
         "{events_json}"
+    );
+
+    let review_passed = events_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["type"] == "review_passed")
+        .expect("review_passed event");
+    assert_eq!(
+        review_passed["artifact_path"], ".ralphterm/progress/plan-task-1-review.transcript",
+        "{events_json}"
+    );
+    let task_succeeded = events_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["type"] == "task_succeeded")
+        .expect("task_succeeded event");
+    assert_eq!(
+        task_succeeded["artifact_path"], ".ralphterm/progress/plan-task-1.transcript",
+        "{events_json}"
+    );
+
+    let review_artifact = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-1-review.transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(review_artifact.status, 200, "{}", review_artifact.body);
+    assert!(
+        review_artifact.body.contains("REVIEW_PASS"),
+        "{}",
+        review_artifact.body
+    );
+
+    let transcript_artifact = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-1.transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        transcript_artifact.status, 200,
+        "{}",
+        transcript_artifact.body
+    );
+    assert!(
+        transcript_artifact.body.contains("COMPLETED"),
+        "{}",
+        transcript_artifact.body
     );
 }
 

@@ -593,26 +593,31 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                     Ok(review_output) => {
                         output.push_str(&review_output);
                         append_progress(&progress.log_path, "review result=passed")?;
-                        emit_plan_event(
-                            &options,
-                            PlanRunEvent::for_task("review_passed", task, Some(attempt)),
-                        )?;
-                        final_transcript_display = current_transcript_display;
-                        final_review_transcript_display = if attempt == 1 {
+                        let passed_review_transcript_display = if attempt == 1 {
                             progress.review_transcript_display.clone()
                         } else {
                             attempt_progress.review_transcript_display.clone()
                         };
+                        emit_plan_event(
+                            &options,
+                            PlanRunEvent::for_task("review_passed", task, Some(attempt))
+                                .with_artifact(passed_review_transcript_display.clone()),
+                        )?;
+                        final_transcript_display = current_transcript_display;
+                        final_review_transcript_display = passed_review_transcript_display;
                         break (transcript, validation_output);
                     }
                     Err(err) => {
                         append_progress(&progress.log_path, "review result=failed")?;
                         let feedback = err.to_string();
-                        emit_plan_event(
-                            &options,
+                        let mut review_failed_event =
                             PlanRunEvent::for_task("review_failed", task, Some(attempt))
-                                .with_message(feedback.clone()),
-                        )?;
+                                .with_message(feedback.clone());
+                        if err.transcript_written() {
+                            review_failed_event = review_failed_event
+                                .with_artifact(attempt_progress.review_transcript_display.clone());
+                        }
+                        emit_plan_event(&options, review_failed_event)?;
                         let review_retries_used = attempt - 1;
                         if err.explicit_fail() && review_retries_used < options.max_review_retries {
                             output.push_str(&format!(
@@ -798,7 +803,8 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
         )?;
         emit_plan_event(
             &options,
-            PlanRunEvent::for_task("task_succeeded", task, None),
+            PlanRunEvent::for_task("task_succeeded", task, None)
+                .with_artifact(final_transcript_display.clone()),
         )?;
         let review_attempts = completed_review_attempts;
         executed_tasks.push(ExecutedTask {

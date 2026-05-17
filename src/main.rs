@@ -538,6 +538,7 @@ async fn create_run(
                     Some(_) => anyhow::bail!("run was cancelled"),
                     None => anyhow::bail!("run disappeared"),
                 }
+                let artifact_path = event.artifact_path.clone();
                 if let Err(copy_err) = copy_progress_artifacts(
                     &event_base_dir,
                     run_id,
@@ -546,6 +547,16 @@ async fn create_run(
                     None,
                 ) {
                     tracing::error!(%run_id, error = %copy_err, "failed to copy live run progress artifacts");
+                }
+                if let Some(artifact_path) = artifact_path.as_deref() {
+                    if let Err(copy_err) = copy_progress_artifact(
+                        &event_base_dir,
+                        run_id,
+                        &event_progress_dir,
+                        artifact_path,
+                    ) {
+                        tracing::error!(%run_id, artifact_path, error = %copy_err, "failed to copy event progress artifact");
+                    }
                 }
                 let appended = RunStore::append_progress_event(
                     &event_base_dir,
@@ -836,6 +847,48 @@ fn copy_progress_artifacts(
     }
 
     Ok(())
+}
+
+fn copy_progress_artifact(
+    base_dir: &FsPath,
+    run_id: Uuid,
+    progress_dir: &FsPath,
+    artifact_path: &str,
+) -> anyhow::Result<()> {
+    let Some(artifact_name) = FsPath::new(artifact_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+    else {
+        anyhow::bail!("event progress artifact path has no file name: {artifact_path}");
+    };
+    let source = progress_dir.join(artifact_name);
+    let metadata = fs::symlink_metadata(&source)
+        .with_context(|| format!("read metadata for event artifact {}", source.display()))?;
+    if !metadata.is_file() {
+        anyhow::bail!(
+            "event progress artifact is not a file: {}",
+            source.display()
+        );
+    }
+    let artifact_dir = base_dir
+        .join(".ralphterm")
+        .join("runs")
+        .join(run_id.to_string())
+        .join("progress");
+    fs::create_dir_all(&artifact_dir).with_context(|| {
+        format!(
+            "create run progress artifact directory {}",
+            artifact_dir.display()
+        )
+    })?;
+    let destination = artifact_dir.join(artifact_name);
+    atomic_copy_file(&source, &destination).with_context(|| {
+        format!(
+            "copy event progress artifact {} to {}",
+            source.display(),
+            destination.display()
+        )
+    })
 }
 
 fn atomic_copy_file(source: &FsPath, destination: &FsPath) -> anyhow::Result<()> {
@@ -1146,7 +1199,8 @@ async fn list_run_progress(
         .join("runs")
         .join(id.to_string())
         .join("progress");
-    let allowed = progress_artifact_names(&progress_dir, &plan_slug, summary_json.as_deref())?;
+    let mut allowed = progress_artifact_names(&progress_dir, &plan_slug, summary_json.as_deref())?;
+    collect_event_progress_artifact_names(state.run_base_dir.as_ref(), id, &mut allowed)?;
 
     let mut artifacts = Vec::new();
     match fs::read_dir(&progress_dir) {
@@ -1194,6 +1248,26 @@ async fn list_run_progress(
     artifacts.sort_by(|left, right| left.name.cmp(&right.name));
 
     Ok(Json(artifacts))
+}
+
+fn collect_event_progress_artifact_names(
+    base_dir: &FsPath,
+    run_id: Uuid,
+    names: &mut BTreeSet<String>,
+) -> anyhow::Result<()> {
+    let Some(events) = RunStore::events(base_dir, run_id)? else {
+        return Ok(());
+    };
+    for event in events {
+        let Some(path) = event.artifact_path.as_deref() else {
+            continue;
+        };
+        let Some(name) = FsPath::new(path).file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        names.insert(name.to_string());
+    }
+    Ok(())
 }
 
 fn progress_artifact_kind(name: &str) -> &'static str {
@@ -1249,7 +1323,8 @@ async fn get_run_progress(
         .join("runs")
         .join(id.to_string())
         .join("progress");
-    let allowed = progress_artifact_names(&progress_dir, &plan_slug, summary_json.as_deref())?;
+    let mut allowed = progress_artifact_names(&progress_dir, &plan_slug, summary_json.as_deref())?;
+    collect_event_progress_artifact_names(state.run_base_dir.as_ref(), id, &mut allowed)?;
     if !allowed.contains(&artifact) {
         return Err(ApiError::artifact_not_found("progress"));
     }
