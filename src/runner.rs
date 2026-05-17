@@ -237,6 +237,9 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
 
     let mut output = format!("Executing {plan_name}\n");
     if pending.is_empty() {
+        if options.dry_run {
+            output.push_str(&format!("Review retries: {}\n", options.max_review_retries));
+        }
         output.push_str("No pending tasks.\n");
         if !options.dry_run {
             write_no_pending_run_summary(plan_name, &plan_slug(&options.plan_path))?;
@@ -256,6 +259,7 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             &plan.validation_commands,
             &pending,
             review_command.as_deref(),
+            options.max_review_retries,
         ));
     }
 
@@ -864,12 +868,14 @@ fn describe_dry_run(
     validation_commands: &[String],
     pending: &[&Task],
     review_command: Option<&str>,
+    max_review_retries: usize,
 ) -> String {
     let mut output = format!("Dry run: {plan_name}\n");
     match review_command {
         Some(command) => output.push_str(&format!("Review: {command}\n")),
         None => output.push_str("Review: skipped\n"),
     }
+    output.push_str(&format!("Review retries: {max_review_retries}\n"));
     if validation_commands.is_empty() {
         output.push_str("Validation: none\n");
     } else {

@@ -611,7 +611,11 @@ async fn create_run(
             };
 
             if dry_run {
-                let summary_json = match dry_run_summary_json(&plan_path, review_command.as_deref()) {
+                let summary_json = match dry_run_summary_json(
+                    &plan_path,
+                    review_command.as_deref(),
+                    max_review_retries,
+                ) {
                     Ok(summary_json) => summary_json,
                     Err(err) => {
                         let error = err.context("build dry-run summary json");
@@ -737,6 +741,7 @@ async fn create_run(
 fn dry_run_summary_json(
     plan_path: &FsPath,
     review_command: Option<&str>,
+    max_review_retries: usize,
 ) -> anyhow::Result<String> {
     let input = fs::read_to_string(plan_path)
         .with_context(|| format!("read plan {}", plan_path.display()))?;
@@ -761,6 +766,7 @@ fn dry_run_summary_json(
         "dry_run": true,
         "plan": plan_name,
         "review": review_command.unwrap_or("skipped"),
+        "review_retries": max_review_retries,
         "validation": plan.validation_commands,
         "tasks": tasks,
     });

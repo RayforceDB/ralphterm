@@ -67,7 +67,7 @@ Preview the plan first:
 ralphterm run docs/plans/example.md --dry-run
 ```
 
-That prints pending tasks, review mode, and validation commands only. It does not start an agent, edit the plan, write `.ralphterm/progress/`, or commit.
+That prints pending tasks, review mode, review retry budget, and validation commands only. It does not start an agent, edit the plan, write `.ralphterm/progress/`, or commit.
 
 To isolate a real plan run from your current checkout, add `--workspace-id <id>`:
 

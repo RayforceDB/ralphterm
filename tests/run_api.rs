@@ -2013,6 +2013,7 @@ fn run_api_dry_run_summary_json_uses_plan_data_when_no_tasks_pending() {
         "plan_path": plan_path.to_string_lossy(),
         "agent_command": repo.path.join("missing-agent-command").to_string_lossy(),
         "review_command": repo.path.join("missing-review-command").to_string_lossy(),
+        "max_review_retries": 3,
         "dry_run": true
     })
     .to_string();
@@ -2028,6 +2029,11 @@ fn run_api_dry_run_summary_json_uses_plan_data_when_no_tasks_pending() {
     );
     assert!(
         summary_response.body.contains("No pending tasks."),
+        "{}",
+        summary_response.body
+    );
+    assert!(
+        summary_response.body.contains("Review retries: 3"),
         "{}",
         summary_response.body
     );
@@ -2054,6 +2060,7 @@ fn run_api_dry_run_summary_json_uses_plan_data_when_no_tasks_pending() {
             .to_string_lossy()
             .as_ref()
     );
+    assert_eq!(summary_json["review_retries"], 3);
     assert_eq!(
         summary_json["validation"],
         serde_json::json!(["test -f first.txt"])

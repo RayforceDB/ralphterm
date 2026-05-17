@@ -86,7 +86,7 @@ curl http://127.0.0.1:7878/v1/sessions/$ID/transcript</code></pre>
 ralphterm smoke --agent codex</code></pre>
       <h2>Preview a plan</h2>
       <pre><code>ralphterm run docs/plans/example.md --dry-run</code></pre>
-      <p>That prints pending tasks, review mode, and validation commands only. It does not start an agent, edit the plan, write <code>.ralphterm/progress/</code>, or commit.</p>
+      <p>That prints pending tasks, review mode, review retry budget, and validation commands only. It does not start an agent, edit the plan, write <code>.ralphterm/progress/</code>, or commit.</p>
       <h2>Workspace-isolated plan run</h2>
       <pre><code>ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude</code></pre>
       <p>RalphTerm creates a managed git worktree at <code>.ralphterm/workspaces/&lt;id&gt;</code>, resolves the caller-relative plan path before switching directories, and runs from the matching path inside that worktree. It does not auto-clean the worktree after the run; inspect it or remove it later with <code>ralphterm workspace cleanup &lt;id&gt;</code>. With <code>--dry-run --workspace-id &lt;id&gt;</code>, dry run only previews the workspace path and plan work without creating the worktree or running an agent.</p>
