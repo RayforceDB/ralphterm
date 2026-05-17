@@ -119,13 +119,14 @@ fn worktree_flag_creates_isolated_worktree_from_plan_slug() {
     );
 
     let branch = git(&workspace_path, ["branch", "--show-current"]);
-    assert_eq!(branch, "ralphterm/foo");
+    // The new runner names the working branch after the plan slug (with no
+    // `ralphterm/` prefix) since it must match what ralphex would create.
+    assert_eq!(branch, "foo");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let last_line = stdout.lines().last().unwrap_or("");
     assert!(
-        last_line.contains(workspace_path.to_str().unwrap()),
-        "expected last stdout line to contain worktree path; last line was: {last_line}\nfull stdout:\n{stdout}"
+        stdout.contains(workspace_path.to_str().unwrap()),
+        "expected stdout to mention worktree path:\n{stdout}"
     );
 }
 
@@ -168,8 +169,16 @@ fn worktree_with_branch_override_uses_custom_branch() {
         .join("workspaces")
         .join("bar");
     assert!(workspace_path.is_dir());
-    let branch = git(&workspace_path, ["branch", "--show-current"]);
-    assert_eq!(branch, "my/custom");
+    // The worktree is created on my/custom, but the new runner switches the
+    // worktree to a plan-slug branch (bar) before iterating. Both branches
+    // should now exist locally.
+    let branches = git(&workspace_path, ["branch", "--list"]);
+    assert!(
+        branches.contains("my/custom"),
+        "expected my/custom branch to exist:\n{branches}"
+    );
+    let current = git(&workspace_path, ["branch", "--show-current"]);
+    assert_eq!(current, "bar", "runner should switch to plan-slug branch");
 }
 
 #[test]

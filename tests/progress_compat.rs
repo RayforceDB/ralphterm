@@ -79,10 +79,12 @@ where
 }
 
 #[test]
-fn after_run_ralphex_progress_symlink_points_to_ralphterm_progress() {
+fn after_run_progress_log_written_under_ralphex_progress() {
     let repo = TestRepo::new();
     let plan_path = repo.path().join("plan.md");
     write_minimal_plan(&plan_path);
+    git(repo.path(), ["add", "plan.md"]);
+    git(repo.path(), ["commit", "-m", "docs: add plan"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(repo.path())
@@ -104,66 +106,27 @@ fn after_run_ralphex_progress_symlink_points_to_ralphterm_progress() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let symlink_path = repo.path().join(".ralphex").join("progress");
-    let meta = fs::symlink_metadata(&symlink_path).unwrap_or_else(|err| {
+    let progress_path = repo
+        .path()
+        .join(".ralphex")
+        .join("progress")
+        .join("progress-plan.txt");
+    let body = fs::read_to_string(&progress_path).unwrap_or_else(|err| {
         panic!(
-            "expected symlink {} after run: {err}",
-            symlink_path.display()
+            "expected progress log {} after run: {err}",
+            progress_path.display()
         )
     });
     assert!(
-        meta.file_type().is_symlink(),
-        "expected {} to be a symlink",
-        symlink_path.display()
-    );
-    let target = fs::read_link(&symlink_path).unwrap();
-    let target_str = target.to_string_lossy();
-    assert!(
-        target_str.contains(".ralphterm/progress") || target_str.contains(".ralphterm\\progress"),
-        "expected symlink to point to .ralphterm/progress; got {target_str}"
+        !body.is_empty(),
+        "progress log should not be empty:\n{body}"
     );
 }
 
-#[test]
-fn preexisting_ralphex_progress_file_is_not_overwritten() {
-    let repo = TestRepo::new();
-    let plan_path = repo.path().join("plan.md");
-    write_minimal_plan(&plan_path);
-
-    let ralphex_dir = repo.path().join(".ralphex");
-    fs::create_dir_all(&ralphex_dir).unwrap();
-    let existing_progress = ralphex_dir.join("progress");
-    fs::write(&existing_progress, "user-owned content\n").unwrap();
-
-    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
-        .current_dir(repo.path())
-        .args([
-            "--tasks-only",
-            "--claude-command",
-            fixture_path("fake-agent.sh").to_str().unwrap(),
-            "--no-commit",
-            "plan.md",
-        ])
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run ralphterm");
-
-    assert!(
-        output.status.success(),
-        "ralphterm run with preexisting .ralphex/progress should succeed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let meta = fs::symlink_metadata(&existing_progress).unwrap();
-    assert!(
-        meta.is_file(),
-        "expected {} to remain a regular file",
-        existing_progress.display()
-    );
-    let contents = fs::read_to_string(&existing_progress).unwrap();
-    assert_eq!(contents, "user-owned content\n");
-}
+// preexisting_ralphex_progress_file_is_not_overwritten removed: the new
+// runner writes per-plan files at .ralphex/progress/progress-<slug>.txt
+// instead of treating .ralphex/progress as a single user-owned file, so
+// the legacy "preserve external file" contract no longer applies.
 
 #[test]
 fn serve_with_watch_prints_watching_message() {

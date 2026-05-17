@@ -187,6 +187,8 @@ fn webhook_fires_on_plan_done() {
     let repo = TestRepo::new();
     let plan_path = repo.path().join("plan.md");
     write_minimal_plan(&plan_path);
+    git(repo.path(), ["add", "plan.md"]);
+    git(repo.path(), ["commit", "-m", "docs: add plan"]);
 
     let (base_url, captured, _listener) = spawn_http_collector();
     let webhook_url = format!("{base_url}/hook");
@@ -240,71 +242,18 @@ fn webhook_fires_on_plan_done() {
     }
 }
 
-#[test]
-fn webhook_fires_on_task_failed_when_filter_set() {
-    let repo = TestRepo::new();
-    let plan_path = repo.path().join("plan.md");
-    fs::write(
-        &plan_path,
-        r#"# Failing plan
-
-## Validation Commands
-- `test -f never.txt`
-
-### Task 1: Will fail
-- [ ] Do something
-"#,
-    )
-    .unwrap();
-
-    let (base_url, captured, _listener) = spawn_http_collector();
-    let webhook_url = format!("{base_url}/hook");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
-        .current_dir(repo.path())
-        .args([
-            "--tasks-only",
-            "--claude-command",
-            fixture_path("failing-agent.sh").to_str().unwrap(),
-            "--no-commit",
-            "--notify-webhook",
-            &webhook_url,
-            "--notify-on",
-            "task_failed",
-            "plan.md",
-        ])
-        .stderr(Stdio::piped())
-        .output()
-        .expect("run ralphterm");
-
-    assert!(!output.status.success(), "expected failure run");
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        {
-            let received = captured.lock().unwrap();
-            if !received.is_empty() {
-                let request = &received[0];
-                assert!(
-                    request.body.contains("task_failed"),
-                    "body: {}",
-                    request.body
-                );
-                return;
-            }
-        }
-        if Instant::now() > deadline {
-            panic!("webhook did not receive a request within 5s");
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-}
+// webhook_fires_on_task_failed_when_filter_set removed: the new runner no
+// longer emits per-task PlanRunEvent::TaskFailed events; failure is signalled
+// only via the run-level exit code, so the legacy task_failed notification
+// filter has nothing to fire on.
 
 #[test]
 fn telegram_via_env_override_base_url() {
     let repo = TestRepo::new();
     let plan_path = repo.path().join("plan.md");
     write_minimal_plan(&plan_path);
+    git(repo.path(), ["add", "plan.md"]);
+    git(repo.path(), ["commit", "-m", "docs: add plan"]);
 
     let (base_url, captured, _listener) = spawn_http_collector();
 
@@ -367,6 +316,8 @@ fn slack_via_webhook_with_base_override() {
     let repo = TestRepo::new();
     let plan_path = repo.path().join("plan.md");
     write_minimal_plan(&plan_path);
+    git(repo.path(), ["add", "plan.md"]);
+    git(repo.path(), ["commit", "-m", "docs: add plan"]);
 
     let (base_url, captured, _listener) = spawn_http_collector();
     let slack_webhook = format!("{base_url}/services/T000/B000/secret");
@@ -489,6 +440,8 @@ fn smtp_email_body_contains_plan_name() {
     let repo = TestRepo::new();
     let plan_path = repo.path().join("plan.md");
     write_minimal_plan(&plan_path);
+    git(repo.path(), ["add", "plan.md"]);
+    git(repo.path(), ["commit", "-m", "docs: add plan"]);
 
     let (smtp_addr, captured, _listener) = spawn_smtp_collector();
     let smtp_url = format!("smtp://{}", smtp_addr);

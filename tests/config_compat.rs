@@ -26,6 +26,26 @@ impl TempRepo {
         fs::create_dir(&path).expect("create temp repo");
         Self { path }
     }
+
+    fn init_git(&self) {
+        self.git(["init"]);
+        self.git(["config", "user.email", "test@example.invalid"]);
+        self.git(["config", "user.name", "RalphTerm Test"]);
+    }
+
+    fn git<const N: usize>(&self, args: [&str; N]) {
+        let output = Command::new("git")
+            .current_dir(&self.path)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 impl Drop for TempRepo {
@@ -52,8 +72,11 @@ fn write_minimal_plan(path: &std::path::Path) {
 #[test]
 fn global_ini_config_supplies_claude_command_and_no_review_tool() {
     let repo = TempRepo::new("global");
+    repo.init_git();
     let plan_path = repo.path.join("plan.md");
     write_minimal_plan(&plan_path);
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add plan"]);
 
     let config_dir = repo.path.join("global-config");
     fs::create_dir(&config_dir).expect("create config dir");
@@ -64,10 +87,13 @@ fn global_ini_config_supplies_claude_command_and_no_review_tool() {
             .expect("utf8 fixture")
     );
     fs::write(config_dir.join("config"), config_body).expect("write global config");
+    repo.git(["add", "global-config"]);
+    repo.git(["commit", "-m", "wip: config"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(&repo.path)
         .args([
+            "--tasks-only",
             "--config-dir",
             config_dir.to_str().expect("utf8 config dir"),
             "--no-commit",
@@ -92,6 +118,7 @@ fn global_ini_config_supplies_claude_command_and_no_review_tool() {
 #[test]
 fn project_local_config_overrides_global() {
     let repo = TempRepo::new("local");
+    repo.init_git();
     let plan_path = repo.path.join("plan.md");
     write_minimal_plan(&plan_path);
 
@@ -119,10 +146,13 @@ fn project_local_config_overrides_global() {
     })
     .to_string();
     fs::write(project_dir.join("config.json"), project_body).expect("write project config");
+    repo.git(["add", "."]);
+    repo.git(["commit", "-m", "wip"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(&repo.path)
         .args([
+            "--tasks-only",
             "--config-dir",
             config_dir.to_str().expect("utf8 config dir"),
             "--no-commit",
@@ -147,6 +177,7 @@ fn project_local_config_overrides_global() {
 #[test]
 fn cli_flag_overrides_config_files() {
     let repo = TempRepo::new("cli");
+    repo.init_git();
     let plan_path = repo.path.join("plan.md");
     write_minimal_plan(&plan_path);
 
@@ -173,10 +204,13 @@ fn cli_flag_overrides_config_files() {
     })
     .to_string();
     fs::write(project_dir.join("config.json"), project_body).expect("write project config");
+    repo.git(["add", "."]);
+    repo.git(["commit", "-m", "wip"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(&repo.path)
         .args([
+            "--tasks-only",
             "--config-dir",
             config_dir.to_str().expect("utf8 config dir"),
             "--claude-command",

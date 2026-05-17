@@ -8,6 +8,7 @@ use std::{
 #[test]
 fn ralphex_binary_runs_plan_with_ralphex_flags() {
     let repo = TempRepo::new();
+    repo.init_git();
     let plan_path = repo.path.join("plan.md");
     fs::write(
         &plan_path,
@@ -21,6 +22,8 @@ fn ralphex_binary_runs_plan_with_ralphex_flags() {
 "#,
     )
     .expect("write plan");
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add plan"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphex"))
         .current_dir(&repo.path)
@@ -45,8 +48,12 @@ fn ralphex_binary_runs_plan_with_ralphex_flags() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Executing plan.md"), "{stdout}");
-    assert!(stdout.contains("Task 1: Create first file"), "{stdout}");
+    assert!(stdout.contains("--- task iteration"), "{stdout}");
+    let plan_after = fs::read_to_string(&plan_path).expect("read plan");
+    assert!(
+        plan_after.contains("- [x] Write first.txt"),
+        "checkbox should be flipped:\n{plan_after}"
+    );
     assert!(repo.path.join("first.txt").exists());
 }
 
@@ -70,5 +77,25 @@ impl TempRepo {
         let path = std::env::temp_dir().join(format!("ralphex-alias-{unique}"));
         fs::create_dir(&path).expect("create temp repo");
         Self { path }
+    }
+
+    fn init_git(&self) {
+        self.git(["init"]);
+        self.git(["config", "user.email", "test@example.invalid"]);
+        self.git(["config", "user.name", "RalphTerm Test"]);
+    }
+
+    fn git<const N: usize>(&self, args: [&str; N]) {
+        let output = Command::new("git")
+            .current_dir(&self.path)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

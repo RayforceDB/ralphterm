@@ -26,6 +26,26 @@ impl TempRepo {
         fs::create_dir(&path).expect("create temp repo");
         Self { path }
     }
+
+    fn init_git(&self) {
+        self.git(["init"]);
+        self.git(["config", "user.email", "test@example.invalid"]);
+        self.git(["config", "user.name", "RalphTerm Test"]);
+    }
+
+    fn git<const N: usize>(&self, args: [&str; N]) {
+        let output = Command::new("git")
+            .current_dir(&self.path)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 impl Drop for TempRepo {
@@ -110,8 +130,11 @@ fn version_flag_prints_crate_version() {
 #[test]
 fn ralphex_flags_run_tasks_only_plan_with_extras() {
     let repo = TempRepo::new("tasks-only");
+    repo.init_git();
     let plan_path = repo.path.join("plan.md");
     write_minimal_plan(&plan_path);
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add plan"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(&repo.path)
@@ -154,8 +177,11 @@ fn ralphex_flags_run_tasks_only_plan_with_extras() {
 #[test]
 fn invalid_session_timeout_exits_with_error() {
     let repo = TempRepo::new("bad-timeout");
+    repo.init_git();
     let plan_path = repo.path.join("plan.md");
     write_minimal_plan(&plan_path);
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add plan"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(&repo.path)
@@ -191,8 +217,11 @@ fn invalid_session_timeout_exits_with_error() {
 #[test]
 fn task_model_flag_sets_claude_model_env_for_agent() {
     let repo = TempRepo::new("task-model");
+    repo.init_git();
     let plan_path = repo.path.join("plan.md");
     write_minimal_plan(&plan_path);
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add plan"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(&repo.path)

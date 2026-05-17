@@ -6,11 +6,11 @@
 set -eu
 
 prompt=$(cat)
-plan_file=$(printf '%s' "$prompt" | grep -oE 'Read the plan file at [^[:space:]]+' | head -1 | sed 's/.*at //')
+plan_file=$(printf '%s' "$prompt" | grep -oE 'Read the plan file at [^[:space:]]+' | head -1 | sed 's/.*at //' | sed 's/[.,;:]*$//')
 if [ -z "${plan_file:-}" ]; then
   if [ -n "${1:-}" ]; then
     prompt="$1"
-    plan_file=$(printf '%s' "$prompt" | grep -oE 'Read the plan file at [^[:space:]]+' | head -1 | sed 's/.*at //')
+    plan_file=$(printf '%s' "$prompt" | grep -oE 'Read the plan file at [^[:space:]]+' | head -1 | sed 's/.*at //' | sed 's/[.,;:]*$//')
   fi
 fi
 if [ -z "${plan_file:-}" ]; then

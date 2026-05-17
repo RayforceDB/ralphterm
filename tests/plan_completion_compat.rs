@@ -92,12 +92,14 @@ where
 }
 
 #[test]
-fn successful_run_with_move_completed_flag_moves_plan_to_completed_dir() {
+fn successful_run_moves_plan_to_completed_dir_by_default() {
     let repo = TestRepo::new();
     let plans_dir = repo.path().join("plans");
     fs::create_dir_all(&plans_dir).unwrap();
     let plan_path = plans_dir.join("2025-05-17-feature.md");
     write_minimal_plan(&plan_path);
+    git(repo.path(), ["add", "plans/2025-05-17-feature.md"]);
+    git(repo.path(), ["commit", "-m", "docs: add plan"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(repo.path())
@@ -105,8 +107,6 @@ fn successful_run_with_move_completed_flag_moves_plan_to_completed_dir() {
             "--tasks-only",
             "--claude-command",
             fixture_path("fake-agent.sh").to_str().unwrap(),
-            "--no-commit",
-            "--move-completed",
             "plans/2025-05-17-feature.md",
         ])
         .stderr(Stdio::piped())
@@ -129,22 +129,21 @@ fn successful_run_with_move_completed_flag_moves_plan_to_completed_dir() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let last_line = stdout.lines().last().unwrap_or("");
     assert!(
-        last_line.starts_with("Moved plan to ") && last_line.contains(dest.to_str().unwrap()),
-        "expected last line to be 'Moved plan to ...'; got: {last_line}\nfull:\n{stdout}"
+        stdout.contains("moved plan to ") && stdout.contains(dest.to_str().unwrap()),
+        "expected 'moved plan to ...' line; got:\n{stdout}"
     );
 }
 
 #[test]
-fn config_move_plan_on_completion_triggers_move() {
+fn no_commit_preserves_plan_in_place() {
+    // The legacy --move-completed / move_plan_on_completion knobs are gone.
+    // Plans are moved by default; --no-commit opts out of the move.
     let repo = TestRepo::new();
     let plan_path = repo.path().join("plan.md");
     write_minimal_plan(&plan_path);
-
-    let cfg_dir = repo.path().join(".ralphex");
-    fs::create_dir_all(&cfg_dir).unwrap();
-    fs::write(cfg_dir.join("config"), "move_plan_on_completion = true\n").unwrap();
+    git(repo.path(), ["add", "plan.md"]);
+    git(repo.path(), ["commit", "-m", "docs: add plan"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
         .current_dir(repo.path())
@@ -166,9 +165,12 @@ fn config_move_plan_on_completion_triggers_move() {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    assert!(plan_path.exists(), "--no-commit should preserve plan");
     let dest = repo.path().join("completed").join("plan.md");
-    assert!(dest.exists(), "expected plan moved to {}", dest.display());
-    assert!(!plan_path.exists(), "original plan should be gone");
+    assert!(
+        !dest.exists(),
+        "--no-commit must not move plan into completed/"
+    );
 }
 
 #[test]
