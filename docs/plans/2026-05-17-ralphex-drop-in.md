@@ -4,7 +4,7 @@
 
 **Goal:** Make RalphTerm usable as a direct drop-in replacement for ralphex while preserving the core ralphex cross-review verification semantics.
 
-**Architecture:** Add a ralphex-compatible CLI/config/front-door on top of RalphTerm's PTY runner, then grow the execution pipeline from task-only into full ralphex parity: task execution, review loops, external review, evaluator/fixer loop, final review, progress logs, worktrees, dashboard, notifications. Keep the native `ralphterm run/serve` API, but make `ralphterm [ralphex flags] <plan.md>` and eventually a `ralphex` binary alias work the same way existing ralphex users expect.
+**Architecture:** Add a ralphex-compatible CLI/config/front-door on top of RalphTerm's PTY runner, then grow the execution pipeline from task-only into full ralphex parity: task execution, review loops, external review, evaluator/fixer loop, final review, progress logs, worktrees, dashboard, notifications, Docker isolation, alternate-provider wrappers. Keep the native `ralphterm run/serve` API, but make `ralphterm [ralphex flags] <plan.md>` and eventually a `ralphex` binary alias work the same way existing ralphex users expect. Rebuild the website + docs around the drop-in story.
 
 **Tech Stack:** Rust, clap, portable-pty, git CLI, serde/JSON config, integration tests with temporary git repos and fake agent/reviewer scripts.
 
@@ -99,6 +99,8 @@ Acceptance requires validation plus independent review loops until reviewers fin
 - Review gates run independently and can block `[x]` marking and local checkpoint commits.
 - Local checkpoint commits are allowed, but pushes are batched into release slices.
 - Compatibility behavior is covered by fake-agent/fake-reviewer E2E tests.
+- Notifications, Docker, and alternate-provider wrappers each have at least one integration test.
+- The website ships a dedicated ralphex-compatibility story, migration guide, and CLI reference with assertions in `tests/site_copy.rs`.
 
 ---
 
@@ -386,20 +388,103 @@ local commit
 
 ---
 
-### Task 12: Final docs/site positioning
+### Task 12: Notifications
 
-**Objective:** Only claim drop-in replacement once the tested compatibility surface exists.
+**Objective:** Match ralphex notification surface so existing automation hooks keep working.
 
 **Files:**
-- Modify: `README.md`
-- Modify: `docs/getting-started.md`
-- Modify: `site/index.html`
+- Create: `src/notify.rs`
+- Modify: `src/runner.rs`, `src/config.rs`, `src/main.rs`
+- Tests: `tests/notify_compat.rs`
 
-**Copy direction:**
+**Behavior:**
 
-- `Drop-in ralphex replacement with PTY-native execution and cross-review gates.`
-- Explain direct replacement commands.
-- Be explicit about completed vs in-progress compatibility.
+- Channels: Telegram, Slack, Email (SMTP), Webhook (generic POST JSON).
+- Config keys under `[notify]`: `telegram_token`, `telegram_chat_id`, `slack_webhook`, `email_smtp`, `email_to`, `webhook_url`, `notify_on=plan_done|task_failed|review_failed|rate_limit`.
+- CLI overrides: `--notify-telegram-token`, `--notify-telegram-chat`, `--notify-slack`, `--notify-webhook`, `--notify-on a,b,c`.
+- Notifications fire on plan completion, plan failure, repeated review failure, and detected rate-limit pauses.
+- Each delivery has a 10 s timeout and never blocks the run.
+- Fake HTTP server fixture in tests verifies payloads.
+
+---
+
+### Task 13: Docker isolation
+
+**Objective:** Match ralphex's Docker-isolated execution so users can run untrusted plans without trusting the host shell.
+
+**Files:**
+- Create: `docker/Dockerfile`, `docker/entrypoint.sh`
+- Create: `src/docker.rs`
+- Modify: `src/runner.rs`, `src/main.rs`, `src/config.rs`
+- Tests: `tests/docker_compat.rs` (skipped when `docker` binary not present)
+
+**Behavior:**
+
+- `--docker` runs the plan agent (and reviewer) inside a container.
+- Image defaults to `ralphterm:latest`; override with `--docker-image`.
+- Bind-mounts workspace, plan file, and `~/.claude` (or configurable auth dir) read-write; `~/.config/ralphterm/` read-only.
+- Honors `RALPHEX_EXTRA_VOLUMES`, `RALPHEX_EXTRA_ENV`, `TZ`, `AWS_PROFILE`, `AWS_REGION`.
+- `--preserve-anthropic-api-key` passes through `ANTHROPIC_API_KEY` env var.
+- Tests use a stub Docker harness when binary missing, otherwise spin a tiny ubuntu image.
+
+---
+
+### Task 14: Alternate-provider wrapper scripts
+
+**Objective:** Ralphex supports Copilot, Codex, Gemini, and OpenCode via wrapper scripts. RalphTerm should ship the same wrappers so plans authored for ralphex run unchanged.
+
+**Files:**
+- Create: `scripts/wrappers/copilot.sh`, `codex.sh`, `gemini.sh`, `opencode.sh`
+- Create: `docs/providers.md`
+- Modify: `src/config.rs` (auto-detect via `agent=copilot|codex|gemini|opencode`)
+- Tests: `tests/wrappers_compat.rs` (uses fake child binaries)
+
+**Behavior:**
+
+- `--agent codex|copilot|gemini|opencode` picks a wrapper script that translates RalphTerm's PTY input/signals into provider-specific behavior.
+- Wrappers live in `scripts/wrappers/` and are installed alongside the binary.
+- `claude_command` still wins when set explicitly.
+
+---
+
+### Task 15: Website rebuild around the ralphex drop-in story
+
+**Objective:** Land the marketing/docs story for "drop-in ralphex replacement with PTY execution".
+
+**Files:**
+- Rewrite: `site/index.html`
+- New pages: `site/docs/ralphex-compat.html`, `site/docs/cli.html`, `site/docs/migrate-from-ralphex.html`, `site/docs/providers.html`, `site/docs/notifications.html`, `site/docs/docker.html`
+- Update: `site/docs/index.html` (nav), `site/assets/styles.css` (new components if needed)
+- New assets: `site/assets/comparison-table.svg` or HTML, hero terminal recording (asciicast or animated SVG)
+- Tests: extend `tests/site_copy.rs` to assert key claims and links
+
+**Copy + structure:**
+
+- Hero rewrite: `Drop-in ralphex replacement. Real PTY, real CLIs, real review gates.`
+- Side-by-side comparison: `ralphex --tasks-only plan.md` vs `ralphterm --tasks-only plan.md`.
+- Three-card section: same flags, same plan format, harder review gate.
+- Migration page: step-by-step move from ralphex (config dir, prompts, agents, env vars).
+- CLI reference: every supported flag with ralphex-compat notes.
+- Notifications, Docker, providers pages document the new surfaces from tasks 12-14.
+- Update meta tags, OG image alt text, sitemap.xml.
+
+---
+
+### Task 16: Documentation parity
+
+**Objective:** Make in-repo docs match the new site and cover every ralphex surface.
+
+**Files:**
+- Update: `README.md`, `docs/getting-started.md`, `docs/workflows.md`
+- New: `docs/ralphex-compat.md`, `docs/cli-reference.md`, `docs/migrate-from-ralphex.md`, `docs/notifications.md`, `docs/docker.md`, `docs/providers.md`
+- Update: `docs/architecture.md` (notification + docker + wrapper layers)
+- Tests: `tests/docs_links.rs` (basic broken-link check)
+
+**Constraints:**
+
+- README leads with the drop-in pitch and a one-liner replacement example.
+- Every CLI flag from `--help` appears in `docs/cli-reference.md`.
+- Migration guide is verified against a real `.ralphex/` directory in CI fixture.
 
 ---
 
