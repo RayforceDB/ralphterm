@@ -567,6 +567,60 @@ fn session_approval_decision_rejects_prompt_after_session_cancel() {
 }
 
 #[test]
+fn session_resize_applies_to_pty_master() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "agent": "codex",
+        "prompt": "go",
+        "command": "/bin/sh",
+        "args": ["-lc", "read line; stty size > resized.txt; echo COMPLETED"],
+        "cols": 80,
+        "rows": 24
+    })
+    .to_string();
+    let created = request_json(port, "POST /v1/sessions HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created session json");
+    let id = created_json["id"].as_str().expect("session id");
+
+    let resize_body = serde_json::json!({"cols": 121, "rows": 37}).to_string();
+    let resized = request_json(
+        port,
+        &format!("POST /v1/sessions/{id}/resize HTTP/1.1"),
+        Some(&resize_body),
+    );
+    assert_eq!(resized.status, 202, "{}", resized.body);
+
+    wait_for_text(
+        port,
+        &format!("GET /v1/sessions/{id}/transcript HTTP/1.1"),
+        |text| text.contains("COMPLETED"),
+    );
+    wait_for_json(port, &format!("GET /v1/sessions/{id} HTTP/1.1"), |json| {
+        (json["status"] == "exited").then(|| json.clone())
+    });
+
+    let resized_path = repo.path.join("resized.txt");
+    wait_for_file(resized_path.clone());
+    let size = std::fs::read_to_string(resized_path).expect("read resized size");
+    assert_eq!(size.trim(), "37 121");
+}
+
+#[test]
 fn session_approval_decision_rejects_unknown_session_with_404() {
     let _guard = server_test_lock();
     let repo = TempDir::new();

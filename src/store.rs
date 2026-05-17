@@ -269,9 +269,18 @@ fn run_session_thread(
     drop(pair.slave);
     *handle.child.lock().expect("child lock") = Some(child);
 
-    let mut reader = pair.master.try_clone_reader().context("clone pty reader")?;
+    let master = Arc::new(Mutex::new(pair.master));
+    let mut reader = master
+        .lock()
+        .expect("pty master lock")
+        .try_clone_reader()
+        .context("clone pty reader")?;
     let writer = Arc::new(Mutex::new(
-        pair.master.take_writer().context("take pty writer")?,
+        master
+            .lock()
+            .expect("pty master lock")
+            .take_writer()
+            .context("take pty writer")?,
     ));
 
     {
@@ -303,10 +312,24 @@ fn run_session_thread(
         });
     }
 
-    // Resize requests are accepted by the API now; wiring them to the PTY master is
-    // part of the next milestone because portable-pty exposes resize on the master
-    // handle that is also used for reader/writer ownership.
-    thread::spawn(move || while resize_rx.blocking_recv().is_some() {});
+    {
+        let master = master.clone();
+        let event_tx = handle.event_tx.clone();
+        thread::spawn(move || {
+            while let Some((cols, rows)) = resize_rx.blocking_recv() {
+                if let Err(err) = master.lock().expect("pty master lock").resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                }) {
+                    let _ = event_tx.send(SessionEvent::Error {
+                        message: format!("resize pty: {err}"),
+                    });
+                }
+            }
+        });
+    }
 
     let mut buf = [0u8; 8192];
     loop {
