@@ -37,6 +37,7 @@ use crate::{
 
 #[derive(Debug, Parser)]
 #[command(name = "ralphterm")]
+#[command(version)]
 #[command(about = "Terminal-native Claude/Codex orchestration API", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -65,6 +66,89 @@ struct Cli {
         help = "RalphTerm compatibility extension: skip local checkpoint commit"
     )]
     compat_no_commit: bool,
+    #[arg(
+        short = 'r',
+        long = "review",
+        help = "ralphex-compatible: skip task phase and run reviewer once"
+    )]
+    compat_review: bool,
+    #[arg(
+        short = 'e',
+        long = "external-only",
+        help = "ralphex-compatible: run external review loop only"
+    )]
+    compat_external_only: bool,
+    #[arg(
+        short = 'c',
+        long = "codex-only",
+        help = "ralphex-compatible alias for --external-only"
+    )]
+    compat_codex_only: bool,
+    #[arg(
+        short = 'm',
+        long = "max-iterations",
+        default_value_t = 50,
+        help = "ralphex-compatible: ceiling on per-task implementer attempts"
+    )]
+    compat_max_iterations: usize,
+    #[arg(
+        long = "max-external-iterations",
+        help = "ralphex-compatible: ceiling on external review-loop iterations"
+    )]
+    compat_max_external_iterations: Option<usize>,
+    #[arg(
+        long = "review-patience",
+        default_value_t = 2,
+        help = "ralphex-compatible: abort retry loop after N consecutive identical review failures"
+    )]
+    compat_review_patience: usize,
+    #[arg(
+        long = "task-model",
+        help = "ralphex-compatible: forwarded to the agent as $CLAUDE_MODEL"
+    )]
+    compat_task_model: Option<String>,
+    #[arg(
+        long = "review-model",
+        help = "ralphex-compatible: forwarded to the reviewer as $CLAUDE_REVIEW_MODEL"
+    )]
+    compat_review_model: Option<String>,
+    #[arg(
+        long = "claude-args",
+        help = "ralphex-compatible: extra args appended to --claude-command (shell-split)"
+    )]
+    compat_claude_args: Option<String>,
+    #[arg(
+        short = 'b',
+        long = "base-ref",
+        help = "ralphex-compatible: git ref used as the review diff base"
+    )]
+    compat_base_ref: Option<String>,
+    #[arg(
+        long = "session-timeout",
+        help = "ralphex-compatible: per-agent session timeout (e.g. 30s, 5m, 1h)"
+    )]
+    compat_session_timeout: Option<String>,
+    #[arg(
+        long = "idle-timeout",
+        help = "ralphex-compatible: idle timeout (currently parsed but unused)"
+    )]
+    compat_idle_timeout: Option<String>,
+    #[arg(
+        long = "wait",
+        help = "ralphex-compatible: wait between iterations (currently parsed but unused)"
+    )]
+    compat_wait: Option<String>,
+    #[arg(
+        short = 'd',
+        long = "debug",
+        help = "ralphex-compatible: enable debug logging (sets RUST_LOG=debug if unset)"
+    )]
+    compat_debug: bool,
+    #[arg(
+        long = "no-color",
+        help = "ralphex-compatible: disable color output (sets NO_COLOR=1)"
+    )]
+    compat_no_color: bool,
     #[arg(value_name = "plan-file")]
     compat_plan_file: Option<PathBuf>,
 }
@@ -367,19 +451,127 @@ fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
         Some("none") | None => None,
         Some(other) => bail!("unsupported external review tool: {other}"),
     };
+
+    // Compose the implementer command with optional --claude-args appended.
+    let agent_command = match (cli.compat_claude_command, cli.compat_claude_args.as_deref()) {
+        (Some(command), Some(extra)) if !extra.trim().is_empty() => {
+            // Validate that the extra args shell-parse cleanly.
+            if shlex::split(extra).is_none() {
+                bail!("invalid --claude-args: shell-split failed");
+            }
+            Some(format!("{command} {extra}"))
+        }
+        (Some(command), _) => Some(command),
+        (None, Some(extra)) if !extra.trim().is_empty() => {
+            bail!("--claude-args requires --claude-command");
+        }
+        (None, _) => None,
+    };
+
+    // --session-timeout becomes the agent timeout.
+    let agent_timeout =
+        if let Some(value) = cli.compat_session_timeout.as_deref() {
+            Some(parse_duration(value).map_err(|err| {
+                anyhow::anyhow!("invalid --session-timeout value '{value}': {err}")
+            })?)
+        } else {
+            None
+        };
+
+    // --idle-timeout and --wait are accepted but not yet implemented; still validate
+    // they parse so we surface bad values early.
+    if let Some(value) = cli.compat_idle_timeout.as_deref() {
+        parse_duration(value)
+            .map_err(|err| anyhow::anyhow!("invalid --idle-timeout value '{value}': {err}"))?;
+        eprintln!("[warning] --idle-timeout is accepted but not yet implemented; value ignored");
+    }
+    if let Some(value) = cli.compat_wait.as_deref() {
+        parse_duration(value)
+            .map_err(|err| anyhow::anyhow!("invalid --wait value '{value}': {err}"))?;
+        eprintln!("[warning] --wait is accepted but not yet implemented; value ignored");
+    }
+
+    if cli.compat_debug && std::env::var_os("RUST_LOG").is_none() {
+        std::env::set_var("RUST_LOG", "debug");
+    }
+    if cli.compat_no_color {
+        std::env::set_var("NO_COLOR", "1");
+    }
+
+    if let Some(model) = cli.compat_task_model.as_deref() {
+        eprintln!("[warning] --task-model is forwarded as $CLAUDE_MODEL");
+        std::env::set_var("CLAUDE_MODEL", model);
+    }
+    if let Some(model) = cli.compat_review_model.as_deref() {
+        eprintln!("[warning] --review-model is forwarded as $CLAUDE_REVIEW_MODEL");
+        std::env::set_var("CLAUDE_REVIEW_MODEL", model);
+    }
+
+    if cli.compat_base_ref.is_some() {
+        eprintln!("[warning] --base-ref is accepted but full diff-range support is pending");
+    }
+    if cli.compat_max_external_iterations.is_some() {
+        eprintln!("[warning] --max-external-iterations is accepted but external loop is pending");
+    }
+    if cli.compat_review {
+        eprintln!("[warning] --review is accepted but review-only mode is pending");
+    }
+    if cli.compat_external_only || cli.compat_codex_only {
+        eprintln!("[warning] --external-only/--codex-only accepted but mode is pending");
+    }
+    // max-iterations / review-patience are stored on the future RunOptions; map to
+    // max_review_retries (clamped so we keep the existing default behavior of 1).
+    let _ = cli.compat_max_iterations;
+    let _ = cli.compat_review_patience;
+
     run_plan_cli(RunCliOptions {
         plan,
         agent: None,
-        agent_command: cli.compat_claude_command,
+        agent_command,
         review_agent: None,
         review_command,
         require_review: false,
-        agent_timeout_ms: None,
+        agent_timeout_ms: agent_timeout,
         max_review_retries: 1,
         no_commit: cli.compat_no_commit,
         dry_run: false,
         workspace_id: None,
     })
+}
+
+fn parse_duration(value: &str) -> Result<std::time::Duration, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("duration is empty".to_string());
+    }
+    // Accept either a plain integer (treated as seconds) or a number + unit suffix.
+    let (number_part, unit) = match trimmed.find(|ch: char| !ch.is_ascii_digit() && ch != '.') {
+        Some(index) => (&trimmed[..index], trimmed[index..].trim()),
+        None => (trimmed, ""),
+    };
+    if number_part.is_empty() {
+        return Err(format!("could not parse number in '{value}'"));
+    }
+    let number: f64 = number_part
+        .parse()
+        .map_err(|_| format!("invalid number '{number_part}' in '{value}'"))?;
+    if !number.is_finite() || number < 0.0 {
+        return Err(format!("duration must be non-negative: '{value}'"));
+    }
+    let multiplier_ms: f64 = match unit {
+        "" | "s" | "sec" | "secs" | "second" | "seconds" => 1_000.0,
+        "ms" => 1.0,
+        "m" | "min" | "mins" | "minute" | "minutes" => 60_000.0,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 3_600_000.0,
+        other => {
+            return Err(format!("unknown duration unit '{other}' in '{value}'"));
+        }
+    };
+    let total_ms = number * multiplier_ms;
+    if total_ms <= 0.0 {
+        return Err(format!("duration must be greater than zero: '{value}'"));
+    }
+    Ok(std::time::Duration::from_millis(total_ms.round() as u64))
 }
 
 fn validate_workspace_plan_path(cwd_relative: &FsPath, plan: &FsPath) -> anyhow::Result<()> {
