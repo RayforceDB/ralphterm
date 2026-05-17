@@ -24,6 +24,66 @@ function linkCell(links) {
   return td;
 }
 
+function latestEvent(run, eventTypes) {
+  const events = Array.isArray(run.events) ? run.events : [];
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (eventTypes.includes(events[index].type)) {
+      return events[index];
+    }
+  }
+  return null;
+}
+
+function runGateLabel(run) {
+  const gateEvent = latestEvent(run, [
+    'task_committed',
+    'task_succeeded',
+    'task_marked_complete',
+    'task_failed',
+    'agent_retry_started',
+    'review_failed',
+    'review_passed',
+    'review_started',
+    'validation_passed',
+    'validation_failed',
+    'task_started',
+  ]);
+
+  if (!gateEvent) {
+    if (run.status === 'succeeded') return 'complete';
+    if (run.status === 'failed') return 'blocked';
+    return run.phase || 'planning';
+  }
+
+  const task = gateEvent.task_number ? `T${gateEvent.task_number}` : 'run';
+  switch (gateEvent.type) {
+    case 'task_started':
+      return `${task} implementing`;
+    case 'validation_failed':
+      return `${task} validation failed`;
+    case 'validation_passed':
+      return `${task} awaiting review`;
+    case 'review_started':
+      return `${task} reviewing`;
+    case 'review_failed':
+      return `${task} review retry/block`;
+    case 'review_passed':
+      return `${task} accepted by review`;
+    case 'agent_retry_started':
+      return `${task} retrying implementation`;
+    case 'task_failed':
+      return `${task} blocked`;
+    case 'task_marked_complete':
+      return `${task} marked complete`;
+    case 'task_succeeded':
+      return `${task} accepted`;
+    case 'task_committed':
+      return `${task} committed`;
+    default:
+      return gateEvent.type;
+  }
+}
+
 function runArtifactCell(run) {
   return linkCell([
     {
@@ -77,7 +137,7 @@ function renderRunRows(runs) {
   runsBody.replaceChildren();
 
   if (!runs.length) {
-    renderEmptyRow(runsBody, 'No runs yet.', 5);
+    renderEmptyRow(runsBody, 'No runs yet.', 6);
     return;
   }
 
@@ -87,6 +147,7 @@ function renderRunRows(runs) {
       cell(run.id),
       cell(run.phase),
       cell(run.status),
+      cell(runGateLabel(run)),
       cell(run.plan_path),
       runArtifactCell(run),
     );
@@ -115,6 +176,19 @@ function renderSessionRows(sessions) {
   }
 }
 
+async function fetchRunEvents(run) {
+  try {
+    const response = await fetch(`/v1/runs/${run.id}/events`);
+    if (!response.ok) {
+      return { ...run, events: [] };
+    }
+    const events = await response.json();
+    return { ...run, events };
+  } catch (_error) {
+    return { ...run, events: [] };
+  }
+}
+
 async function loadRuns() {
   try {
     runsStatus.textContent = 'Loading…';
@@ -123,12 +197,13 @@ async function loadRuns() {
       throw new Error(`GET /v1/runs failed with ${response.status}`);
     }
     const runs = await response.json();
-    renderRunRows(runs);
+    const runsWithEvents = await Promise.all(runs.map(fetchRunEvents));
+    renderRunRows(runsWithEvents);
     runsStatus.textContent = `${runs.length} run${runs.length === 1 ? '' : 's'}`;
   } catch (error) {
     runsStatus.textContent = 'Error';
     runsBody.replaceChildren();
-    renderErrorRow(runsBody, error.message, 5);
+    renderErrorRow(runsBody, error.message, 6);
   }
 }
 

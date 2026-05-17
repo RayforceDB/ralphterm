@@ -343,6 +343,45 @@ fn public_api_endpoint_list_includes_list_sessions() {
 }
 
 #[test]
+fn dashboard_surfaces_review_gate_state() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dashboard_html =
+        std::fs::read_to_string(root.join("dashboard/index.html")).expect("read dashboard html");
+    let dashboard_js =
+        std::fs::read_to_string(root.join("dashboard/app.js")).expect("read dashboard js");
+
+    assert!(
+        dashboard_html.contains("<th scope=\"col\">Gate</th>"),
+        "dashboard runs table should expose the active acceptance gate"
+    );
+    assert!(
+        dashboard_js.contains("/events"),
+        "dashboard should read run events instead of inferring review state from status alone"
+    );
+    for expected_event in [
+        "task_started",
+        "validation_passed",
+        "review_started",
+        "review_failed",
+        "review_passed",
+        "agent_retry_started",
+        "task_failed",
+        "task_marked_complete",
+        "task_succeeded",
+        "task_committed",
+    ] {
+        assert!(
+            dashboard_js.contains(expected_event),
+            "dashboard gate mapping should handle {expected_event} events"
+        );
+    }
+    assert!(
+        dashboard_js.contains("renderRunRows(runsWithEvents)"),
+        "run rendering should receive event-enriched run records"
+    );
+}
+
+#[test]
 fn api_docs_describe_session_approval_pending_field() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let api_markdown = std::fs::read_to_string(root.join("docs/api.md")).expect("read api docs");

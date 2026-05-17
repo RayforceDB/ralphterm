@@ -87,7 +87,7 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
     );
     assert!(
         js.body
-            .contains("renderErrorRow(runsBody, error.message, 5)"),
+            .contains("renderErrorRow(runsBody, error.message, 6)"),
         "{}",
         js.body
     );
