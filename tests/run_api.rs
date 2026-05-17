@@ -1050,6 +1050,105 @@ fn run_api_records_task_marked_complete_before_task_success() {
 }
 
 #[test]
+fn run_api_records_resume_started_when_rerunning_failed_task() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let failed_body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("fake-agent-no-completed.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+    let failed = request_json(port, "POST /v1/runs HTTP/1.1", Some(&failed_body));
+    assert_eq!(failed.status, 200, "{}", failed.body);
+    let failed_json: serde_json::Value =
+        serde_json::from_str(&failed.body).expect("failed run json");
+    let failed_id = failed_json["id"].as_str().expect("failed run id");
+    wait_for_json(
+        port,
+        &format!("GET /v1/runs/{failed_id} HTTP/1.1"),
+        |json| (json["status"] == "failed").then(|| json.clone()),
+    );
+
+    let resumed_body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+    let resumed = request_json(port, "POST /v1/runs HTTP/1.1", Some(&resumed_body));
+    assert_eq!(resumed.status, 200, "{}", resumed.body);
+    let resumed_json: serde_json::Value =
+        serde_json::from_str(&resumed.body).expect("resumed run json");
+    let resumed_id = resumed_json["id"].as_str().expect("resumed run id");
+    wait_for_json(
+        port,
+        &format!("GET /v1/runs/{resumed_id} HTTP/1.1"),
+        |json| (json["status"] == "succeeded").then(|| json.clone()),
+    );
+
+    let events = request_json(
+        port,
+        &format!("GET /v1/runs/{resumed_id}/events HTTP/1.1"),
+        None,
+    );
+    assert_eq!(events.status, 200, "{}", events.body);
+    let events_json: serde_json::Value = serde_json::from_str(&events.body).expect("events json");
+    let events = events_json.as_array().expect("event list");
+    let resume_pos = events
+        .iter()
+        .position(|event| {
+            event["type"] == "resume_started"
+                && event["task_number"] == 1
+                && event["task_title"] == "Create first file"
+                && event["message"].as_str().is_some_and(|message| {
+                    message.contains("previous") && message.contains("failed")
+                })
+        })
+        .expect("resume_started event");
+    let task_started_pos = events
+        .iter()
+        .position(|event| event["type"] == "task_started" && event["task_number"] == 1)
+        .expect("task_started event");
+    assert!(
+        resume_pos < task_started_pos,
+        "resume_started should be recorded before task work restarts: {events_json}"
+    );
+}
+
+#[test]
 fn cancelling_running_run_prevents_late_success_overwrite() {
     let _guard = server_test_lock();
     let repo = TempDir::new();

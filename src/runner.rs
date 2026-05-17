@@ -285,6 +285,11 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 &progress.log_path,
                 &format!("resume number={} previous_result=failed", task.number),
             )?;
+            emit_plan_event(
+                &options,
+                PlanRunEvent::for_task("resume_started", task, None)
+                    .with_message("previous task attempt failed"),
+            )?;
             let previous_attempt = progress.attempt(1);
             let transcript_display = last_task_end
                 .transcript_display
