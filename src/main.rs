@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
@@ -719,7 +719,7 @@ fn copy_progress_artifacts(
         return Ok(());
     }
 
-    let artifact_names = progress_artifact_names(plan_slug, summary_json)?;
+    let artifact_names = progress_artifact_names(progress_dir, plan_slug, summary_json)?;
     if artifact_names.is_empty() {
         return Ok(());
     }
@@ -741,9 +741,7 @@ fn copy_progress_artifacts(
     {
         let entry = entry.with_context(|| format!("read entry in {}", progress_dir.display()))?;
         let artifact_name = entry.file_name().to_string_lossy().into_owned();
-        if !artifact_names.contains(&artifact_name)
-            && !is_current_run_progress_artifact(plan_slug, &artifact_name)
-        {
+        if !artifact_names.contains(&artifact_name) {
             continue;
         }
         let source = entry.path();
@@ -765,12 +763,8 @@ fn copy_progress_artifacts(
     Ok(())
 }
 
-fn is_current_run_progress_artifact(plan_slug: &str, artifact_name: &str) -> bool {
-    artifact_name.starts_with(&format!("{plan_slug}-task-"))
-        && (artifact_name.ends_with(".transcript") || artifact_name.ends_with("-validation.txt"))
-}
-
 fn progress_artifact_names(
+    progress_dir: &FsPath,
     plan_slug: &str,
     summary_json: Option<&str>,
 ) -> anyhow::Result<BTreeSet<String>> {
@@ -783,16 +777,28 @@ fn progress_artifact_names(
         Ok(summary) => summary,
         Err(_) => return Ok(names),
     };
+    let mut task_numbers = BTreeSet::new();
     if let Some(tasks) = summary.get("tasks").and_then(|tasks| tasks.as_array()) {
         for task in tasks {
             collect_progress_artifact_names(task, &mut names);
+            collect_summary_task_number(task, &mut task_numbers);
         }
     }
     if let Some(failed_task) = summary.get("failed_task") {
         collect_progress_artifact_names(failed_task, &mut names);
+        collect_summary_task_number(failed_task, &mut task_numbers);
     }
+    collect_progress_log_artifact_names(progress_dir, plan_slug, &task_numbers, &mut names)?;
 
     Ok(names)
+}
+
+fn collect_summary_task_number(task: &serde_json::Value, task_numbers: &mut BTreeSet<usize>) {
+    if let Some(number) = task.get("number").and_then(|value| value.as_u64()) {
+        if let Ok(number) = usize::try_from(number) {
+            task_numbers.insert(number);
+        }
+    }
 }
 
 fn collect_progress_artifact_names(task: &serde_json::Value, names: &mut BTreeSet<String>) {
@@ -804,7 +810,113 @@ fn collect_progress_artifact_names(task: &serde_json::Value, names: &mut BTreeSe
             continue;
         };
         names.insert(name.to_string());
+        if field == "transcript" {
+            if let Some(attempt_name) = first_attempt_transcript_name(name) {
+                names.insert(attempt_name);
+            }
+        }
     }
+}
+
+fn first_attempt_transcript_name(name: &str) -> Option<String> {
+    let stem = name.strip_suffix(".transcript")?;
+    if stem.contains("-attempt-") {
+        return None;
+    }
+    Some(format!("{stem}-attempt-1.transcript"))
+}
+
+fn collect_progress_log_artifact_names(
+    progress_dir: &FsPath,
+    plan_slug: &str,
+    task_numbers: &BTreeSet<usize>,
+    names: &mut BTreeSet<String>,
+) -> anyhow::Result<()> {
+    if task_numbers.is_empty() {
+        return Ok(());
+    }
+    let log_path = progress_dir.join(format!("{plan_slug}.log"));
+    let Ok(log) = fs::read_to_string(&log_path) else {
+        return Ok(());
+    };
+    let mut latest_task_artifacts: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+    let mut current_task: Option<usize> = None;
+    let mut current_artifacts = BTreeSet::new();
+    for line in log.lines() {
+        let Some((_, event)) = line
+            .strip_prefix("timestamp=")
+            .and_then(|rest| rest.split_once(' '))
+        else {
+            continue;
+        };
+        if let Some(task_number) = task_event_number(event, "task_start number=") {
+            if let Some(previous_task) = current_task.take() {
+                latest_task_artifacts.insert(previous_task, std::mem::take(&mut current_artifacts));
+            }
+            if task_numbers.contains(&task_number) {
+                current_task = Some(task_number);
+            }
+            continue;
+        }
+        if let Some(task_number) = current_task {
+            collect_progress_log_event_artifact_name(event, &mut current_artifacts);
+            if let Some(retry_attempt) = agent_retry_attempt(event) {
+                if retry_attempt > 1 {
+                    current_artifacts.insert(format!(
+                        "{plan_slug}-task-{task_number}-attempt-{}.transcript",
+                        retry_attempt - 1
+                    ));
+                    current_artifacts.insert(format!(
+                        "{plan_slug}-task-{task_number}-attempt-{}-review.transcript",
+                        retry_attempt - 1
+                    ));
+                }
+            }
+            if task_event_number(event, "task_end number=") == Some(task_number) {
+                latest_task_artifacts.insert(task_number, std::mem::take(&mut current_artifacts));
+                current_task = None;
+            }
+        }
+    }
+    if let Some(task_number) = current_task {
+        latest_task_artifacts.insert(task_number, current_artifacts);
+    }
+    for task_artifacts in latest_task_artifacts.values() {
+        names.extend(task_artifacts.iter().cloned());
+    }
+    Ok(())
+}
+
+fn collect_progress_log_event_artifact_name(event: &str, names: &mut BTreeSet<String>) {
+    let artifact_path = if let Some((_, path)) = event.split_once("transcript path=") {
+        Some(path)
+    } else {
+        event.strip_prefix("review transcript path=")
+    };
+    let Some(path) = artifact_path else {
+        return;
+    };
+    if let Some(name) = FsPath::new(path.trim())
+        .file_name()
+        .and_then(|name| name.to_str())
+    {
+        names.insert(name.to_string());
+    }
+}
+
+fn task_event_number(event: &str, prefix: &str) -> Option<usize> {
+    let rest = event.strip_prefix(prefix)?;
+    let number = rest.split_whitespace().next()?;
+    number.parse().ok()
+}
+
+fn agent_retry_attempt(event: &str) -> Option<usize> {
+    event
+        .strip_prefix("agent_retry attempt=")?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 struct CurrentDirGuard {
@@ -908,13 +1020,13 @@ async fn list_run_progress(
         .unwrap_or_else(|| "plan".to_string());
     let summary_json = RunStore::summary_json_path(state.run_base_dir.as_ref(), id)?
         .and_then(|path| fs::read_to_string(path).ok());
-    let allowed = progress_artifact_names(&plan_slug, summary_json.as_deref())?;
     let progress_dir = state
         .run_base_dir
         .join(".ralphterm")
         .join("runs")
         .join(id.to_string())
         .join("progress");
+    let allowed = progress_artifact_names(&progress_dir, &plan_slug, summary_json.as_deref())?;
 
     let mut artifacts = Vec::new();
     match fs::read_dir(&progress_dir) {
@@ -927,8 +1039,7 @@ async fn list_run_progress(
                     )
                 })?;
                 let name = entry.file_name().to_string_lossy().into_owned();
-                if !allowed.contains(&name) && !is_current_run_progress_artifact(&plan_slug, &name)
-                {
+                if !allowed.contains(&name) {
                     continue;
                 }
                 let metadata = fs::symlink_metadata(entry.path()).with_context(|| {
@@ -1012,18 +1123,18 @@ async fn get_run_progress(
         .unwrap_or_else(|| "plan".to_string());
     let summary_json = RunStore::summary_json_path(state.run_base_dir.as_ref(), id)?
         .and_then(|path| fs::read_to_string(path).ok());
-    let allowed = progress_artifact_names(&plan_slug, summary_json.as_deref())?;
-    if !allowed.contains(&artifact) && !is_current_run_progress_artifact(&plan_slug, &artifact) {
-        return Err(ApiError::artifact_not_found("progress"));
-    }
-
-    let path = state
+    let progress_dir = state
         .run_base_dir
         .join(".ralphterm")
         .join("runs")
         .join(id.to_string())
-        .join("progress")
-        .join(&artifact);
+        .join("progress");
+    let allowed = progress_artifact_names(&progress_dir, &plan_slug, summary_json.as_deref())?;
+    if !allowed.contains(&artifact) {
+        return Err(ApiError::artifact_not_found("progress"));
+    }
+
+    let path = progress_dir.join(&artifact);
     match fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
         Ok(_) => return Err(ApiError::artifact_not_found("progress")),

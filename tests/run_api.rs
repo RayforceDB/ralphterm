@@ -1278,6 +1278,22 @@ fn run_api_archives_rejected_review_attempt_transcripts_after_retry_success() {
         (json["status"] == "succeeded").then(|| json.clone())
     });
 
+    let attempt_one_transcript = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-1-attempt-1.transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        attempt_one_transcript.status, 200,
+        "{}",
+        attempt_one_transcript.body
+    );
+    assert!(
+        attempt_one_transcript.body.contains("COMPLETED"),
+        "{}",
+        attempt_one_transcript.body
+    );
+
     let attempt_one_review = request_json(
         port,
         &format!("GET /v1/runs/{id}/progress/plan-task-1-attempt-1-review.transcript HTTP/1.1"),
@@ -2816,6 +2832,28 @@ fn run_api_records_failed_execution_when_agent_does_not_complete() {
     .expect("write plan");
     git(&repo.path, ["add", "plan.md"]);
     git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+    let stale_progress_dir = repo.path.join(".ralphterm/progress");
+    std::fs::create_dir_all(&stale_progress_dir).expect("create stale progress dir");
+    std::fs::write(
+        stale_progress_dir.join("plan-task-1-validation.txt"),
+        "stale validation output\n",
+    )
+    .expect("write stale validation artifact");
+    std::fs::write(
+        stale_progress_dir.join("plan-task-1-review.transcript"),
+        "stale review transcript\n",
+    )
+    .expect("write stale review artifact");
+    std::fs::write(
+        stale_progress_dir.join("plan.log"),
+        concat!(
+            "timestamp=1 task_start number=1 title=Old run\n",
+            "timestamp=2 signal=COMPLETED transcript path=.ralphterm/progress/plan-task-1.transcript\n",
+            "timestamp=3 review transcript path=.ralphterm/progress/plan-task-1-review.transcript\n",
+            "timestamp=4 task_end number=1 result=failed\n",
+        ),
+    )
+    .expect("write stale progress log");
 
     let port = free_port();
     let bind = format!("127.0.0.1:{port}");
@@ -2908,6 +2946,41 @@ fn run_api_records_failed_execution_when_agent_does_not_complete() {
     assert_eq!(summary_json["result"], "failed");
     assert_eq!(summary_json["failed_task"]["title"], "Create first file");
     assert_eq!(summary_json["failed_task"]["phase"], "agent completion");
+
+    let progress = request_json(port, &format!("GET /v1/runs/{id}/progress HTTP/1.1"), None);
+    assert_eq!(progress.status, 200, "{}", progress.body);
+    let progress_json: serde_json::Value =
+        serde_json::from_str(&progress.body).expect("progress json");
+    let progress_names: Vec<_> = progress_json
+        .as_array()
+        .expect("progress list")
+        .iter()
+        .map(|item| item["name"].as_str().expect("progress name"))
+        .collect();
+    assert!(
+        progress_names.contains(&"plan-task-1.transcript"),
+        "{progress_json}"
+    );
+    assert!(
+        !progress_names.contains(&"plan-task-1-validation.txt"),
+        "stale validation artifact should not be archived for a run that failed before validation: {progress_json}"
+    );
+    assert!(
+        !progress_names.contains(&"plan-task-1-review.transcript"),
+        "stale review artifact should not be archived for a run that failed before review: {progress_json}"
+    );
+    let stale_validation = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-1-validation.txt HTTP/1.1"),
+        None,
+    );
+    assert_eq!(stale_validation.status, 404, "{}", stale_validation.body);
+    let stale_review = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-1-review.transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(stale_review.status, 404, "{}", stale_review.body);
 }
 
 struct ChildGuard {
