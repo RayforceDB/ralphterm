@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod config;
 pub mod plan;
 pub mod pty_agent;
 pub mod runner;

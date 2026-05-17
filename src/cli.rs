@@ -14,7 +14,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -149,6 +149,12 @@ struct Cli {
         help = "ralphex-compatible: disable color output (sets NO_COLOR=1)"
     )]
     compat_no_color: bool,
+    #[arg(
+        long = "config-dir",
+        env = "RALPHEX_CONFIG_DIR",
+        help = "ralphex-compatible: directory containing the global config file"
+    )]
+    compat_config_dir: Option<PathBuf>,
     #[arg(value_name = "plan-file")]
     compat_plan_file: Option<PathBuf>,
 }
@@ -320,7 +326,9 @@ pub async fn run() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches)
+        .map_err(|err| anyhow::anyhow!("parse CLI arguments: {err}"))?;
     match cli.command {
         Some(Command::Serve { bind }) => serve(bind).await,
         Some(Command::Run {
@@ -359,7 +367,7 @@ pub async fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Workspace { command }) => run_workspace_command(command),
-        None => run_compat_cli(cli),
+        None => run_compat_cli(cli, &matches),
     }
 }
 
@@ -442,21 +450,53 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
+fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
     let Some(plan) = cli.compat_plan_file else {
         bail!("plan file required for ralphex-compatible execution");
     };
-    let review_tool = cli.compat_external_review_tool.as_deref();
-    let review_command = match review_tool {
-        Some("custom") => cli.compat_custom_review_script.clone(),
-        Some("none") | None => None,
-        Some(other) => bail!("unsupported external review tool: {other}"),
+
+    let project_root = std::env::current_dir().context("read current directory")?;
+    let config = crate::config::load(cli.compat_config_dir.as_deref(), &project_root)?;
+
+    // Helper: an arg counts as "CLI-provided" iff value_source is CommandLine.
+    let cli_provided = |id: &str| -> bool {
+        matches!(
+            matches.value_source(id),
+            Some(clap::parser::ValueSource::CommandLine)
+        )
+    };
+    let cli_provided_or = |id: &str, cli_value: Option<String>, fallback: Option<String>| {
+        if cli_provided(id) {
+            cli_value
+        } else {
+            cli_value.or(fallback)
+        }
+    };
+
+    let external_review_tool = cli_provided_or(
+        "compat_external_review_tool",
+        cli.compat_external_review_tool.clone(),
+        config.external_review_tool.clone(),
+    );
+    if let Some(tool) = external_review_tool.as_deref() {
+        if !matches!(tool, "custom" | "none") {
+            bail!("unsupported external review tool: {tool}");
+        }
+    }
+    let custom_review_script = cli_provided_or(
+        "compat_custom_review_script",
+        cli.compat_custom_review_script.clone(),
+        config.custom_review_script.clone(),
+    );
+    let review_command = match external_review_tool.as_deref() {
+        Some("custom") => custom_review_script.clone(),
+        _ => None,
     };
 
     // Default full mode requires an independent reviewer unless --tasks-only is set.
     let mut require_review = false;
     if !cli.compat_tasks_only {
-        match (review_tool, review_command.as_deref()) {
+        match (external_review_tool.as_deref(), review_command.as_deref()) {
             (Some("custom"), Some(_)) => {
                 require_review = true;
             }
@@ -481,10 +521,20 @@ fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
         }
     }
 
+    let claude_command = cli_provided_or(
+        "compat_claude_command",
+        cli.compat_claude_command.clone(),
+        config.claude_command.clone(),
+    );
+    let claude_args = cli_provided_or(
+        "compat_claude_args",
+        cli.compat_claude_args.clone(),
+        config.claude_args.clone(),
+    );
+
     // Compose the implementer command with optional --claude-args appended.
-    let agent_command = match (cli.compat_claude_command, cli.compat_claude_args.as_deref()) {
+    let agent_command = match (claude_command, claude_args.as_deref()) {
         (Some(command), Some(extra)) if !extra.trim().is_empty() => {
-            // Validate that the extra args shell-parse cleanly.
             if shlex::split(extra).is_none() {
                 bail!("invalid --claude-args: shell-split failed");
             }
@@ -497,9 +547,13 @@ fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
         (None, _) => None,
     };
 
-    // --session-timeout becomes the agent timeout.
+    let session_timeout_value = cli_provided_or(
+        "compat_session_timeout",
+        cli.compat_session_timeout.clone(),
+        config.session_timeout.clone(),
+    );
     let agent_timeout =
-        if let Some(value) = cli.compat_session_timeout.as_deref() {
+        if let Some(value) = session_timeout_value.as_deref() {
             Some(parse_duration(value).map_err(|err| {
                 anyhow::anyhow!("invalid --session-timeout value '{value}': {err}")
             })?)
@@ -507,14 +561,18 @@ fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
             None
         };
 
-    // --idle-timeout and --wait are accepted but not yet implemented; still validate
-    // they parse so we surface bad values early.
-    if let Some(value) = cli.compat_idle_timeout.as_deref() {
+    let idle_timeout_value = cli_provided_or(
+        "compat_idle_timeout",
+        cli.compat_idle_timeout.clone(),
+        config.idle_timeout.clone(),
+    );
+    if let Some(value) = idle_timeout_value.as_deref() {
         parse_duration(value)
             .map_err(|err| anyhow::anyhow!("invalid --idle-timeout value '{value}': {err}"))?;
         eprintln!("[warning] --idle-timeout is accepted but not yet implemented; value ignored");
     }
-    if let Some(value) = cli.compat_wait.as_deref() {
+    let wait_value = cli_provided_or("compat_wait", cli.compat_wait.clone(), config.wait.clone());
+    if let Some(value) = wait_value.as_deref() {
         parse_duration(value)
             .map_err(|err| anyhow::anyhow!("invalid --wait value '{value}': {err}"))?;
         eprintln!("[warning] --wait is accepted but not yet implemented; value ignored");
@@ -527,19 +585,40 @@ fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
         std::env::set_var("NO_COLOR", "1");
     }
 
-    if let Some(model) = cli.compat_task_model.as_deref() {
+    let task_model_value = cli_provided_or(
+        "compat_task_model",
+        cli.compat_task_model.clone(),
+        config.task_model.clone(),
+    );
+    let review_model_value = cli_provided_or(
+        "compat_review_model",
+        cli.compat_review_model.clone(),
+        config.review_model.clone(),
+    );
+    if let Some(model) = task_model_value.as_deref() {
         eprintln!("[warning] --task-model is forwarded as $CLAUDE_MODEL");
         std::env::set_var("CLAUDE_MODEL", model);
     }
-    if let Some(model) = cli.compat_review_model.as_deref() {
+    if let Some(model) = review_model_value.as_deref() {
         eprintln!("[warning] --review-model is forwarded as $CLAUDE_REVIEW_MODEL");
         std::env::set_var("CLAUDE_REVIEW_MODEL", model);
     }
 
-    if cli.compat_base_ref.is_some() {
+    let base_ref_value = cli_provided_or(
+        "compat_base_ref",
+        cli.compat_base_ref.clone(),
+        config.base_ref.clone(),
+    );
+    if base_ref_value.is_some() {
         eprintln!("[warning] --base-ref is accepted but full diff-range support is pending");
     }
-    if cli.compat_max_external_iterations.is_some() {
+    let max_external_iterations_value = if cli_provided("compat_max_external_iterations") {
+        cli.compat_max_external_iterations
+    } else {
+        cli.compat_max_external_iterations
+            .or(config.max_external_iterations)
+    };
+    if max_external_iterations_value.is_some() {
         eprintln!("[warning] --max-external-iterations is accepted but external loop is pending");
     }
     if cli.compat_review {
@@ -548,10 +627,18 @@ fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
     if cli.compat_external_only || cli.compat_codex_only {
         eprintln!("[warning] --external-only/--codex-only accepted but mode is pending");
     }
-    // max-iterations / review-patience are stored on the future RunOptions; map to
-    // max_review_retries (clamped so we keep the existing default behavior of 1).
-    let _ = cli.compat_max_iterations;
-    let _ = cli.compat_review_patience;
+    // max-iterations / review-patience are stored on the future RunOptions; reading
+    // here keeps the option live until later tasks wire it in.
+    let _ = if cli_provided("compat_max_iterations") {
+        cli.compat_max_iterations
+    } else {
+        config.max_iterations.unwrap_or(cli.compat_max_iterations)
+    };
+    let _ = if cli_provided("compat_review_patience") {
+        cli.compat_review_patience
+    } else {
+        config.review_patience.unwrap_or(cli.compat_review_patience)
+    };
 
     run_plan_cli(RunCliOptions {
         plan,
