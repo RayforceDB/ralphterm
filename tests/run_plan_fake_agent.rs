@@ -4548,6 +4548,14 @@ fn review_failure_triggers_agent_retry_and_rereview_before_acceptance() {
         ),
         "summary should expose final accepted review transcript path:\n{summary}"
     );
+
+    let summary_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repo.path.join(".ralphterm/progress/plan-summary.json"))
+            .expect("read machine-readable run summary"),
+    )
+    .expect("parse machine-readable run summary");
+    assert_eq!(summary_json["tasks"][0]["attempts"], 2);
+    assert_eq!(summary_json["tasks"][0]["review_attempts"], 2);
 }
 
 #[test]

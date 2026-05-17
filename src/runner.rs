@@ -775,9 +775,16 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
             &options,
             PlanRunEvent::for_task("task_succeeded", task, None),
         )?;
+        let review_attempts = if options.review_command.is_some() {
+            attempt
+        } else {
+            0
+        };
         executed_tasks.push(ExecutedTask {
             number: task.number,
             title: task.title.clone(),
+            attempts: attempt,
+            review_attempts,
             transcript_display: final_transcript_display,
             validation_output_display: progress.validation_output_display,
             review_transcript_display: options
@@ -908,6 +915,8 @@ struct ProgressPaths {
 struct ExecutedTask {
     number: usize,
     title: String,
+    attempts: usize,
+    review_attempts: usize,
     transcript_display: String,
     validation_output_display: String,
     review_transcript_display: Option<String>,
@@ -1104,6 +1113,8 @@ fn write_run_summary(plan_name: &str, plan_slug: &str, tasks: &[ExecutedTask]) -
                 "number": task.number,
                 "title": task.title,
                 "status": "passed",
+                "attempts": task.attempts,
+                "review_attempts": task.review_attempts,
                 "transcript": task.transcript_display,
                 "validation": task.validation_output_display,
                 "review_status": passed_task_review_status(&task.review_transcript_display),
@@ -1260,6 +1271,8 @@ fn write_failed_run_summary(
                 "number": task.number,
                 "title": task.title,
                 "status": "passed",
+                "attempts": task.attempts,
+                "review_attempts": task.review_attempts,
                 "transcript": task.transcript_display,
                 "validation": task.validation_output_display,
                 "review_status": passed_task_review_status(&task.review_transcript_display),
