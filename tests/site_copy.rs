@@ -855,3 +855,89 @@ fn api_docs_expose_reviewed_run_api_not_only_raw_sessions() {
         "public workflows docs should document machine-readable run summaries"
     );
 }
+
+#[test]
+fn landing_links_to_self_hosted_fonts_only() {
+    let html = std::fs::read_to_string("site/index.html").expect("read site/index.html");
+    assert!(
+        !html.contains("fonts.googleapis.com") && !html.contains("fonts.gstatic.com"),
+        "landing page must not reference Google Fonts CDN at runtime"
+    );
+}
+
+#[test]
+fn stylesheet_uses_ibm_plex_via_font_face() {
+    let css = std::fs::read_to_string("site/assets/styles.css").expect("read styles.css");
+    assert!(
+        css.contains("IBM Plex Sans") && css.contains("IBM Plex Mono"),
+        "styles.css must reference both IBM Plex Sans and IBM Plex Mono"
+    );
+    let fonts_css = std::fs::read_to_string("site/assets/fonts.css").expect("read fonts.css");
+    assert!(
+        fonts_css.matches("@font-face").count() >= 7,
+        "fonts.css must declare at least seven @font-face rules"
+    );
+}
+
+#[test]
+fn landing_brand_color_is_monochrome() {
+    let css = std::fs::read_to_string("site/assets/styles.css").expect("read styles.css");
+    assert!(
+        !css.contains("#00d992"),
+        "styles.css must not contain the legacy brand color #00d992"
+    );
+    let landing = std::fs::read_to_string("site/index.html").expect("read site/index.html");
+    assert!(
+        !landing.contains("#00d992"),
+        "site/index.html must not contain the legacy brand color #00d992"
+    );
+}
+
+#[test]
+fn landing_logo_is_pixel_grid() {
+    let svg = std::fs::read_to_string("site/assets/logo.svg").expect("read logo.svg");
+    let rect_count = svg.matches("<rect").count();
+    assert_eq!(
+        rect_count, 9,
+        "logo.svg must contain exactly 9 <rect> elements (got {rect_count})"
+    );
+}
+
+#[test]
+fn favicon_svg_present_and_matches_logo_pattern() {
+    let svg = std::fs::read_to_string("site/assets/favicon.svg").expect("read favicon.svg");
+    let dark_rect_count = svg.matches("fill=\"#0a0a0b\"").count();
+    assert!(
+        dark_rect_count >= 9,
+        "favicon.svg must render the 9-cell pixel grid in dark color (counted {dark_rect_count})"
+    );
+}
+
+#[test]
+fn landing_uses_spec_sheet_eyebrows() {
+    let html = std::fs::read_to_string("site/index.html").expect("read site/index.html");
+    for marker in &[
+        "— capabilities",
+        "— drop in",
+        "— what it replaces",
+        "— invoke",
+    ] {
+        assert!(
+            html.contains(marker),
+            "landing must include the '{marker}' eyebrow"
+        );
+    }
+}
+
+#[test]
+fn webmanifest_references_new_icons() {
+    let manifest = std::fs::read_to_string("site/site.webmanifest").expect("read webmanifest");
+    assert!(
+        manifest.contains("\"src\": \"/assets/favicon.svg\""),
+        "webmanifest must reference favicon.svg in its icons[]"
+    );
+    assert!(
+        manifest.contains("\"src\": \"/assets/apple-touch-icon.png\""),
+        "webmanifest must reference apple-touch-icon.png in its icons[]"
+    );
+}
