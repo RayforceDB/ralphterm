@@ -64,6 +64,16 @@ ralphterm run docs/plans/example.md --agent claude \
   --review-command "codex exec review-task"</code></pre>
       <p><code>--require-review</code> is a hard gate. If it is used without <code>--review-command</code> or <code>--review-agent</code>, RalphTerm fails before starting implementation. That includes <code>--dry-run</code>: a dry run fails before agent execution when the review gate is required but not configured. The implementation and review commands must also be different; the same command is rejected in dry-run too. With review configured, the implementation agent runs in one PTY and the reviewer runs later in a separate PTY.</p>
 
+      <h2>Acceptance gates</h2>
+      <p>In a reviewed run, agent completion is only the first gate. RalphTerm accepts progress after this sequence:</p>
+      <ol>
+        <li>implementation signal: the implementation PTY emits <code>COMPLETED</code></li>
+        <li>validation pass: every plan-level validation command exits successfully</li>
+        <li>independent review pass: a separate reviewer PTY prints <code>REVIEW_PASS</code></li>
+        <li>plan checkbox + commit: RalphTerm marks the task <code>[x]</code> and creates the local checkpoint commit unless <code>--no-commit</code> is set</li>
+      </ol>
+      <p>If validation or review fails, the task stays unchecked. If the first reviewer returns <code>REVIEW_FAIL</code> and retries are available, RalphTerm sends that feedback back to the implementation agent before trying the gates again.</p>
+
       <h2>Validation before acceptance</h2>
       <p>Plan-level validation commands from the <code>## Validation Commands</code> section run after each implementation attempt. RalphTerm includes the validation output in the reviewer prompt. A task is not checked off until validation succeeds and review passes.</p>
 
@@ -86,7 +96,7 @@ ralphterm run docs/plans/example.md --agent claude \
       <p>Add <code>--workspace-id &lt;id&gt;</code> when a plan should run in a managed git worktree instead of the checkout you invoked from. RalphTerm creates <code>.ralphterm/workspaces/&lt;id&gt;</code>, checks out a managed branch, preserves the caller-relative plan path, and runs from the corresponding directory inside the worktree. The run does not auto-clean the worktree when it finishes; inspect it or remove it later with <code>ralphterm workspace cleanup &lt;id&gt;</code>. With <code>--dry-run --workspace-id &lt;id&gt;</code>, dry run only previews the workspace path and pending plan work without creating the worktree or starting an agent.</p>
 
       <h2>Commit progress</h2>
-      <p>After validation and <code>REVIEW_PASS</code>, RalphTerm marks the task checkbox, writes the run artifacts, and commits task progress. This commit progress step only happens after the review gate passes. Failed validation or review leaves the task uncommitted for follow-up.</p>
+      <p>After validation and <code>REVIEW_PASS</code>, RalphTerm marks the task checkbox, writes the run artifacts, and commits task progress unless <code>--no-commit</code> is set. This commit progress step only happens after the review gate passes. Failed validation or review leaves the task uncommitted for follow-up.</p>
 
     </article>
   </main>

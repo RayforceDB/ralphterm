@@ -27,6 +27,17 @@ Each phase is backed by one or more terminal sessions. Every phase gets a transc
 
 Use `--require-review` when a task should not be executed or accepted unless an independent reviewer is configured. You can use a built-in reviewer agent or a custom command.
 
+## Acceptance gates
+
+In a reviewed run, agent completion is only the first gate. RalphTerm accepts progress after this sequence:
+
+1. implementation signal: the implementation PTY emits `COMPLETED`
+2. validation pass: every plan-level validation command exits successfully
+3. independent review pass: a separate reviewer PTY prints `REVIEW_PASS`
+4. plan checkbox + commit: RalphTerm marks the task `[x]` and creates the local checkpoint commit unless `--no-commit` is set
+
+If validation or review fails, the task stays unchecked. If the first reviewer returns `REVIEW_FAIL` and retries are available, RalphTerm sends that feedback back to the implementation agent before trying the gates again.
+
 ```bash
 ralphterm run docs/plans/example.md --agent claude \
   --require-review \
@@ -57,7 +68,7 @@ Plan-level validation commands from the `## Validation Commands` section run aft
 
 You can resume after a failed run by invoking the same plan again. RalphTerm skips tasks already marked `[x]`, keeps failed context available to the next implementation prompt, and continues with pending tasks.
 
-Plan runs preserve transcripts for implementation and review attempts. They also write progress logs, a summary, and diff artifacts. After validation and `REVIEW_PASS`, RalphTerm marks the task checkbox and commits task progress. Failed validation or review leaves the task uncommitted for follow-up.
+Plan runs preserve transcripts for implementation and review attempts. They also write progress logs, a summary, and diff artifacts. After validation and `REVIEW_PASS`, RalphTerm marks the task checkbox and commits task progress unless `--no-commit` is set. Failed validation or review leaves the task uncommitted for follow-up.
 
 ## Workspace-isolated plan runs
 

@@ -230,6 +230,55 @@ fn public_docs_mention_review_agent_as_supported_review_config() {
 }
 
 #[test]
+fn workflow_docs_define_acceptance_gates_before_checked_progress() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflows_md =
+        std::fs::read_to_string(root.join("docs/workflows.md")).expect("read workflows markdown");
+    let workflows_html = std::fs::read_to_string(root.join("site/docs/workflows.html"))
+        .expect("read public workflows page");
+
+    for (name, text) in [
+        ("workflows markdown", workflows_md.as_str()),
+        ("public workflows page", workflows_html.as_str()),
+    ] {
+        assert!(
+            text.contains("Acceptance gates"),
+            "{name} should have a compact acceptance gates section"
+        );
+        assert!(
+            text.contains("agent completion is only the first gate"),
+            "{name} should say agent completion alone is not accepted progress"
+        );
+        let ordered_gates = [
+            "implementation signal",
+            "validation pass",
+            "independent review pass",
+            "plan checkbox + commit",
+        ];
+        let mut previous = 0;
+        for expected in ordered_gates {
+            let index = text
+                .find(expected)
+                .unwrap_or_else(|| panic!("{name} should name the {expected} acceptance gate"));
+            assert!(
+                index >= previous,
+                "{name} should list acceptance gates in execution order"
+            );
+            previous = index;
+        }
+        assert!(
+            text.contains("COMPLETED") && text.contains("REVIEW_PASS"),
+            "{name} should name the concrete implementation and review signals"
+        );
+        assert!(
+            text.contains("unless `--no-commit` is set")
+                || text.contains("unless <code>--no-commit</code> is set"),
+            "{name} should not imply every accepted task creates a commit"
+        );
+    }
+}
+
+#[test]
 fn docs_explain_workspace_isolated_plan_runs() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let readme = std::fs::read_to_string(root.join("README.md")).expect("read README");
