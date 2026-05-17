@@ -44,7 +44,33 @@ use store::{ApprovalDecisionError, SessionRecord, SessionStore};
 #[command(about = "Terminal-native Claude/Codex orchestration API", long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
+
+    #[arg(
+        short = 't',
+        long = "tasks-only",
+        help = "ralphex-compatible alias: run only task phase"
+    )]
+    compat_tasks_only: bool,
+    #[arg(
+        long = "claude-command",
+        help = "ralphex-compatible alias for run --agent-command"
+    )]
+    compat_claude_command: Option<String>,
+    #[arg(
+        long = "custom-review-script",
+        help = "ralphex-compatible alias for run --review-command"
+    )]
+    compat_custom_review_script: Option<String>,
+    #[arg(long = "external-review-tool", value_parser = ["custom", "none"], help = "ralphex-compatible external review selector")]
+    compat_external_review_tool: Option<String>,
+    #[arg(
+        long = "no-commit",
+        help = "RalphTerm compatibility extension: skip local checkpoint commit"
+    )]
+    compat_no_commit: bool,
+    #[arg(value_name = "plan-file")]
+    compat_plan_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -217,8 +243,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Serve { bind } => serve(bind).await,
-        Command::Run {
+        Some(Command::Serve { bind }) => serve(bind).await,
+        Some(Command::Run {
             plan,
             agent,
             agent_command,
@@ -230,68 +256,135 @@ async fn main() -> anyhow::Result<()> {
             no_commit,
             dry_run,
             workspace_id,
-        } => {
-            if let Some(id) = workspace_id {
-                if plan.is_absolute() {
-                    bail!("--workspace-id requires a relative plan path");
-                }
-
-                let cwd = std::env::current_dir().context("read current directory")?;
-                let manager = WorkspaceManager::discover(&cwd)?;
-                let cwd_relative = cwd.strip_prefix(manager.repo_root()).with_context(|| {
-                    format!(
-                        "current directory {} is not inside repository {}",
-                        cwd.display(),
-                        manager.repo_root().display()
-                    )
-                })?;
-                validate_workspace_plan_path(cwd_relative, &plan)?;
-
-                let candidate = manager.workspace(&id)?;
-                if dry_run {
-                    println!("Workspace: {} (dry run)", candidate.path.display());
-                } else {
-                    let workspace = if candidate.path.exists() {
-                        manager.validate_existing_workspace(&candidate)?;
-                        candidate
-                    } else {
-                        manager.create(id)?
-                    };
-                    println!("Workspace: {}", workspace.path.display());
-                    let workspace_cwd = workspace.path.join(cwd_relative);
-                    std::env::set_current_dir(&workspace_cwd).with_context(|| {
-                        format!("switch to workspace directory {}", workspace_cwd.display())
-                    })?;
-                }
-            }
-
-            let output = run_plan(RunOptions {
-                plan_path: plan,
-                agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
-                review_command: review_command.or_else(|| review_agent.map(RunAgentKind::command)),
-                agent_timeout: agent_timeout_ms,
-                require_review,
-                max_review_retries,
-                no_commit,
-                dry_run,
-                event_sink: None,
-                cancellation_check: None,
-            })?;
-            print!("{output}");
-            Ok(())
-        }
-        Command::Smoke {
+        }) => run_plan_cli(RunCliOptions {
+            plan,
             agent,
             agent_command,
-        } => {
+            review_agent,
+            review_command,
+            require_review,
+            agent_timeout_ms,
+            max_review_retries,
+            no_commit,
+            dry_run,
+            workspace_id,
+        }),
+        Some(Command::Smoke {
+            agent,
+            agent_command,
+        }) => {
             let agent_command =
                 agent_command.unwrap_or_else(|| agent.unwrap_or(RunAgentKind::Claude).command());
             let output = run_smoke(&agent_command)?;
             print!("{output}");
             Ok(())
         }
-        Command::Workspace { command } => run_workspace_command(command),
+        Some(Command::Workspace { command }) => run_workspace_command(command),
+        None => run_compat_cli(cli),
     }
+}
+
+struct RunCliOptions {
+    plan: PathBuf,
+    agent: Option<RunAgentKind>,
+    agent_command: Option<String>,
+    review_agent: Option<RunAgentKind>,
+    review_command: Option<String>,
+    require_review: bool,
+    agent_timeout_ms: Option<std::time::Duration>,
+    max_review_retries: usize,
+    no_commit: bool,
+    dry_run: bool,
+    workspace_id: Option<String>,
+}
+
+fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
+    let RunCliOptions {
+        plan,
+        agent,
+        agent_command,
+        review_agent,
+        review_command,
+        require_review,
+        agent_timeout_ms,
+        max_review_retries,
+        no_commit,
+        dry_run,
+        workspace_id,
+    } = options;
+
+    if let Some(id) = workspace_id {
+        if plan.is_absolute() {
+            bail!("--workspace-id requires a relative plan path");
+        }
+
+        let cwd = std::env::current_dir().context("read current directory")?;
+        let manager = WorkspaceManager::discover(&cwd)?;
+        let cwd_relative = cwd.strip_prefix(manager.repo_root()).with_context(|| {
+            format!(
+                "current directory {} is not inside repository {}",
+                cwd.display(),
+                manager.repo_root().display()
+            )
+        })?;
+        validate_workspace_plan_path(cwd_relative, &plan)?;
+
+        let candidate = manager.workspace(&id)?;
+        if dry_run {
+            println!("Workspace: {} (dry run)", candidate.path.display());
+        } else {
+            let workspace = if candidate.path.exists() {
+                manager.validate_existing_workspace(&candidate)?;
+                candidate
+            } else {
+                manager.create(id)?
+            };
+            println!("Workspace: {}", workspace.path.display());
+            let workspace_cwd = workspace.path.join(cwd_relative);
+            std::env::set_current_dir(&workspace_cwd).with_context(|| {
+                format!("switch to workspace directory {}", workspace_cwd.display())
+            })?;
+        }
+    }
+
+    let output = run_plan(RunOptions {
+        plan_path: plan,
+        agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
+        review_command: review_command.or_else(|| review_agent.map(RunAgentKind::command)),
+        agent_timeout: agent_timeout_ms,
+        require_review,
+        max_review_retries,
+        no_commit,
+        dry_run,
+        event_sink: None,
+        cancellation_check: None,
+    })?;
+    print!("{output}");
+    Ok(())
+}
+
+fn run_compat_cli(cli: Cli) -> anyhow::Result<()> {
+    let Some(plan) = cli.compat_plan_file else {
+        bail!("plan file required for ralphex-compatible execution");
+    };
+    let review_command = match cli.compat_external_review_tool.as_deref() {
+        Some("custom") => cli.compat_custom_review_script,
+        Some("none") | None => None,
+        Some(other) => bail!("unsupported external review tool: {other}"),
+    };
+    run_plan_cli(RunCliOptions {
+        plan,
+        agent: None,
+        agent_command: cli.compat_claude_command,
+        review_agent: None,
+        review_command,
+        require_review: false,
+        agent_timeout_ms: None,
+        max_review_retries: 1,
+        no_commit: cli.compat_no_commit,
+        dry_run: false,
+        workspace_id: None,
+    })
 }
 
 fn validate_workspace_plan_path(cwd_relative: &FsPath, plan: &FsPath) -> anyhow::Result<()> {

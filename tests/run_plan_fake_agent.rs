@@ -214,6 +214,51 @@ fn smoke_command_hanging_agent_exits_nonzero_with_bounded_timeout() {
 }
 
 #[test]
+fn ralphex_style_cli_runs_plan_without_run_subcommand() {
+    let repo = TempRepo::new();
+    let plan_path = repo.path.join("plan.md");
+    fs::write(
+        &plan_path,
+        r#"# Example plan
+
+## Validation Commands
+- `test -f first.txt`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+    )
+    .expect("write plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "--tasks-only",
+            "--claude-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+            plan_path.to_str().expect("utf8 plan path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphex-style cli");
+
+    assert!(
+        output.status.success(),
+        "ralphex-style cli failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Executing plan.md"), "{stdout}");
+    assert!(stdout.contains("Task 1: Create first file"), "{stdout}");
+    assert!(repo.path.join("first.txt").exists());
+}
+
+#[test]
 fn run_command_records_complete_transcript_for_successful_large_output_agent() {
     let repo = TempRepo::new();
     let plan_path = repo.path.join("plan.md");
