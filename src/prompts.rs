@@ -3,7 +3,6 @@
 //! These constants are the default templates used when the project (or
 //! global) override directories do not provide their own `.txt` copies.
 
-#![allow(dead_code)]
 pub(crate) const TASK_TXT: &str = r####"# task execution prompt
 # this prompt is used for each task iteration in phase 1
 #
@@ -911,3 +910,144 @@ pub(crate) const AGENT_DOCUMENTATION_TXT: &str = r#"# Review code changes and id
 
 # Report problems only - no positive observations.
 "#;
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::{fs, io};
+
+#[derive(Debug, Clone)]
+pub struct Prompts {
+    pub task: String,
+    pub make_plan: String,
+    pub review_first: String,
+    pub review_second: String,
+    pub codex: String,
+    pub codex_review: String,
+    pub custom_eval: String,
+    pub custom_review: String,
+    pub finalize: String,
+    pub agents: HashMap<String, String>,
+}
+
+impl Prompts {
+    pub fn load(project_root: &Path, global_dir: Option<&Path>) -> Self {
+        let read = |name: &str, default: &str, subdir: &str| -> String {
+            let project = project_root
+                .join(".ralphex")
+                .join(subdir)
+                .join(format!("{name}.txt"));
+            if let Some(text) = read_if_exists(&project) {
+                return text;
+            }
+            if let Some(global) = global_dir {
+                let global_path = global.join(subdir).join(format!("{name}.txt"));
+                if let Some(text) = read_if_exists(&global_path) {
+                    return text;
+                }
+            }
+            default.to_string()
+        };
+
+        let mut agents = HashMap::new();
+        for (name, default) in [
+            ("quality", AGENT_QUALITY_TXT),
+            ("implementation", AGENT_IMPLEMENTATION_TXT),
+            ("testing", AGENT_TESTING_TXT),
+            ("simplification", AGENT_SIMPLIFICATION_TXT),
+            ("documentation", AGENT_DOCUMENTATION_TXT),
+        ] {
+            agents.insert(name.to_string(), read(name, default, "agents"));
+        }
+
+        Self {
+            task: read("task", TASK_TXT, "prompts"),
+            make_plan: read("make_plan", MAKE_PLAN_TXT, "prompts"),
+            review_first: read("review_first", REVIEW_FIRST_TXT, "prompts"),
+            review_second: read("review_second", REVIEW_SECOND_TXT, "prompts"),
+            codex: read("codex", CODEX_TXT, "prompts"),
+            codex_review: read("codex_review", CODEX_REVIEW_TXT, "prompts"),
+            custom_eval: read("custom_eval", CUSTOM_EVAL_TXT, "prompts"),
+            custom_review: read("custom_review", CUSTOM_REVIEW_TXT, "prompts"),
+            finalize: read("finalize", FINALIZE_TXT, "prompts"),
+            agents,
+        }
+    }
+}
+
+fn read_if_exists(path: &Path) -> Option<String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => {
+            tracing::warn!(path = %path.display(), error = %err, "failed to read prompt override");
+            None
+        }
+    }
+}
+
+pub fn substitute(template: &str, vars: &HashMap<&str, &str>) -> String {
+    let mut out = String::with_capacity(template.len());
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'{' {
+            if let Some(end) = template[i + 2..].find("}}") {
+                let key = &template[i + 2..i + 2 + end];
+                let key_trimmed = key.trim();
+                if let Some(value) = vars.get(key_trimmed) {
+                    out.push_str(value);
+                    i += 2 + end + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substitute_replaces_known_keys_and_leaves_unknown_intact() {
+        let mut vars = HashMap::new();
+        vars.insert("PLAN_FILE", "docs/plans/foo.md");
+        vars.insert("GOAL", "build it");
+        let out = substitute(
+            "Read plan {{PLAN_FILE}}; goal {{GOAL}}; keep {{UNKNOWN}}.",
+            &vars,
+        );
+        assert_eq!(
+            out,
+            "Read plan docs/plans/foo.md; goal build it; keep {{UNKNOWN}}."
+        );
+    }
+
+    #[test]
+    fn load_falls_back_to_embedded_when_no_override_present() {
+        let tmp = std::env::temp_dir().join(format!("rt-prompts-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prompts = Prompts::load(&tmp, None);
+        assert_eq!(prompts.task, TASK_TXT);
+        assert_eq!(
+            prompts.agents.get("quality").map(String::as_str),
+            Some(AGENT_QUALITY_TXT)
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_prefers_project_override_over_embedded() {
+        let tmp =
+            std::env::temp_dir().join(format!("rt-prompts-test-override-{}", std::process::id()));
+        let prompts_dir = tmp.join(".ralphex").join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(prompts_dir.join("task.txt"), "MY OVERRIDE").unwrap();
+        let prompts = Prompts::load(&tmp, None);
+        assert_eq!(prompts.task, "MY OVERRIDE");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
