@@ -192,6 +192,7 @@ struct ProgressArtifactIndexItem {
 
 #[derive(Debug, Deserialize)]
 struct CreateRunRequest {
+    repo_path: Option<String>,
     plan_path: Option<String>,
     workspace_id: Option<String>,
     agent: Option<ApiAgentKind>,
@@ -414,6 +415,19 @@ async fn create_run(
 ) -> Result<Json<CreatedRunRecord>, ApiError> {
     let plan_path = req.plan_path.clone();
     let base_dir = state.run_base_dir.as_ref().clone();
+    let repo_path = req.repo_path.clone();
+    let requested_repo_dir = repo_path.as_deref().map(PathBuf::from);
+    if let Some(repo_dir) = requested_repo_dir.as_deref() {
+        if !repo_dir.is_absolute() {
+            return Err(ApiError::bad_request("repo_path must be absolute"));
+        }
+        if !repo_dir.is_dir() {
+            return Err(ApiError::bad_request(format!(
+                "repo_path is not a directory: {}",
+                repo_dir.display()
+            )));
+        }
+    }
     if req.agent.is_some() && req.agent_command.is_some() {
         return Err(ApiError::bad_request("agent conflicts with agent_command"));
     }
@@ -435,6 +449,16 @@ async fn create_run(
         return Err(ApiError::bad_request(
             "plan_path is required when agent, agent_command, or dry_run is set",
         ));
+    }
+    if requested_repo_dir.is_some() {
+        let plan_path = plan_path
+            .as_deref()
+            .ok_or_else(|| ApiError::bad_request("plan_path is required when repo_path is set"))?;
+        if PathBuf::from(plan_path).is_absolute() {
+            return Err(ApiError::bad_request(
+                "repo_path requires a relative plan_path",
+            ));
+        }
     }
     if req.require_review.unwrap_or(false) && review_command.is_none() {
         return Err(ApiError::bad_request(
@@ -514,6 +538,7 @@ async fn create_run(
             phase: RunPhase::Planning,
             status: RunStatus::Created,
             plan_path: plan_path.clone(),
+            repo_path: repo_path.clone(),
             workspace_path: workspace_path.clone(),
         },
     )?;
@@ -534,7 +559,9 @@ async fn create_run(
     let started = RunStore::start(&base_dir, run_id)?.context("run disappeared before start")?;
 
     let executor_base_dir = base_dir.clone();
-    let execution_dir = workspace_execution_dir.unwrap_or_else(|| executor_base_dir.clone());
+    let execution_dir = workspace_execution_dir
+        .or(requested_repo_dir)
+        .unwrap_or_else(|| executor_base_dir.clone());
     tokio::spawn(async move {
         let supervisor_base_dir = base_dir;
         let result = tokio::task::spawn_blocking(move || {

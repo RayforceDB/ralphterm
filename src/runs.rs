@@ -35,6 +35,8 @@ pub struct RunRecord {
     pub status: RunStatus,
     pub plan_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<String>,
 }
 
@@ -45,6 +47,8 @@ pub struct CreatedRunRecord {
     pub phase: RunPhase,
     pub status: RunStatus,
     pub plan_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<String>,
 }
@@ -95,6 +99,7 @@ impl RunStore {
             phase: request.phase,
             status: request.status,
             plan_path: request.plan_path,
+            repo_path: request.repo_path,
             workspace_path: request.workspace_path,
         };
         let run_dir = base_dir
@@ -534,6 +539,7 @@ mod tests {
                 phase: RunPhase::Executing,
                 status: RunStatus::Running,
                 plan_path: Some("plans/task.md".into()),
+                repo_path: None,
                 workspace_path: Some("initial".into()),
             },
         )
@@ -582,6 +588,7 @@ mod tests {
                 phase: RunPhase::Planning,
                 status: RunStatus::Created,
                 plan_path: Some("docs/plan.md".into()),
+                repo_path: None,
                 workspace_path: None,
             },
         )
@@ -631,6 +638,7 @@ mod tests {
                 phase: RunPhase::Planning,
                 status: RunStatus::Created,
                 plan_path: Some("plans/task.md".into()),
+                repo_path: None,
                 workspace_path: None,
             },
         )
@@ -678,6 +686,7 @@ mod tests {
                 phase: RunPhase::Planning,
                 status: RunStatus::Created,
                 plan_path: Some("plans/task.md".into()),
+                repo_path: None,
                 workspace_path: None,
             },
         )
@@ -724,6 +733,7 @@ mod tests {
                 phase: RunPhase::Executing,
                 status: RunStatus::Running,
                 plan_path: Some("plans/task.md".into()),
+                repo_path: None,
                 workspace_path: None,
             },
         )
@@ -790,6 +800,7 @@ mod tests {
                 phase: RunPhase::Executing,
                 status: RunStatus::Running,
                 plan_path: Some("plans/task.md".into()),
+                repo_path: None,
                 workspace_path: None,
             },
         )
@@ -849,6 +860,7 @@ mod tests {
                 phase: RunPhase::Executing,
                 status: RunStatus::Running,
                 plan_path: Some("plans/task.md".into()),
+                repo_path: None,
                 workspace_path: None,
             },
         )
@@ -886,6 +898,7 @@ mod tests {
                 phase: RunPhase::Executing,
                 status: RunStatus::Running,
                 plan_path: Some("plans/task.md".into()),
+                repo_path: None,
                 workspace_path: None,
             },
         )

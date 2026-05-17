@@ -2189,6 +2189,90 @@ fn run_api_dry_run_without_agent_command_executes_preview() {
 }
 
 #[test]
+fn run_api_dry_run_resolves_relative_plan_path_inside_repo_path() {
+    let _guard = server_test_lock();
+    let daemon_dir = TempDir::new();
+    let target_repo = TempDir::new();
+    let docs_dir = target_repo.path.join("docs");
+    std::fs::create_dir(&docs_dir).expect("create target repo docs dir");
+    let plan_path = docs_dir.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        r#"# Target repo plan
+
+## Validation Commands
+- `test -f target.txt`
+
+### Task 1: Create target file
+- [ ] Write target.txt
+"#,
+    )
+    .expect("write target repo plan");
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&daemon_dir.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "repo_path": target_repo.path.to_string_lossy(),
+        "plan_path": "docs/plan.md",
+        "dry_run": true,
+        "require_review": true,
+        "review_command": "/bin/true"
+    })
+    .to_string();
+
+    let id = create_and_wait_for_dry_run(port, &body);
+
+    let run_response = request_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), None);
+    assert_eq!(run_response.status, 200, "{}", run_response.body);
+    let run_json: serde_json::Value =
+        serde_json::from_str(&run_response.body).expect("run response json");
+    assert_eq!(run_json["plan_path"], "docs/plan.md");
+    assert_eq!(
+        run_json["repo_path"],
+        target_repo.path.to_string_lossy().as_ref()
+    );
+
+    let summary_response = request_json(port, &format!("GET /v1/runs/{id}/summary HTTP/1.1"), None);
+    assert_eq!(summary_response.status, 200, "{}", summary_response.body);
+    assert!(
+        summary_response.body.contains("Dry run: plan.md"),
+        "{}",
+        summary_response.body
+    );
+    assert!(
+        summary_response.body.contains("Review: /bin/true"),
+        "{}",
+        summary_response.body
+    );
+    assert!(
+        summary_response
+            .body
+            .contains("Validation: test -f target.txt"),
+        "{}",
+        summary_response.body
+    );
+    assert!(
+        summary_response.body.contains("Task 1: Create target file"),
+        "{}",
+        summary_response.body
+    );
+    assert!(
+        !daemon_dir.path.join("docs").join("plan.md").exists(),
+        "daemon cwd must not be used as the target repo"
+    );
+}
+
+#[test]
 fn run_api_dry_run_with_workspace_id_does_not_create_workspace() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
