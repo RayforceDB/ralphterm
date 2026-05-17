@@ -417,6 +417,7 @@ async fn create_run(
     let base_dir = state.run_base_dir.as_ref().clone();
     let repo_path = req.repo_path.clone();
     let requested_repo_dir = repo_path.as_deref().map(PathBuf::from);
+    let mut canonical_requested_repo_dir = None;
     if let Some(repo_dir) = requested_repo_dir.as_deref() {
         if !repo_dir.is_absolute() {
             return Err(ApiError::bad_request("repo_path must be absolute"));
@@ -427,6 +428,13 @@ async fn create_run(
                 repo_dir.display()
             )));
         }
+        let canonical_repo_dir = repo_dir.canonicalize().map_err(|err| {
+            ApiError::bad_request(format!(
+                "unable to resolve repo_path {}: {err}",
+                repo_dir.display()
+            ))
+        })?;
+        canonical_requested_repo_dir = Some(canonical_repo_dir);
     }
     if req.agent.is_some() && req.agent_command.is_some() {
         return Err(ApiError::bad_request("agent conflicts with agent_command"));
@@ -450,7 +458,7 @@ async fn create_run(
             "plan_path is required when agent, agent_command, or dry_run is set",
         ));
     }
-    if requested_repo_dir.is_some() {
+    if let Some(repo_dir) = requested_repo_dir.as_deref() {
         if !dry_run {
             return Err(ApiError::bad_request(
                 "repo_path currently supports dry_run only",
@@ -467,6 +475,18 @@ async fn create_run(
         }
         validate_workspace_plan_path(FsPath::new(""), &plan)
             .map_err(|_| ApiError::bad_request("plan_path must stay inside repo_path"))?;
+        let canonical_repo_dir = canonical_requested_repo_dir.as_deref().ok_or_else(|| {
+            ApiError::bad_request("unable to resolve repo_path for plan_path validation")
+        })?;
+        let canonical_plan_path = repo_dir
+            .join(&plan)
+            .canonicalize()
+            .map_err(|_| ApiError::bad_request("unable to resolve plan_path inside repo_path"))?;
+        if !canonical_plan_path.starts_with(canonical_repo_dir) {
+            return Err(ApiError::bad_request(
+                "plan_path must stay inside repo_path",
+            ));
+        }
     }
     if req.require_review.unwrap_or(false) && review_command.is_none() {
         return Err(ApiError::bad_request(
