@@ -329,6 +329,7 @@ async fn serve(bind: SocketAddr) -> anyhow::Result<()> {
         .route("/v1/runs/:id/summary", get(get_run_summary))
         .route("/v1/runs/:id/summary.json", get(get_run_summary_json))
         .route("/v1/runs/:id/diff", get(get_run_diff))
+        .route("/v1/runs/:id/progress/:artifact", get(get_run_progress))
         .route("/v1/runs/:id/events", get(get_run_events))
         .route("/v1/runs/:id/cancel", post(cancel_run))
         .route("/v1/sessions", post(create_session).get(list_sessions))
@@ -884,6 +885,42 @@ async fn get_run_diff(
     let path =
         RunStore::diff_path(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?;
     read_run_artifact(path, "diff").await
+}
+
+async fn get_run_progress(
+    State(state): State<AppState>,
+    Path((id, artifact)): Path<(Uuid, String)>,
+) -> Result<String, ApiError> {
+    if FsPath::new(&artifact)
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some(artifact.as_str())
+    {
+        return Err(ApiError::artifact_not_found("progress"));
+    }
+
+    let record = RunStore::get(state.run_base_dir.as_ref(), id)?.ok_or(ApiError::run_not_found())?;
+    let plan_slug = record
+        .plan_path
+        .as_deref()
+        .map(FsPath::new)
+        .map(plan_slug_for_artifacts)
+        .unwrap_or_else(|| "plan".to_string());
+    let summary_json = RunStore::summary_json_path(state.run_base_dir.as_ref(), id)?
+        .and_then(|path| fs::read_to_string(path).ok());
+    let allowed = progress_artifact_names(&plan_slug, summary_json.as_deref())?;
+    if !allowed.contains(&artifact) {
+        return Err(ApiError::artifact_not_found("progress"));
+    }
+
+    let path = state
+        .run_base_dir
+        .join(".ralphterm")
+        .join("runs")
+        .join(id.to_string())
+        .join("progress")
+        .join(&artifact);
+    read_run_artifact(path, "progress").await
 }
 
 async fn read_run_artifact(path: PathBuf, name: &'static str) -> Result<String, ApiError> {

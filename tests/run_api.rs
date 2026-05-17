@@ -1163,6 +1163,52 @@ fn run_api_executes_plan_with_agent_command_and_persists_result_artifacts() {
         "run artifact directory must not copy stale progress files from unrelated runs"
     );
 
+    let progress_transcript_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan-task-1.transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        progress_transcript_response.status, 200,
+        "{}",
+        progress_transcript_response.body
+    );
+    assert_eq!(progress_transcript_response.body, transcript);
+
+    let progress_log_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/plan.log HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        progress_log_response.status, 200,
+        "{}",
+        progress_log_response.body
+    );
+    assert_eq!(progress_log_response.body, progress_log);
+
+    let unrelated_progress_response = request_json(
+        port,
+        &format!("GET /v1/runs/{id}/progress/unrelated-task-99.transcript HTTP/1.1"),
+        None,
+    );
+    assert_eq!(
+        unrelated_progress_response.status, 404,
+        "{}",
+        unrelated_progress_response.body
+    );
+    let unrelated_progress_json: serde_json::Value =
+        serde_json::from_str(&unrelated_progress_response.body).expect("progress error json");
+    assert_eq!(
+        unrelated_progress_json["error"],
+        "progress artifact not found"
+    );
+    assert!(
+        !unrelated_progress_response.body.contains(".ralphterm"),
+        "{}",
+        unrelated_progress_response.body
+    );
+
     let events = request_json(port, &format!("GET /v1/runs/{id}/events HTTP/1.1"), None);
     assert_eq!(events.status, 200, "{}", events.body);
     let events_json: serde_json::Value = serde_json::from_str(&events.body).expect("events json");
