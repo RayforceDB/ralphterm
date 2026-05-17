@@ -10,6 +10,21 @@
 
 RalphTerm runs your existing ralphex plans, configs, agents, prompts, and review pipelines unchanged — but it executes the official AI CLIs inside real PTYs instead of relying on brittle `claude -p` / `--print` one-shot flags. The bundled `ralphex` binary alias means you can swap binaries without touching scripts.
 
+## Install
+
+```sh
+# Linux / macOS — prebuilt binary
+curl -sSf https://ralphterm.rayforcedb.com/install.sh | sh
+
+# Windows PowerShell — prebuilt binary
+irm https://ralphterm.rayforcedb.com/install.ps1 | iex
+
+# From source (any platform with cargo)
+cargo install ralphterm
+```
+
+Both binaries — `ralphterm` and the `ralphex` alias — are installed.
+
 ## Drop in
 
 ```sh
