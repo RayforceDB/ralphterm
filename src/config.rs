@@ -6,6 +6,8 @@ use std::{
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::notify::NotifyOn;
+
 /// Subset of ralphex configuration keys this CLI understands. Unknown keys are
 /// ignored silently so forward-compatible config files do not break older binaries.
 #[derive(Debug, Default, Clone)]
@@ -24,6 +26,15 @@ pub struct RalphexConfig {
     pub wait: Option<String>,
     pub base_ref: Option<String>,
     pub move_plan_on_completion: Option<bool>,
+    pub notify_telegram_token: Option<String>,
+    pub notify_telegram_chat: Option<String>,
+    pub notify_telegram_base: Option<String>,
+    pub notify_slack_webhook: Option<String>,
+    pub notify_webhook_url: Option<String>,
+    pub notify_email_smtp_url: Option<String>,
+    pub notify_email_from: Option<String>,
+    pub notify_email_to: Option<String>,
+    pub notify_on: Vec<NotifyOn>,
 }
 
 impl RalphexConfig {
@@ -70,6 +81,33 @@ impl RalphexConfig {
         if override_with.move_plan_on_completion.is_some() {
             self.move_plan_on_completion = override_with.move_plan_on_completion;
         }
+        if override_with.notify_telegram_token.is_some() {
+            self.notify_telegram_token = override_with.notify_telegram_token;
+        }
+        if override_with.notify_telegram_chat.is_some() {
+            self.notify_telegram_chat = override_with.notify_telegram_chat;
+        }
+        if override_with.notify_telegram_base.is_some() {
+            self.notify_telegram_base = override_with.notify_telegram_base;
+        }
+        if override_with.notify_slack_webhook.is_some() {
+            self.notify_slack_webhook = override_with.notify_slack_webhook;
+        }
+        if override_with.notify_webhook_url.is_some() {
+            self.notify_webhook_url = override_with.notify_webhook_url;
+        }
+        if override_with.notify_email_smtp_url.is_some() {
+            self.notify_email_smtp_url = override_with.notify_email_smtp_url;
+        }
+        if override_with.notify_email_from.is_some() {
+            self.notify_email_from = override_with.notify_email_from;
+        }
+        if override_with.notify_email_to.is_some() {
+            self.notify_email_to = override_with.notify_email_to;
+        }
+        if !override_with.notify_on.is_empty() {
+            self.notify_on = override_with.notify_on;
+        }
     }
 
     fn set_known_key(&mut self, key: &str, value: String) {
@@ -102,6 +140,27 @@ impl RalphexConfig {
             "move_plan_on_completion" => {
                 if let Some(parsed) = parse_bool(&value) {
                     self.move_plan_on_completion = Some(parsed);
+                }
+            }
+            "notify_telegram_token" => self.notify_telegram_token = Some(value),
+            "notify_telegram_chat" | "notify_telegram_chat_id" => {
+                self.notify_telegram_chat = Some(value)
+            }
+            "notify_telegram_base" => self.notify_telegram_base = Some(value),
+            "notify_slack" | "notify_slack_webhook" => self.notify_slack_webhook = Some(value),
+            "notify_webhook" | "notify_webhook_url" => self.notify_webhook_url = Some(value),
+            "notify_email_smtp_url" => self.notify_email_smtp_url = Some(value),
+            "notify_email_from" => self.notify_email_from = Some(value),
+            "notify_email_to" => self.notify_email_to = Some(value),
+            "notify_on" => {
+                let mut parsed = Vec::new();
+                for entry in value.split(',') {
+                    if let Some(notify_on) = NotifyOn::parse(entry) {
+                        parsed.push(notify_on);
+                    }
+                }
+                if !parsed.is_empty() {
+                    self.notify_on = parsed;
                 }
             }
             _ => {}
@@ -143,6 +202,24 @@ struct ProjectConfigDocument {
         alias = "move_plan_on_completion"
     )]
     move_plan_on_completion: Option<bool>,
+    #[serde(default)]
+    notify_telegram_token: Option<String>,
+    #[serde(default, alias = "notify_telegram_chat_id")]
+    notify_telegram_chat: Option<String>,
+    #[serde(default)]
+    notify_telegram_base: Option<String>,
+    #[serde(default, alias = "notify_slack")]
+    notify_slack_webhook: Option<String>,
+    #[serde(default, alias = "notify_webhook")]
+    notify_webhook_url: Option<String>,
+    #[serde(default)]
+    notify_email_smtp_url: Option<String>,
+    #[serde(default)]
+    notify_email_from: Option<String>,
+    #[serde(default)]
+    notify_email_to: Option<String>,
+    #[serde(default)]
+    notify_on: Vec<String>,
 }
 
 impl From<ProjectConfigDocument> for RalphexConfig {
@@ -162,6 +239,19 @@ impl From<ProjectConfigDocument> for RalphexConfig {
             wait: value.wait,
             base_ref: value.base_ref,
             move_plan_on_completion: value.move_plan_on_completion,
+            notify_telegram_token: value.notify_telegram_token,
+            notify_telegram_chat: value.notify_telegram_chat,
+            notify_telegram_base: value.notify_telegram_base,
+            notify_slack_webhook: value.notify_slack_webhook,
+            notify_webhook_url: value.notify_webhook_url,
+            notify_email_smtp_url: value.notify_email_smtp_url,
+            notify_email_from: value.notify_email_from,
+            notify_email_to: value.notify_email_to,
+            notify_on: value
+                .notify_on
+                .iter()
+                .filter_map(|s| NotifyOn::parse(s))
+                .collect(),
         }
     }
 }

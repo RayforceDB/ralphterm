@@ -204,6 +204,41 @@ struct Cli {
         help = "ralphex-compatible: move successfully completed plan files into <plan-dir>/completed/"
     )]
     compat_move_completed: bool,
+    #[arg(
+        long = "notify-telegram-token",
+        help = "Notification: Telegram bot token (paired with --notify-telegram-chat). TLS endpoints are skipped — see notify docs for details."
+    )]
+    compat_notify_telegram_token: Option<String>,
+    #[arg(
+        long = "notify-telegram-chat",
+        help = "Notification: Telegram chat id (paired with --notify-telegram-token)"
+    )]
+    compat_notify_telegram_chat: Option<String>,
+    #[arg(
+        long = "notify-slack",
+        help = "Notification: Slack incoming-webhook URL"
+    )]
+    compat_notify_slack: Option<String>,
+    #[arg(
+        long = "notify-webhook",
+        help = "Notification: generic HTTP webhook URL (POST JSON)"
+    )]
+    compat_notify_webhook: Option<String>,
+    #[arg(
+        long = "notify-email-smtp-url",
+        help = "Notification: SMTP URL (smtp://user:pass@host:port). smtps:// is skipped — see notify docs"
+    )]
+    compat_notify_email_smtp_url: Option<String>,
+    #[arg(long = "notify-email-from", help = "Notification: email From address")]
+    compat_notify_email_from: Option<String>,
+    #[arg(long = "notify-email-to", help = "Notification: email To address")]
+    compat_notify_email_to: Option<String>,
+    #[arg(
+        long = "notify-on",
+        value_delimiter = ',',
+        help = "Notification: comma-separated event filter (plan_done,task_failed,review_failed,rate_limit)"
+    )]
+    compat_notify_on: Vec<String>,
     #[arg(value_name = "plan-file")]
     compat_plan_file: Option<PathBuf>,
 }
@@ -407,6 +442,7 @@ pub async fn run() -> anyhow::Result<()> {
             review_patience: None,
             mode: crate::runner::RunMode::Full,
             max_external_iterations: None,
+            notifier: None,
         }),
         Some(Command::Smoke {
             agent,
@@ -468,6 +504,7 @@ struct RunCliOptions {
     review_patience: Option<usize>,
     mode: crate::runner::RunMode,
     max_external_iterations: Option<usize>,
+    notifier: Option<Arc<crate::notify::Notifier>>,
 }
 
 fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
@@ -486,6 +523,7 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
         review_patience,
         mode,
         max_external_iterations,
+        notifier,
     } = options;
 
     if let Some(id) = workspace_id {
@@ -522,7 +560,43 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
         }
     }
 
-    let output = run_plan(RunOptions {
+    let plan_name = plan
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan")
+        .to_string();
+
+    let event_sink = notifier.clone().map(|notifier| {
+        let plan_name = plan_name.clone();
+        let sink: crate::runner::RunEventSink =
+            Arc::new(move |event: crate::runner::PlanRunEvent| {
+                match event.event_type {
+                    "task_failed" => notifier.notify(crate::notify::NotifyEvent::TaskFailed {
+                        plan: plan_name.clone(),
+                        task: event
+                            .task_title
+                            .clone()
+                            .or_else(|| event.task_number.map(|n| format!("task {n}")))
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        reason: event.message.clone().unwrap_or_default(),
+                    }),
+                    "review_failed" => notifier.notify(crate::notify::NotifyEvent::ReviewFailed {
+                        plan: plan_name.clone(),
+                        task: event
+                            .task_title
+                            .clone()
+                            .or_else(|| event.task_number.map(|n| format!("task {n}")))
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        reason: event.message.clone().unwrap_or_default(),
+                    }),
+                    _ => {}
+                }
+                Ok(())
+            });
+        sink
+    });
+
+    let run_result = run_plan(RunOptions {
         plan_path: plan,
         agent_command: agent_command.or_else(|| agent.map(RunAgentKind::command)),
         review_command: review_command.or_else(|| review_agent.map(RunAgentKind::command)),
@@ -531,14 +605,38 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
         max_review_retries,
         no_commit,
         dry_run,
-        event_sink: None,
+        event_sink,
         cancellation_check: None,
         review_patience,
         mode,
         max_external_iterations,
-    })?;
-    print!("{output}");
-    Ok(())
+    });
+
+    match run_result {
+        Ok(output) => {
+            print!("{output}");
+            if let Some(notifier) = notifier.as_ref() {
+                if matches!(
+                    mode,
+                    crate::runner::RunMode::Full | crate::runner::RunMode::TasksOnly
+                ) {
+                    notifier.notify(crate::notify::NotifyEvent::PlanDone {
+                        plan: plan_name.clone(),
+                        summary: output.lines().take(20).collect::<Vec<_>>().join("\n"),
+                    });
+                }
+            }
+            // Allow background notification threads a brief window to deliver
+            // before the process exits.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            Ok(())
+        }
+        Err(err) => {
+            // Failure paths were already notified through the event_sink.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            Err(err)
+        }
+    }
 }
 
 fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
@@ -776,6 +874,13 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         crate::runner::RunMode::Full | crate::runner::RunMode::TasksOnly
     );
 
+    let notify_cfg = build_notify_config(&cli, &config);
+    let notifier = if notify_cfg_has_channel(&notify_cfg) {
+        Some(Arc::new(crate::notify::Notifier::from_config(&notify_cfg)))
+    } else {
+        None
+    };
+
     run_plan_cli(RunCliOptions {
         plan: final_plan_path.clone(),
         agent: None,
@@ -791,6 +896,7 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         review_patience: Some(review_patience_value),
         mode,
         max_external_iterations: max_external_iterations_value,
+        notifier,
     })?;
 
     install_ralphex_progress_symlink();
@@ -808,6 +914,61 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         println!("Moved plan to {}", dest.display());
     }
     Ok(())
+}
+
+fn build_notify_config(
+    cli: &Cli,
+    config: &crate::config::RalphexConfig,
+) -> crate::notify::NotifyConfig {
+    let cli_notify_on: Vec<_> = cli
+        .compat_notify_on
+        .iter()
+        .filter_map(|s| crate::notify::NotifyOn::parse(s))
+        .collect();
+    let notify_on = if !cli_notify_on.is_empty() {
+        cli_notify_on
+    } else {
+        config.notify_on.clone()
+    };
+    crate::notify::NotifyConfig {
+        telegram_token: cli
+            .compat_notify_telegram_token
+            .clone()
+            .or_else(|| config.notify_telegram_token.clone()),
+        telegram_chat_id: cli
+            .compat_notify_telegram_chat
+            .clone()
+            .or_else(|| config.notify_telegram_chat.clone()),
+        telegram_base: config.notify_telegram_base.clone(),
+        slack_webhook: cli
+            .compat_notify_slack
+            .clone()
+            .or_else(|| config.notify_slack_webhook.clone()),
+        email_smtp_url: cli
+            .compat_notify_email_smtp_url
+            .clone()
+            .or_else(|| config.notify_email_smtp_url.clone()),
+        email_from: cli
+            .compat_notify_email_from
+            .clone()
+            .or_else(|| config.notify_email_from.clone()),
+        email_to: cli
+            .compat_notify_email_to
+            .clone()
+            .or_else(|| config.notify_email_to.clone()),
+        webhook_url: cli
+            .compat_notify_webhook
+            .clone()
+            .or_else(|| config.notify_webhook_url.clone()),
+        notify_on,
+    }
+}
+
+fn notify_cfg_has_channel(cfg: &crate::notify::NotifyConfig) -> bool {
+    (cfg.telegram_token.is_some() && cfg.telegram_chat_id.is_some())
+        || cfg.slack_webhook.is_some()
+        || cfg.webhook_url.is_some()
+        || cfg.email_smtp_url.is_some()
 }
 
 fn move_completed_plan(plan: &FsPath) -> anyhow::Result<PathBuf> {
