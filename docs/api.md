@@ -67,6 +67,8 @@ Response when execution starts:
 
 `POST /v1/runs` returns as soon as the run has started. Poll `GET /v1/runs/:id` for `succeeded` or `failed`, or read `GET /v1/runs/:id/events` for lifecycle events. If both `agent` and `agent_command` are omitted, the daemon only creates the run record and returns `phase: "planning"`, `status: "created"`.
 
+Run phase values are `planning`, `executing`, `reviewing`, and `complete`: `planning` means the run record exists without active agent work, `executing` means the implementation command or agent is active, reviewing means the independent review command or agent is active, and `complete` means the run has reached a terminal status.
+
 Run endpoints:
 
 ```http

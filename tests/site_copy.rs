@@ -310,6 +310,16 @@ fn docs_describe_run_api_as_asynchronous_and_expose_artifacts() {
                 || text.contains("status: &quot;created&quot;"),
             "{name} should document created status when agent_command is omitted"
         );
+        for phase in ["planning", "executing", "reviewing", "complete"] {
+            assert!(
+                text.contains(phase),
+                "{name} should document run phase value {phase}"
+            );
+        }
+        assert!(
+            text.contains("reviewing means the independent review command or agent is active"),
+            "{name} should explain the reviewing phase as the independent review command/agent being active"
+        );
     }
 }
 

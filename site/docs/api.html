@@ -94,6 +94,7 @@ content-type: application/json
   "plan_path": "docs/plans/example.md"
 }</code></pre>
       <p>Poll <code>GET /v1/runs/:id</code> for <code>succeeded</code> or <code>failed</code>, or read <code>GET /v1/runs/:id/events</code> for lifecycle events. If <code>agent_command</code> is omitted, the daemon only creates the record and returns <code>phase: "planning"</code>, <code>status: "created"</code>.</p>
+      <p>Run phase values are <code>planning</code>, <code>executing</code>, <code>reviewing</code>, and <code>complete</code>: <code>planning</code> means the run record exists without active agent work, <code>executing</code> means the implementation command or agent is active, reviewing means the independent review command or agent is active, and <code>complete</code> means the run has reached a terminal status.</p>
       <pre><code>GET  /v1/runs
 GET  /v1/runs/:id
 GET  /v1/runs/:id/summary
