@@ -160,6 +160,7 @@ struct Cli {
     compat_config_dir: Option<PathBuf>,
     #[arg(
         long = "worktree",
+        conflicts_with = "compat_serve",
         help = "ralphex-compatible: run the plan inside an isolated git worktree (workspace id derived from plan filename)"
     )]
     compat_worktree: bool,
@@ -169,6 +170,35 @@ struct Cli {
         help = "ralphex-compatible: override the worktree branch name (requires --worktree)"
     )]
     compat_branch: Option<String>,
+    #[arg(
+        short = 's',
+        long = "serve",
+        conflicts_with_all = ["compat_review", "compat_external_only", "compat_codex_only", "compat_tasks_only", "compat_worktree"],
+        help = "ralphex-compatible: start the dashboard server instead of running a plan"
+    )]
+    compat_serve: bool,
+    #[arg(
+        short = 'p',
+        long = "port",
+        default_value_t = 7878,
+        requires = "compat_serve",
+        help = "ralphex-compatible: serve port (default 7878; 0 picks an OS-assigned port)"
+    )]
+    compat_port: u16,
+    #[arg(
+        long = "host",
+        default_value = "127.0.0.1",
+        requires = "compat_serve",
+        help = "ralphex-compatible: serve bind address (default 127.0.0.1)"
+    )]
+    compat_host: String,
+    #[arg(
+        short = 'w',
+        long = "watch",
+        requires = "compat_serve",
+        help = "ralphex-compatible: announce filesystem path(s) to monitor while serving"
+    )]
+    compat_watch: Vec<PathBuf>,
     #[arg(value_name = "plan-file")]
     compat_plan_file: Option<PathBuf>,
 }
@@ -384,8 +414,38 @@ pub async fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Workspace { command }) => run_workspace_command(command),
-        None => run_compat_cli(cli, &matches),
+        None => {
+            if cli.compat_serve {
+                run_compat_serve(cli).await
+            } else {
+                run_compat_cli(cli, &matches)
+            }
+        }
     }
+}
+
+async fn run_compat_serve(cli: Cli) -> anyhow::Result<()> {
+    if cli.compat_plan_file.is_some() {
+        bail!("--serve does not accept a plan file argument");
+    }
+    for path in &cli.compat_watch {
+        if !path.exists() {
+            bail!("--watch path does not exist: {}", path.display());
+        }
+    }
+    let host = cli.compat_host;
+    let port = cli.compat_port;
+    let bind_str = format!("{host}:{port}");
+    let bind: SocketAddr = bind_str
+        .parse()
+        .with_context(|| format!("invalid --host/--port combination: {bind_str}"))?;
+    for path in &cli.compat_watch {
+        println!("[watching] {}", path.display());
+    }
+    // Filesystem watching is not yet wired up; we announce the path as ralphex
+    // tooling expects and surface server output unchanged. The dashboard
+    // server itself does not currently react to filesystem events.
+    serve(bind).await
 }
 
 struct RunCliOptions {
@@ -717,10 +777,84 @@ fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
         max_external_iterations: max_external_iterations_value,
     })?;
 
+    install_ralphex_progress_symlink();
+
     if let Some(path) = worktree_path_for_print {
         println!("Worktree: {}", path.display());
     }
     Ok(())
+}
+
+/// Surface ralphterm progress artifacts under `.ralphex/progress` so legacy
+/// ralphex tooling that tails those paths still works. Installs a symlink
+/// `.ralphex/progress -> .ralphterm/progress` when `.ralphterm/progress`
+/// exists. Never overwrites a pre-existing regular file or directory at the
+/// target location — only stale symlinks are replaced. Failures are
+/// non-fatal: a warning is printed and the run is otherwise unaffected.
+fn install_ralphex_progress_symlink() {
+    let progress = FsPath::new(".ralphterm").join("progress");
+    if !progress.exists() {
+        return;
+    }
+    let ralphex_dir = FsPath::new(".ralphex");
+    let target = ralphex_dir.join("progress");
+    let desired_target = FsPath::new(".ralphterm").join("progress");
+
+    match fs::symlink_metadata(&target) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            let current = fs::read_link(&target).ok();
+            if current.as_deref() == Some(desired_target.as_path()) {
+                return;
+            }
+            if let Err(err) = fs::remove_file(&target) {
+                eprintln!(
+                    "[warning] could not refresh {} symlink: {err}",
+                    target.display()
+                );
+                return;
+            }
+        }
+        Ok(_) => {
+            eprintln!(
+                "[warning] {} already exists; leaving ralphex progress mirror in place",
+                target.display()
+            );
+            return;
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            eprintln!("[warning] could not inspect {}: {err}", target.display());
+            return;
+        }
+    }
+
+    if !ralphex_dir.exists() {
+        if let Err(err) = fs::create_dir_all(ralphex_dir) {
+            eprintln!(
+                "[warning] could not create {}: {err}",
+                ralphex_dir.display()
+            );
+            return;
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        if let Err(err) = std::os::unix::fs::symlink(&desired_target, &target) {
+            eprintln!(
+                "[warning] could not create symlink {}: {err}",
+                target.display()
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = desired_target;
+        eprintln!(
+            "[warning] symlinks unsupported on this platform; skipping {}",
+            target.display()
+        );
+    }
 }
 
 struct CompatWorktreeInfo {
