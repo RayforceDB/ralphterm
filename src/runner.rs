@@ -415,6 +415,43 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         }
     }
 
+    if !matches!(
+        mode,
+        RunMode::TasksOnly | RunMode::ReviewOnly | RunMode::ExternalOnly
+    ) {
+        let reviewer_cmd = derive_reviewer_command(&repo_root)?;
+        let outcome = crate::review_phases::second_review(crate::review_phases::FirstReviewArgs {
+            prompts: &prompts,
+            reviewer_command: &reviewer_cmd,
+            plan_path: &plan_path,
+            progress_path: progress.path(),
+            default_branch: &preflight.default_branch,
+            agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+        })?;
+        if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
+            for f in findings {
+                eprintln!("[review-second] {f}");
+            }
+            anyhow::bail!("second review found critical issues");
+        }
+    }
+
+    if !matches!(mode, RunMode::TasksOnly) {
+        let plan_str = plan_path.to_string_lossy().to_string();
+        let progress_str = progress.path().to_string_lossy().to_string();
+        let default_branch = preflight.default_branch.clone();
+        let mut vars: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        vars.insert("PLAN_FILE", &plan_str);
+        vars.insert("PROGRESS_FILE", &progress_str);
+        vars.insert("DEFAULT_BRANCH", &default_branch);
+        let prompt = crate::prompts::substitute(&prompts.finalize, &vars);
+        let _ = run_agent_command_with_timeout(
+            &agent_cmd,
+            &prompt,
+            agent_timeout.unwrap_or_else(agent_timeout_default),
+        )?;
+    }
+
     let elapsed = start.elapsed();
     let (files, additions, deletions) = git_shortstat(&repo_root, &preflight.default_branch)?;
 
@@ -442,43 +479,62 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
 }
 
 fn run_plan_review_only(options: RunOptions) -> Result<String> {
-    let plan_path = options.plan_path.clone();
-    let plan_text = fs::read_to_string(&plan_path)
-        .with_context(|| format!("read plan {}", plan_path.display()))?;
-    let plan_name = plan_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("plan");
-    let review_command = options.review_command.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("--review requires --external-review-tool=custom --custom-review-script")
-    })?;
-    validate_interactive_agent_command(review_command)?;
-    let timeout = options.agent_timeout.unwrap_or_else(agent_timeout);
-    check_for_cancellation(&options)?;
-    let mut output = format!("Reviewing {plan_name} (review-only mode)\n");
-    let decision = run_standalone_review(review_command, plan_name, &plan_text, timeout)?;
-    output.push_str(&decision.transcript);
-    if !output.ends_with('\n') {
-        output.push('\n');
+    use crate::preflight::Preflight;
+    use crate::progress_log::ProgressLog;
+    use crate::prompts::Prompts;
+
+    let RunOptions {
+        plan_path,
+        agent_timeout,
+        ..
+    } = options;
+    let repo_root = std::env::current_dir()?;
+    let plan_path = plan_path.canonicalize()?;
+    let preflight = Preflight {
+        repo_root: &repo_root,
+        plan_path: &plan_path,
+        branch_override: None,
+        use_worktree: false,
+        allow_dirty: true,
     }
-    match decision.accepted {
-        Some(true) => {
-            output.push_str("Review passed\n");
-            Ok(output)
+    .check()?;
+    let progress = ProgressLog::open(&repo_root, &preflight.plan_slug)?;
+    let prompts = Prompts::load(&repo_root, None);
+    let reviewer_cmd = derive_reviewer_command(&repo_root)?;
+    let args = crate::review_phases::FirstReviewArgs {
+        prompts: &prompts,
+        reviewer_command: &reviewer_cmd,
+        plan_path: &plan_path,
+        progress_path: progress.path(),
+        default_branch: &preflight.default_branch,
+        agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+    };
+    let outcome = crate::review_phases::first_review(args)?;
+    if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
+        for f in findings {
+            eprintln!("[review-first] {f}");
         }
-        Some(false) => {
-            bail!(
-                "review-only run failed: reviewer rejected current state\n{}",
-                decision.transcript
-            );
-        }
-        None => {
-            bail!(
-                "review-only run failed: reviewer did not emit REVIEW_PASS or REVIEW_FAIL\n{}",
-                decision.transcript
-            );
-        }
+        anyhow::bail!("review-only first review found critical issues");
     }
+    // For --review mode we also exercise phase 3 to mirror ralphex's "full
+    // review pipeline" wording. Reuse FirstReviewArgs because the signature
+    // is identical.
+    let args = crate::review_phases::FirstReviewArgs {
+        prompts: &prompts,
+        reviewer_command: &reviewer_cmd,
+        plan_path: &plan_path,
+        progress_path: progress.path(),
+        default_branch: &preflight.default_branch,
+        agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+    };
+    let outcome = crate::review_phases::second_review(args)?;
+    if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
+        for f in findings {
+            eprintln!("[review-second] {f}");
+        }
+        anyhow::bail!("review-only second review found critical issues");
+    }
+    Ok(String::new())
 }
 
 fn run_plan_external_only(options: RunOptions) -> Result<String> {
@@ -531,63 +587,6 @@ fn run_plan_external_only(options: RunOptions) -> Result<String> {
     Ok(String::new())
 }
 
-struct StandaloneReviewDecision {
-    transcript: String,
-    accepted: Option<bool>,
-}
-
-fn run_standalone_review(
-    review_command: &str,
-    plan_name: &str,
-    plan_text: &str,
-    timeout: Duration,
-) -> Result<StandaloneReviewDecision> {
-    let prompt = build_standalone_review_prompt(plan_name, plan_text, &git_state_for_review());
-    let agent_run = run_agent_command_with_timeout(review_command, &prompt, timeout)
-        .context("run external reviewer")?;
-    if agent_run.timed_out {
-        bail!("review command timed out after {timeout:?}");
-    }
-    if agent_run.exit_code != 0 {
-        bail!("review command exited with {}", agent_run.exit_code);
-    }
-    let accepted = review_output_decision(&agent_run.transcript, &prompt);
-    Ok(StandaloneReviewDecision {
-        transcript: agent_run.transcript,
-        accepted,
-    })
-}
-
-fn build_standalone_review_prompt(plan_name: &str, plan_text: &str, git_diff: &str) -> String {
-    format!(
-        "You are independently reviewing the current working-tree state for the RalphTerm plan {plan_name}.\n\nPlan contents:\n{plan_text}\n\nCurrent git diff:\n{git_diff}\n\n{}\n",
-        review_instruction()
-    )
-}
-
-#[allow(dead_code)]
-fn build_external_loop_prompt(
-    plan_name: &str,
-    plan_text: &str,
-    iteration: usize,
-    feedback: Option<&str>,
-) -> String {
-    let mut prompt = format!(
-        "You are iterating on the external review loop for plan {plan_name}.\n\nIteration {iteration}.\n\nPlan contents:\n{plan_text}\n\n"
-    );
-    if let Some(feedback) = feedback {
-        prompt.push_str("Reviewer feedback from the previous iteration:\n");
-        prompt.push_str(feedback);
-        if !feedback.ends_with('\n') {
-            prompt.push('\n');
-        }
-        prompt.push_str("\nAddress the reviewer's findings, then print COMPLETED.\n");
-    } else {
-        prompt.push_str("Make the working tree match the plan, then print COMPLETED.\n");
-    }
-    prompt
-}
-
 pub fn run_smoke(agent_command: &str) -> Result<String> {
     validate_interactive_agent_command(agent_command)?;
     let prompt = "RalphTerm PTY smoke check. Print COMPLETED and exit after a minimal response.";
@@ -623,16 +622,6 @@ fn smoke_timeout() -> Duration {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_SMOKE_TIMEOUT_MS);
-    Duration::from_millis(timeout_ms)
-}
-
-fn agent_timeout() -> Duration {
-    const DEFAULT_AGENT_TIMEOUT_MS: u64 = 30 * 60 * 1_000;
-    let timeout_ms = std::env::var("RALPHTERM_AGENT_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_AGENT_TIMEOUT_MS);
     Duration::from_millis(timeout_ms)
 }
 
@@ -2240,13 +2229,6 @@ fn append_git_output(state: &mut String, label: &str, args: &[&str]) {
             state.push_str(&format!("{label} unavailable: {err}\n"));
         }
     }
-}
-
-fn check_for_cancellation(options: &RunOptions) -> Result<()> {
-    if let Some(check) = &options.cancellation_check {
-        check()?;
-    }
-    Ok(())
 }
 
 pub(crate) fn run_agent_command_with_timeout(
