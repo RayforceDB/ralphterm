@@ -26,6 +26,7 @@ mod store;
 
 use pty_agent::{AgentKind, SessionConfig, SessionInput};
 use ralphterm::{
+    plan::parse_plan,
     runner::{agent_commands_equivalent, run_plan, run_smoke, PlanRunEvent, RunOptions},
     runs::{
         CreatedRunRecord, RunPhase, RunProgressEvent, RunRecord, RunResultArtifacts, RunStatus,
@@ -565,9 +566,9 @@ async fn create_run(
                 }
             });
             let run_output = match run_plan(RunOptions {
-                plan_path,
+                plan_path: plan_path.clone(),
                 agent_command,
-                review_command,
+                review_command: review_command.clone(),
                 require_review,
                 max_review_retries,
                 no_commit,
@@ -610,7 +611,15 @@ async fn create_run(
             };
 
             if dry_run {
-                let summary_json = dry_run_summary_json(&run_output);
+                let summary_json = match dry_run_summary_json(&plan_path, review_command.as_deref()) {
+                    Ok(summary_json) => summary_json,
+                    Err(err) => {
+                        let error = err.context("build dry-run summary json");
+                        let _ = RunStore::write_failure(&base_dir, run_id, Some(run_output), None, None);
+                        tracing::error!(%run_id, error = %error, "background plan run failed");
+                        return;
+                    }
+                };
                 match RunStore::write_result(
                     &base_dir,
                     run_id,
@@ -725,42 +734,40 @@ async fn create_run(
     Ok(Json(started))
 }
 
-fn dry_run_summary_json(output: &str) -> String {
-    let mut plan = "";
-    let mut review = "skipped";
-    let mut validation = Vec::new();
-    let mut tasks = Vec::new();
-
-    for line in output.lines() {
-        if let Some(value) = line.strip_prefix("Dry run: ") {
-            plan = value;
-        } else if let Some(value) = line.strip_prefix("Review: ") {
-            review = value;
-        } else if let Some(value) = line.strip_prefix("Validation: ") {
-            if value != "none" {
-                validation.push(value.to_string());
-            }
-        } else if let Some(value) = line.strip_prefix("Task ") {
-            if let Some((number, title)) = value.split_once(": ") {
-                if let Ok(number) = number.parse::<usize>() {
-                    tasks.push(serde_json::json!({
-                        "number": number,
-                        "title": title,
-                    }));
-                }
-            }
-        }
-    }
+fn dry_run_summary_json(
+    plan_path: &FsPath,
+    review_command: Option<&str>,
+) -> anyhow::Result<String> {
+    let input = fs::read_to_string(plan_path)
+        .with_context(|| format!("read plan {}", plan_path.display()))?;
+    let plan = parse_plan(&input).context("parse plan")?;
+    let plan_name = plan_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plan");
+    let tasks: Vec<_> = plan
+        .pending_tasks()
+        .into_iter()
+        .map(|task| {
+            serde_json::json!({
+                "number": task.number,
+                "title": task.title,
+            })
+        })
+        .collect();
 
     let summary_json = serde_json::json!({
         "result": "passed",
         "dry_run": true,
-        "plan": plan,
-        "review": review,
-        "validation": validation,
+        "plan": plan_name,
+        "review": review_command.unwrap_or("skipped"),
+        "validation": plan.validation_commands,
         "tasks": tasks,
     });
-    serde_json::to_string_pretty(&summary_json).expect("serialize dry-run summary json") + "\n"
+    Ok(
+        serde_json::to_string_pretty(&summary_json).context("serialize dry-run summary json")?
+            + "\n",
+    )
 }
 
 fn copy_progress_artifacts(
