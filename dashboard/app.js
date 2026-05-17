@@ -9,6 +9,46 @@ function cell(text) {
   return td;
 }
 
+function linkCell(links) {
+  const td = document.createElement('td');
+  td.className = 'artifact-links';
+
+  for (const link of links) {
+    const anchor = document.createElement('a');
+    anchor.href = link.href;
+    anchor.textContent = link.label;
+    anchor.setAttribute('aria-label', link.ariaLabel);
+    td.append(anchor);
+  }
+
+  return td;
+}
+
+function runArtifactCell(run) {
+  return linkCell([
+    {
+      label: 'summary',
+      href: `/v1/runs/${run.id}/summary`,
+      ariaLabel: `Summary artifact for run ${run.id}`,
+    },
+    {
+      label: 'json',
+      href: `/v1/runs/${run.id}/summary.json`,
+      ariaLabel: `Summary JSON artifact for run ${run.id}`,
+    },
+    {
+      label: 'diff',
+      href: `/v1/runs/${run.id}/diff`,
+      ariaLabel: `Diff artifact for run ${run.id}`,
+    },
+    {
+      label: 'events',
+      href: `/v1/runs/${run.id}/events`,
+      ariaLabel: `Event log for run ${run.id}`,
+    },
+  ]);
+}
+
 function renderEmptyRow(body, message, colSpan = 4) {
   const row = document.createElement('tr');
   const empty = document.createElement('td');
@@ -32,7 +72,7 @@ function renderRunRows(runs) {
   runsBody.replaceChildren();
 
   if (!runs.length) {
-    renderEmptyRow(runsBody, 'No runs yet.');
+    renderEmptyRow(runsBody, 'No runs yet.', 5);
     return;
   }
 
@@ -43,6 +83,7 @@ function renderRunRows(runs) {
       cell(run.phase),
       cell(run.status),
       cell(run.plan_path),
+      runArtifactCell(run),
     );
     runsBody.append(row);
   }
@@ -82,7 +123,7 @@ async function loadRuns() {
   } catch (error) {
     runsStatus.textContent = 'Error';
     runsBody.replaceChildren();
-    renderErrorRow(runsBody, error.message);
+    renderErrorRow(runsBody, error.message, 5);
   }
 }
 

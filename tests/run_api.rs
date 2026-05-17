@@ -34,6 +34,7 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
     assert!(html.body.contains("RalphTerm Dashboard"), "{}", html.body);
     assert!(html.body.contains("Runs"), "{}", html.body);
     assert!(html.body.contains("Sessions"), "{}", html.body);
+    assert!(html.body.contains("Artifacts"), "{}", html.body);
     assert!(html.body.contains("/dashboard/styles.css"), "{}", html.body);
     assert!(html.body.contains("/dashboard/app.js"), "{}", html.body);
 
@@ -55,6 +56,29 @@ fn dashboard_shell_serves_html_css_and_runs_javascript() {
     );
     assert!(js.body.contains("fetch('/v1/runs')"), "{}", js.body);
     assert!(js.body.contains("renderRunRows"), "{}", js.body);
+    assert!(
+        js.body.contains("/v1/runs/${run.id}/summary"),
+        "{}",
+        js.body
+    );
+    assert!(
+        js.body.contains("/v1/runs/${run.id}/summary.json"),
+        "{}",
+        js.body
+    );
+    assert!(js.body.contains("/v1/runs/${run.id}/diff"), "{}", js.body);
+    assert!(js.body.contains("/v1/runs/${run.id}/events"), "{}", js.body);
+    assert!(
+        js.body.contains("Summary artifact for run ${run.id}"),
+        "{}",
+        js.body
+    );
+    assert!(
+        js.body
+            .contains("renderErrorRow(runsBody, error.message, 5)"),
+        "{}",
+        js.body
+    );
 }
 
 #[test]
