@@ -518,6 +518,10 @@ pub fn run_plan(options: RunOptions) -> Result<String> {
                 );
                 return Err(failed_run_error(err, summary_result));
             }
+            emit_plan_event(
+                &options,
+                PlanRunEvent::for_task("validation_started", task, Some(attempt)),
+            )?;
             let validation_output = match run_validation_commands(
                 &plan.validation_commands,
                 &progress.validation_output_path,

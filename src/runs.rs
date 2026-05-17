@@ -15,6 +15,7 @@ use uuid::Uuid;
 pub enum RunPhase {
     Planning,
     Executing,
+    Validating,
     Reviewing,
     Complete,
 }
@@ -378,6 +379,7 @@ impl RunStore {
             return Ok(None);
         }
         let next_phase = match event.event_type.as_str() {
+            "validation_started" => Some(RunPhase::Validating),
             "review_started" => Some(RunPhase::Reviewing),
             "review_passed" | "review_failed" | "agent_retry_started" => Some(RunPhase::Executing),
             _ => None,

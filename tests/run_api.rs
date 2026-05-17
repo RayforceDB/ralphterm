@@ -2723,6 +2723,105 @@ fn session_without_cwd_uses_server_base_dir_while_workspace_run_changes_process_
 }
 
 #[test]
+fn run_api_reports_validating_phase_while_validation_command_is_running() {
+    let _guard = server_test_lock();
+    let repo = TempDir::new();
+    git(&repo.path, ["init"]);
+    git(&repo.path, ["config", "user.email", "test@example.com"]);
+    git(&repo.path, ["config", "user.name", "Test User"]);
+
+    let validation_path = repo.path.join("slow-validation.sh");
+    std::fs::write(
+        &validation_path,
+        "#!/usr/bin/env sh\nset -eu\nsleep 3\ntest -f first.txt\n",
+    )
+    .expect("write slow validation script");
+    let mut permissions = std::fs::metadata(&validation_path)
+        .expect("slow validation script metadata")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&validation_path, permissions)
+        .expect("make slow validation script executable");
+
+    let plan_path = repo.path.join("plan.md");
+    std::fs::write(
+        &plan_path,
+        format!(
+            r#"# Example plan
+
+## Validation Commands
+- `{}`
+
+### Task 1: Create first file
+- [ ] Write first.txt
+"#,
+            validation_path.to_string_lossy()
+        ),
+    )
+    .expect("write plan");
+    git(&repo.path, ["add", "plan.md"]);
+    git(&repo.path, ["commit", "-m", "docs: add test plan"]);
+
+    let port = free_port();
+    let bind = format!("127.0.0.1:{port}");
+    let server = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start ralphterm serve");
+    let mut server = ChildGuard::new(server);
+    wait_for_server(port, server.child_mut());
+
+    let body = serde_json::json!({
+        "plan_path": plan_path.to_string_lossy(),
+        "agent_command": fixture_path("fake-agent.sh").to_string_lossy(),
+        "no_commit": true
+    })
+    .to_string();
+
+    let created = request_json(port, "POST /v1/runs HTTP/1.1", Some(&body));
+    assert_eq!(created.status, 200, "{}", created.body);
+    let created_json: serde_json::Value =
+        serde_json::from_str(&created.body).expect("created run json");
+    let id = created_json["id"].as_str().expect("run id");
+    assert_eq!(created_json["status"], "running");
+
+    let events = wait_for_json(
+        port,
+        &format!("GET /v1/runs/{id}/events HTTP/1.1"),
+        |json| {
+            json.as_array()
+                .expect("event list")
+                .iter()
+                .any(|event| event["type"] == "validation_started")
+                .then(|| json.clone())
+        },
+    );
+    assert!(
+        events.as_array().expect("event list").iter().any(|event| {
+            event["type"] == "validation_started"
+                && event["task_number"] == 1
+                && event["attempt"] == 1
+        }),
+        "{events}"
+    );
+
+    let viewed = request_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), None);
+    assert_eq!(viewed.status, 200, "{}", viewed.body);
+    let validating: serde_json::Value = serde_json::from_str(&viewed.body).expect("run json");
+    assert_eq!(validating["phase"], "validating", "{validating}");
+    assert_eq!(validating["status"], "running", "{validating}");
+
+    let completed = wait_for_json(port, &format!("GET /v1/runs/{id} HTTP/1.1"), |json| {
+        (json["status"] == "succeeded").then(|| json.clone())
+    });
+    assert_eq!(completed["phase"], "complete");
+}
+
+#[test]
 fn run_api_exposes_reviewing_phase_while_review_command_runs() {
     let _guard = server_test_lock();
     let repo = TempDir::new();
@@ -2948,6 +3047,7 @@ fn run_api_plan_run_records_structured_task_progress_events() {
             "run_created",
             "run_started",
             "task_started",
+            "validation_started",
             "validation_passed",
             "review_started",
             "review_passed",
