@@ -17,14 +17,20 @@ set -eu
 
 PROVIDER_CMD="${PROVIDER_OVERRIDE:-gh}"
 
-prompt=$(cat)
+if [ -n "${RALPHTERM_PROMPT_FILE:-}" ]; then
+  prompt=$(cat "$RALPHTERM_PROMPT_FILE")
+else
+  prompt=$(cat)
+fi
+
 if [ -z "${prompt}" ]; then
-  printf 'FAILED: no prompt on stdin\n' >&2
+  printf 'FAILED: no prompt provided\n' >&2
   exit 1
 fi
 
 tmpfile=$(mktemp)
-trap 'rm -f "$tmpfile"' EXIT
+provider_out=$(mktemp)
+trap 'rm -f "$tmpfile" "$provider_out"' EXIT
 trap 'kill "${child:-0}" 2>/dev/null || true; exit 130' INT TERM
 
 printf '%s\n' "$prompt" > "$tmpfile"
@@ -36,16 +42,33 @@ fi
 
 if [ "$PROVIDER_CMD" = "gh" ]; then
   # shellcheck disable=SC2086
-  "$PROVIDER_CMD" copilot suggest $model_arg < "$tmpfile" &
+  "$PROVIDER_CMD" copilot suggest $model_arg < "$tmpfile" > "$provider_out" 2>&1 &
 else
   # shellcheck disable=SC2086
-  "$PROVIDER_CMD" $model_arg < "$tmpfile" &
+  "$PROVIDER_CMD" $model_arg < "$tmpfile" > "$provider_out" 2>&1 &
 fi
 child=$!
 set +e
 wait "$child"
 rc=$?
 set -e
+
+cat "$provider_out"
+
+if [ -n "${RALPHTERM_OUTPUT_FILE:-}" ]; then
+  {
+    printf '<<<BEGIN>>>\n'
+    cat "$provider_out"
+    printf '\n'
+    if [ "$rc" -eq 0 ]; then
+      printf 'REVIEW_PASS\n'
+    else
+      printf 'REVIEW_FAIL rc=%s\n' "$rc"
+    fi
+    printf '<<<END>>>\n'
+  } > "$RALPHTERM_OUTPUT_FILE"
+fi
+
 if [ "$rc" -eq 0 ]; then
   printf '\nCOMPLETED\n'
 else
