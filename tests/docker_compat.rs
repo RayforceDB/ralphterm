@@ -216,6 +216,18 @@ fn docker_smoke_runs_plan_against_in_test_image() {
         "FROM debian:stable-slim\nCMD [\"sh\",\"-c\",\"echo created > first.txt; echo RALPHEX:ALL_TASKS_DONE; echo COMPLETED\"]\n",
     )
     .unwrap();
+
+    // Commit the plan + Dockerfile so preflight's dirty-worktree check
+    // (added in 9ab2cbc) doesn't refuse to create the feature branch
+    // for the run.
+    let _ = Command::new("git")
+        .current_dir(repo.path())
+        .args(["add", "plan.md", "Dockerfile.smoke"])
+        .output();
+    let _ = Command::new("git")
+        .current_dir(repo.path())
+        .args(["commit", "-m", "fixtures"])
+        .output();
     let image_tag = format!("ralphterm-test-smoke-{}", Uuid::new_v4().simple());
     let build = Command::new("docker")
         .current_dir(repo.path())
