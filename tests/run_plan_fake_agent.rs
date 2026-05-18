@@ -34,15 +34,15 @@ fn smoke_command_runs_fake_agent_and_reports_completed_signal() {
 }
 
 #[test]
-fn smoke_command_with_builtin_claude_autoflags_print_and_skip_permissions() {
-    // The previous version of this test asserted the bare `claude` smoke
-    // ran without --print or argv flags. That was wrong: Claude Code's
-    // workspace-trust dialog only skips in non-interactive mode (per
-    // `claude --help`), so PTY-only invocation hangs forever on the
-    // trust prompt in a fresh dir. The new contract: when ralphterm
-    // spawns bare `claude`, it auto-appends `--print
-    // --dangerously-skip-permissions` and passes the prompt as the final
-    // argv argument. This test pins that contract.
+fn smoke_command_with_builtin_claude_uses_pty_keeps_skip_permissions() {
+    // The contract restored in v0.3 after the v0.2.x --print regression:
+    // ralphterm drives bare `claude` inside a real PTY, paste the prompt
+    // as keystrokes (no argv, no --print, no -p). The only injected flag
+    // is --dangerously-skip-permissions, which is required for an
+    // autonomous session loop (no human to click per-tool approval
+    // prompts) and is independent of the --print discussion. Anthropic's
+    // workspace-trust dialog is handled by the operator-confirmed
+    // preflight trust sentinel, not by going through --print.
     use std::os::unix::fs::PermissionsExt;
 
     let repo = TempRepo::new();
@@ -52,8 +52,14 @@ fn smoke_command_with_builtin_claude_autoflags_print_and_skip_permissions() {
     fs::write(
         &claude_shim,
         r#"#!/bin/sh
+if [ -t 0 ]; then
+  printf 'tty\n' > claude-stdin-kind.txt
+else
+  printf 'not-tty\n' > claude-stdin-kind.txt
+fi
 printf '%s\n' "$@" > claude-argv.txt
-printf 'fake claude print-mode response\nCOMPLETED\n'
+cat > claude-stdin.txt
+printf 'fake claude interactive session\nCOMPLETED\n'
 "#,
     )
     .expect("write fake claude shim");
@@ -85,16 +91,32 @@ printf 'fake claude print-mode response\nCOMPLETED\n'
 
     let argv = fs::read_to_string(repo.path.join("claude-argv.txt")).expect("read argv capture");
     assert!(
-        argv.contains("--print"),
-        "built-in claude smoke must auto-append --print:\n{argv}"
+        !argv.contains("--print"),
+        "built-in claude smoke must NOT inject --print:\n{argv}"
+    );
+    assert!(
+        !argv.contains("-p\n") && !argv.contains("-p ") && !argv.starts_with("-p"),
+        "built-in claude smoke must NOT inject -p:\n{argv}"
     );
     assert!(
         argv.contains("--dangerously-skip-permissions"),
-        "built-in claude smoke must auto-append --dangerously-skip-permissions:\n{argv}"
+        "built-in claude smoke must inject --dangerously-skip-permissions for autonomous loops:\n{argv}"
     );
+    // The prompt must NOT be passed as argv — it arrives on stdin via the PTY writer.
     assert!(
-        argv.contains("RalphTerm PTY smoke check"),
-        "built-in claude smoke must pass the prompt as argv:\n{argv}"
+        !argv.contains("RalphTerm PTY smoke check"),
+        "built-in claude smoke must NOT pass the prompt as argv:\n{argv}"
+    );
+
+    let stdin_kind = fs::read_to_string(repo.path.join("claude-stdin-kind.txt"))
+        .expect("read stdin kind capture");
+    assert_eq!(stdin_kind, "tty\n", "built-in claude smoke must use a PTY");
+
+    let stdin_prompt =
+        fs::read_to_string(repo.path.join("claude-stdin.txt")).expect("read stdin capture");
+    assert!(
+        stdin_prompt.contains("RalphTerm PTY smoke check"),
+        "prompt must arrive via PTY stdin, not argv:\n{stdin_prompt}"
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);

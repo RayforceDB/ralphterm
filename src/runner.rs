@@ -2418,40 +2418,35 @@ fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent
     let mut parts = parse_agent_command(agent_command)?;
     let command = parts.remove(0);
 
-    // Match ralphex's documented default invocation for Claude Code:
-    //   --print                          → non-interactive mode; required to
-    //                                      skip Claude Code's first-launch
-    //                                      "trust this folder?" dialog (per
-    //                                      `claude --help`: trust dialog is
-    //                                      only skipped in non-interactive
-    //                                      mode).
-    //   --dangerously-skip-permissions   → skip per-tool approval prompts
-    //                                      that would otherwise block every
-    //                                      file edit or shell command.
-    // Users who pass --claude-command pointing at a wrapper script (anything
-    // not literally `claude`) or who already include these flags via
-    // --claude-args are left untouched. Tests can opt out via the
-    // RALPHTERM_NO_CLAUDE_AUTOFLAGS env var.
+    // Founding-mission contract for bare `claude` invocation:
+    //   - NO --print, NO -p, NO argv prompt. ralphterm drives the
+    //     official CLI inside a real PTY the way a human does. Anthropic
+    //     has said they intend to sunset --print; the whole point of
+    //     ralphterm is to survive that removal. Auto-injecting --print
+    //     would put us back on the bus we are the lifeboat for.
+    //     Workspace trust is therefore a precondition the operator must
+    //     satisfy once per directory (run `claude` interactively, accept
+    //     the trust dialog); ralphterm's preflight verifies it via a
+    //     .ralphex/trusted sentinel.
+    //   - YES --dangerously-skip-permissions. Autonomous session loops
+    //     have no human to click per-tool approval dialogs. Ralphex
+    //     itself sets this flag by default and the project goal is full
+    //     drop-in compatibility for autonomous runs. Independent of the
+    //     --print discussion.
+    //   - RALPHTERM_NO_CLAUDE_AUTOFLAGS=1 escape hatch for tests that
+    //     symlink fake-agent.sh onto bin/claude (they don't understand
+    //     --dangerously-skip-permissions).
     let claude_autoflags_disabled =
         std::env::var_os("RALPHTERM_NO_CLAUDE_AUTOFLAGS").is_some_and(|v| !v.is_empty());
     let command_basename = std::path::Path::new(&command)
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| command.clone());
-    let invoking_bare_claude = command_basename == "claude" && !claude_autoflags_disabled;
-    if invoking_bare_claude {
-        if !parts.iter().any(|a| a == "-p" || a == "--print") {
-            parts.push("--print".to_string());
-        }
-        if !parts.iter().any(|a| a == "--dangerously-skip-permissions") {
-            parts.push("--dangerously-skip-permissions".to_string());
-        }
-        // In --print mode Claude reads the prompt from stdin OR a trailing
-        // argv argument. Writing to the PTY writer after spawn races
-        // against Claude's initial stdin read; the race-loser case (we
-        // lose) shows up as "Input must be provided either through stdin
-        // or as a prompt argument". Pass the prompt as final argv.
-        parts.push(prompt.to_string());
+    if command_basename == "claude"
+        && !claude_autoflags_disabled
+        && !parts.iter().any(|a| a == "--dangerously-skip-permissions")
+    {
+        parts.push("--dangerously-skip-permissions".to_string());
     }
 
     let pty_system = native_pty_system();
@@ -2478,7 +2473,7 @@ fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent
         .context("spawn agent command")?;
     drop(pair.slave);
 
-    if !invoking_bare_claude {
+    {
         let mut writer = pair.master.take_writer().context("take pty writer")?;
         writer
             .write_all(prompt.as_bytes())
