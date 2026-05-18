@@ -334,6 +334,7 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
 
     let prompts = Prompts::load(&repo_root, None);
     let start = Instant::now();
+    let mut agent_declared_done = false;
 
     for iteration in 1..=max_iterations {
         if count_unchecked_tasks(&plan_path)? == 0 {
@@ -449,7 +450,11 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             .as_deref()
             .map(|c| c.contains("RALPHEX:ALL_TASKS_DONE") || c.contains("ALL_TASKS_DONE"))
             .unwrap_or(false);
-        if all_done_signal || count_unchecked_tasks(&plan_path)? == 0 {
+        if all_done_signal {
+            agent_declared_done = true;
+            break;
+        }
+        if count_unchecked_tasks(&plan_path)? == 0 {
             break;
         }
 
@@ -477,8 +482,22 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         }
     }
 
-    if count_unchecked_tasks(&plan_path)? > 0 {
+    // Only bail with "hit max iterations" when (a) the agent never
+    // signalled completion AND (b) the plan still has unchecked boxes.
+    // If the agent explicitly said ALL_TASKS_DONE we accept that — the
+    // agent might be writing to a different artifact (e.g. a docker
+    // smoke run that only touches first.txt, not the plan checkboxes).
+    // Warn but don't abort when the signal arrives with unchecked boxes
+    // remaining — the operator can see in the progress log what was
+    // actually done.
+    let remaining_unchecked = count_unchecked_tasks(&plan_path)?;
+    if !agent_declared_done && remaining_unchecked > 0 {
         anyhow::bail!("hit max iterations ({max_iterations}) without ALL_TASKS_DONE");
+    }
+    if agent_declared_done && remaining_unchecked > 0 {
+        eprintln!(
+            "warn: agent signalled ALL_TASKS_DONE but {remaining_unchecked} plan checkbox(es) remain unchecked"
+        );
     }
 
     // Blank line separates agent narration from the wrap-up control lines,
