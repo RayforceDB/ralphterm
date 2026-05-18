@@ -278,6 +278,7 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         dry_run,
         agent_timeout,
         review_command,
+        event_sink,
         ..
     } = options;
 
@@ -341,6 +342,17 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         fmt::print_iteration_header(iteration);
         progress.write_control(&format!("--- task iteration {iteration} ---"))?;
 
+        if let Some(sink) = event_sink.as_ref() {
+            let _ = sink(PlanRunEvent {
+                event_type: "iteration_started",
+                task_number: None,
+                task_title: None,
+                attempt: Some(iteration),
+                artifact_path: None,
+                message: None,
+            });
+        }
+
         let plan_str = plan_path.to_string_lossy().to_string();
         let progress_path_str = progress.path().to_string_lossy().to_string();
         let goal = plan_first_h1(&plan_path).unwrap_or_default();
@@ -355,6 +367,21 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         let prompt = substitute(&prompts.task, &vars);
         let idle_timeout = agent_timeout.unwrap_or_else(agent_timeout_default);
 
+        let driver_sink = event_sink.as_ref().map(|sink| -> crate::agent_driver::EventSink {
+            let sink = sink.clone();
+            let attempt = iteration;
+            Arc::new(move |ev: crate::agent_driver::DriverEvent| {
+                let _ = sink(PlanRunEvent {
+                    event_type: ev.kind,
+                    task_number: None,
+                    task_title: None,
+                    attempt: Some(attempt),
+                    artifact_path: None,
+                    message: ev.detail.clone(),
+                });
+            })
+        });
+
         // Drive the agent through the v0.3 TTY-native file-handoff
         // contract: PTY-only (no --print), bracketed-paste keystrokes,
         // captured response retrieved from .ralphex/iteration-output/
@@ -365,7 +392,7 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             repo_root: &repo_root,
             idle_timeout,
             cancel: None,
-            event_sink: None,
+            event_sink: driver_sink,
         })
         .await?;
 
@@ -383,6 +410,16 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
                 let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
                 println!("[{ts}] {trimmed}");
                 let _ = progress.write_narration(trimmed);
+            }
+            if let Some(sink) = event_sink.as_ref() {
+                let _ = sink(PlanRunEvent {
+                    event_type: "iteration_captured",
+                    task_number: None,
+                    task_title: None,
+                    attempt: Some(iteration),
+                    artifact_path: Some(run.output_path.display().to_string()),
+                    message: Some(captured.clone()),
+                });
             }
         } else {
             // No captured response. The full transcript still has the
@@ -414,21 +451,25 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             break;
         }
 
-        if run.crashed_before_done {
-            anyhow::bail!(
-                "agent iteration {iteration} exited (code={}) before writing the output file",
-                run.exit_code
-            );
-        }
+        // Soft-failures (no output file, clean exit without END, or
+        // child crash) are logged and the loop continues — the
+        // max_iterations cap at the bottom catches "no progress at all".
+        // Hard-failures (idle hang) abort immediately because retrying
+        // a stuck agent just waits the same timeout again.
         if run.timed_out {
             anyhow::bail!(
                 "agent iteration {iteration} timed out after {:?} with no END marker",
                 idle_timeout
             );
         }
-        if !run.done_via_file {
-            anyhow::bail!(
-                "agent iteration {iteration} did not produce a valid output file at {}",
+        if run.crashed_before_done {
+            eprintln!(
+                "warn: iteration {iteration} agent exited (code={}) before writing the output file; continuing",
+                run.exit_code
+            );
+        } else if !run.done_via_file {
+            eprintln!(
+                "warn: iteration {iteration} produced no valid output file at {}; continuing",
                 run.output_path.display()
             );
         }
@@ -2523,7 +2564,10 @@ pub fn agent_commands_equivalent(agent_command: &str, review_command: &str) -> R
 /// preamble with a per-iteration nonce, (b) optionally wait for a REPL
 /// ready indicator before pasting keystrokes, (c) keep ownership of the
 /// PTY writer for later mid-run input.
-pub(crate) fn spawn_agent_command_promptless(agent_command: &str) -> Result<SpawnedAgent> {
+pub(crate) fn spawn_agent_command_promptless_with_env(
+    agent_command: &str,
+    extra_env: &[(&str, &str)],
+) -> Result<SpawnedAgent> {
     let mut parts = parse_agent_command(agent_command)?;
     let command = parts.remove(0);
     apply_claude_autoflags(&command, &mut parts);
@@ -2541,6 +2585,9 @@ pub(crate) fn spawn_agent_command_promptless(agent_command: &str) -> Result<Spaw
     let mut cmd = CommandBuilder::new(command);
     for arg in parts {
         cmd.arg(arg);
+    }
+    for (k, v) in extra_env {
+        cmd.env(k, v);
     }
     if let Ok(cwd) = std::env::current_dir() {
         cmd.cwd(cwd);

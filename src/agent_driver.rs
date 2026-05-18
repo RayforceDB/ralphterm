@@ -50,7 +50,9 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-use crate::runner::{spawn_agent_command_promptless, strip_ansi_escapes, SpawnedAgent};
+use crate::runner::{
+    spawn_agent_command_promptless_with_env, strip_ansi_escapes, SpawnedAgent,
+};
 
 /// What the caller hands to `drive_agent`.
 pub struct AgentSpec<'a> {
@@ -118,11 +120,27 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     std::fs::create_dir_all(&output_dir)
         .with_context(|| format!("create {}", output_dir.display()))?;
     let output_path = output_dir.join(format!("{nonce}.md"));
+    let prompt_path = output_dir.join(format!("{nonce}.prompt.txt"));
 
     let prompt = build_prompt_with_protocol(spec.task_prompt, &nonce, &output_path);
+    std::fs::write(&prompt_path, &prompt)
+        .with_context(|| format!("write {}", prompt_path.display()))?;
+
+    // Expose paths to the spawned agent so non-interactive fixtures (or
+    // headless wrappers) can satisfy the file-handoff contract without
+    // having to parse the bracketed-paste prompt from PTY stdin. Real
+    // claude ignores unknown env vars.
+    let output_path_str = output_path.to_string_lossy().into_owned();
+    let prompt_path_str = prompt_path.to_string_lossy().into_owned();
+    let nonce_env = nonce.clone();
+    let env = [
+        ("RALPHTERM_OUTPUT_FILE", output_path_str.as_str()),
+        ("RALPHTERM_PROMPT_FILE", prompt_path_str.as_str()),
+        ("RALPHTERM_NONCE", nonce_env.as_str()),
+    ];
 
     let SpawnedAgent { child, master } =
-        spawn_agent_command_promptless(spec.command).context("spawn agent")?;
+        spawn_agent_command_promptless_with_env(spec.command, &env).context("spawn agent")?;
 
     let writer = Arc::new(Mutex::new(master.take_writer().context("take pty writer")?));
 
