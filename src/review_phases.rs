@@ -30,18 +30,19 @@ const FIRST_REVIEW_AGENTS: &[&str] = &[
 ];
 
 pub async fn first_review(args: FirstReviewArgs<'_>) -> Result<ReviewOutcome> {
-    run_parallel_review(args, FIRST_REVIEW_AGENTS).await
+    run_parallel_review(args, FIRST_REVIEW_AGENTS, "phase 1 first review").await
 }
 
 const SECOND_REVIEW_AGENTS: &[&str] = &["quality", "implementation"];
 
 pub async fn second_review(args: FirstReviewArgs<'_>) -> Result<ReviewOutcome> {
-    run_parallel_review(args, SECOND_REVIEW_AGENTS).await
+    run_parallel_review(args, SECOND_REVIEW_AGENTS, "phase 3 second review").await
 }
 
 async fn run_parallel_review(
     args: FirstReviewArgs<'_>,
     agent_names: &[&str],
+    phase_label: &str,
 ) -> Result<ReviewOutcome> {
     let reviewer_command = args.reviewer_command.to_string();
     let plan_path = args.plan_path.to_path_buf();
@@ -50,6 +51,10 @@ async fn run_parallel_review(
     let timeout = args.agent_timeout;
     let review_template = args.prompts.review_first.clone();
     let repo_root = std::env::current_dir()?;
+
+    let total = agent_names.len();
+    let spinner =
+        crate::spinner::Spinner::start(format!("{phase_label}: spawning {total} reviewers"));
 
     let mut handles: Vec<tokio::task::JoinHandle<Result<(String, String, std::time::Duration)>>> =
         Vec::new();
@@ -80,7 +85,14 @@ async fn run_parallel_review(
         }));
     }
 
+    if let Some(s) = spinner.as_ref() {
+        s.set_label(format!(
+            "{phase_label}: 0/{total} reviewers complete (waiting for first return)"
+        ));
+    }
+
     let mut findings: Vec<String> = Vec::new();
+    let mut done = 0usize;
     for h in handles {
         let (name, transcript, elapsed) = h
             .await
@@ -95,7 +107,23 @@ async fn run_parallel_review(
         if transcript_has_critical_issues(&transcript) {
             findings.push(format!("[{name}] {}", first_line_of_findings(&transcript)));
         }
+        done += 1;
+        if let Some(s) = spinner.as_ref() {
+            if done < total {
+                s.set_label(format!(
+                    "{phase_label}: {done}/{total} reviewers complete (waiting on {} more)",
+                    total - done
+                ));
+            } else {
+                s.set_label(format!("{phase_label}: aggregating findings"));
+            }
+        }
     }
+
+    if let Some(s) = spinner.as_ref() {
+        s.stop();
+    }
+    drop(spinner);
 
     if findings.is_empty() {
         Ok(ReviewOutcome::Pass)
@@ -254,7 +282,19 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
     let mut last_category: Option<String> = None;
     let mut consecutive = 0usize;
 
+    let spinner = crate::spinner::Spinner::start(format!(
+        "phase 2 external review: spawning reviewer (1/{})",
+        args.max_iterations
+    ));
+
     for iteration in 1..=args.max_iterations {
+        if let Some(s) = spinner.as_ref() {
+            s.set_label(format!(
+                "phase 2 external review: reviewing ({iteration}/{})",
+                args.max_iterations
+            ));
+        }
+
         let mut vars: HashMap<&str, &str> = HashMap::new();
         vars.insert("PLAN_FILE", &plan_str);
         vars.insert("PROGRESS_FILE", &progress_str);
@@ -282,7 +322,13 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
         });
         let decision = external_review_decision(&agent_transcript);
         match decision {
-            Some(true) => return Ok(ReviewOutcome::Pass),
+            Some(true) => {
+                if let Some(s) = spinner.as_ref() {
+                    s.stop();
+                }
+                drop(spinner);
+                return Ok(ReviewOutcome::Pass);
+            }
             Some(false) => {
                 let category = crate::runner::review_failure_category(&review_run.transcript);
                 if last_category.as_deref() == Some(category.as_str()) {
@@ -292,9 +338,19 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
                     last_category = Some(category.clone());
                 }
                 if consecutive >= 3 {
+                    if let Some(s) = spinner.as_ref() {
+                        s.stop();
+                    }
+                    drop(spinner);
                     return Ok(ReviewOutcome::Issues(vec![format!(
                         "external review stalemate: category '{category}' repeated {consecutive} times"
                     )]));
+                }
+                if let Some(s) = spinner.as_ref() {
+                    s.set_label(format!(
+                        "phase 2 external review: reviewer flagged {category}, dispatching fixer ({iteration}/{})",
+                        args.max_iterations
+                    ));
                 }
                 let findings = format!("Previous external review failed: {category}");
                 let mut fix_vars = vars.clone();
@@ -320,6 +376,11 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
             }
         }
     }
+
+    if let Some(s) = spinner.as_ref() {
+        s.stop();
+    }
+    drop(spinner);
 
     Ok(ReviewOutcome::Issues(vec![format!(
         "external review exhausted {} iterations without REVIEW_PASS",
