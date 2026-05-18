@@ -298,6 +298,7 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         branch_override: None,
         use_worktree: false,
         allow_dirty: dry_run,
+        skip_trust_check: !will_invoke_bare_claude(&agent_cmd),
     }
     .check()?;
 
@@ -567,6 +568,10 @@ fn run_plan_review_only(options: RunOptions) -> Result<String> {
         branch_override: None,
         use_worktree: false,
         allow_dirty: true,
+        // --review mode does NOT spawn an implementer; only reviewer
+        // agents (which use the codex wrapper, not bare claude). Trust
+        // check is therefore not required for this entry point.
+        skip_trust_check: true,
     }
     .check()?;
     let progress = ProgressLog::open(&repo_root, &preflight.plan_slug)?;
@@ -633,6 +638,7 @@ fn run_plan_external_only(options: RunOptions) -> Result<String> {
         branch_override: None,
         use_worktree: false,
         allow_dirty: true,
+        skip_trust_check: !will_invoke_bare_claude(&agent_cmd),
     }
     .check()?;
     let progress = ProgressLog::open(&repo_root, &preflight.plan_slug)?;
@@ -2510,6 +2516,25 @@ fn validate_interactive_agent_command(agent_command: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Returns true when `agent_command` will spawn the official Anthropic
+/// `claude` binary (as opposed to a wrapper script or a different
+/// binary entirely). Used by preflight to decide whether to enforce
+/// the workspace-trust precondition — wrappers and alternate providers
+/// have their own trust models.
+fn will_invoke_bare_claude(agent_command: &str) -> bool {
+    let Ok(parts) = parse_agent_command(agent_command) else {
+        return false;
+    };
+    let Some(first) = parts.first() else {
+        return false;
+    };
+    let basename = std::path::Path::new(first)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| first.clone());
+    basename == "claude"
 }
 
 fn plan_first_h1(plan_path: &std::path::Path) -> Option<String> {

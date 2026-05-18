@@ -1,3 +1,4 @@
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::Command;
 
@@ -17,6 +18,11 @@ pub struct Preflight<'a> {
     pub branch_override: Option<&'a str>,
     pub use_worktree: bool,
     pub allow_dirty: bool,
+    /// Skip the workspace-trust precondition. Used by `--tasks-only`
+    /// runs against fixture agents (fake-agent.sh etc.) that don't
+    /// need Claude Code's trust dialog, and any caller spawning a
+    /// non-`claude` command via `--claude-command`.
+    pub skip_trust_check: bool,
 }
 
 impl<'a> Preflight<'a> {
@@ -27,6 +33,10 @@ impl<'a> Preflight<'a> {
             .map(|s| s.to_string())
             .unwrap_or_else(|| plan_slug.clone());
         let default_branch = detect_default_branch(self.repo_root)?;
+
+        if !self.skip_trust_check {
+            ensure_workspace_trusted(self.repo_root)?;
+        }
 
         if !self.allow_dirty && !self.use_worktree {
             let dirty = collect_uncommitted_paths(self.repo_root)?;
@@ -57,6 +67,88 @@ impl<'a> Preflight<'a> {
             default_branch,
         })
     }
+}
+
+/// Verify the workspace has been trusted by Claude Code at least once.
+///
+/// Claude Code refuses to start (it shows a blocking "Is this project
+/// you trust?" dialog) the first time it runs in any directory. The
+/// dialog only auto-skips when claude is run via `--print` — which
+/// ralphterm by design does NOT use, because Anthropic has signalled
+/// they intend to sunset `--print`. So ralphterm requires the operator
+/// to satisfy claude's trust check once per workspace, the same way
+/// SSH `known_hosts` works: run `claude` in the directory manually,
+/// accept the dialog, exit. Ralphterm then records a small sentinel
+/// at `.ralphex/trusted` so it doesn't ask again.
+///
+/// Escape hatches:
+///   - `RALPHTERM_ASSUME_TRUSTED=1` env var — skip the check entirely
+///     (for CI / power users who manage trust through their own tooling).
+///   - `--claude-command <wrapper>` — when the operator overrides the
+///     spawn command, ralphterm passes `skip_trust_check: true` to
+///     preflight because the wrapper or alternate binary likely doesn't
+///     consult claude's trust system.
+pub fn ensure_workspace_trusted(repo_root: &Path) -> Result<()> {
+    if std::env::var_os("RALPHTERM_ASSUME_TRUSTED").is_some_and(|v| !v.is_empty()) {
+        return Ok(());
+    }
+
+    let sentinel = repo_root.join(".ralphex").join("trusted");
+    if sentinel.is_file() {
+        return Ok(());
+    }
+
+    let stdin_is_tty = std::io::stdin().is_terminal();
+    if !stdin_is_tty {
+        bail!(format_trust_required_message(
+            repo_root, /* interactive: */ false
+        ));
+    }
+
+    // Interactive prompt.
+    let prompt = format!(
+        "\nRalphTerm drives the official `claude` CLI inside a real PTY, the way a human does.\n\
+         Claude Code requires every workspace to be trusted manually the first time it runs there.\n\n\
+         Workspace: {}\n\n\
+         Have you already run `claude` in this directory and accepted the\n\
+         \"Is this project you trust?\" dialog at least once? [y/N] ",
+        repo_root.display()
+    );
+    let _ = std::io::stderr().write_all(prompt.as_bytes());
+    let _ = std::io::stderr().flush();
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .context("read trust confirmation")?;
+    let answer = answer.trim().to_ascii_lowercase();
+    if answer != "y" && answer != "yes" {
+        bail!(format_trust_required_message(
+            repo_root, /* interactive: */ true
+        ));
+    }
+
+    // Record the sentinel so we never ask again.
+    let dir = sentinel.parent().expect("sentinel has parent");
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    let ts = chrono::Local::now().to_rfc3339();
+    std::fs::write(
+        &sentinel,
+        format!("accepted_at: {ts}\nworkspace: {}\n", repo_root.display()),
+    )
+    .with_context(|| format!("write {}", sentinel.display()))?;
+    Ok(())
+}
+
+fn format_trust_required_message(repo_root: &Path, interactive: bool) -> String {
+    let preamble = if interactive {
+        "Workspace trust not confirmed."
+    } else {
+        "Workspace trust required but stdin is not a TTY (no way to ask interactively)."
+    };
+    format!(
+        "{preamble}\n\nRun the following in this directory, accept the trust dialog, then exit (Ctrl+D):\n\n  cd {}\n  claude\n\nThen re-run ralphterm. If you've already accepted trust in claude but want to\nbypass this check (CI, scripted runs), set RALPHTERM_ASSUME_TRUSTED=1.\n\nBackground: claude requires per-workspace trust acceptance and only auto-skips\nthat dialog when run with --print. RalphTerm intentionally does not use --print\n(Anthropic has signalled they intend to sunset it). See\nhttps://code.claude.com/docs/en/security",
+        repo_root.display()
+    )
 }
 
 fn derive_slug(plan_path: &Path) -> Result<String> {
@@ -229,6 +321,62 @@ mod tests {
     }
 
     #[test]
+    fn ensure_workspace_trusted_passes_when_sentinel_exists() {
+        let repo = init_repo();
+        std::fs::create_dir_all(repo.join(".ralphex")).unwrap();
+        std::fs::write(
+            repo.join(".ralphex").join("trusted"),
+            "accepted_at: 2026-05-18T00:00:00Z\n",
+        )
+        .unwrap();
+        ensure_workspace_trusted(&repo).expect("trusted sentinel should pass");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn ensure_workspace_trusted_passes_when_env_override_set() {
+        let repo = init_repo();
+        // SAFETY: Tests in this binary may run multi-threaded; the env
+        // var is the public contract of the helper and other tests do
+        // not depend on it being unset. We restore on the way out.
+        let prev = std::env::var_os("RALPHTERM_ASSUME_TRUSTED");
+        unsafe {
+            std::env::set_var("RALPHTERM_ASSUME_TRUSTED", "1");
+        }
+        let result = ensure_workspace_trusted(&repo);
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("RALPHTERM_ASSUME_TRUSTED", v),
+                None => std::env::remove_var("RALPHTERM_ASSUME_TRUSTED"),
+            }
+        }
+        result.expect("env override should pass");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn ensure_workspace_trusted_refuses_when_no_sentinel_and_not_a_tty() {
+        let repo = init_repo();
+        // stdin is a pipe in `cargo test`, never a TTY → expect refusal
+        // with the "not a TTY" branch of the error message.
+        let prev = std::env::var_os("RALPHTERM_ASSUME_TRUSTED");
+        unsafe {
+            std::env::remove_var("RALPHTERM_ASSUME_TRUSTED");
+        }
+        let err = ensure_workspace_trusted(&repo).unwrap_err().to_string();
+        unsafe {
+            if let Some(v) = prev {
+                std::env::set_var("RALPHTERM_ASSUME_TRUSTED", v);
+            }
+        }
+        assert!(
+            err.contains("Workspace trust required") && err.contains("not a TTY"),
+            "expected trust-required error, got: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
     fn slug_derivation_lowercases_and_strips_non_alnum() {
         let s = derive_slug(Path::new("docs/plans/My Feature_Plan!.md")).unwrap();
         assert_eq!(s, "my-feature_plan");
@@ -247,6 +395,7 @@ mod tests {
             branch_override: None,
             use_worktree: false,
             allow_dirty: false,
+            skip_trust_check: true,
         };
         let err = p.check().unwrap_err().to_string();
         assert!(err.contains("uncommitted files"), "{err}");
@@ -277,6 +426,7 @@ mod tests {
             branch_override: None,
             use_worktree: false,
             allow_dirty: false,
+            skip_trust_check: true,
         }
         .check()
         .unwrap();
