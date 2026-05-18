@@ -31,113 +31,85 @@ const FIRST_REVIEW_AGENTS: &[&str] = &[
 ];
 
 pub async fn first_review(args: FirstReviewArgs<'_>) -> Result<ReviewOutcome> {
-    run_parallel_review(args, FIRST_REVIEW_AGENTS, "phase 1 first review").await
+    run_composite_review(args, FIRST_REVIEW_AGENTS, "phase 1 first review").await
 }
 
 const SECOND_REVIEW_AGENTS: &[&str] = &["quality", "implementation"];
 
 pub async fn second_review(args: FirstReviewArgs<'_>) -> Result<ReviewOutcome> {
-    run_parallel_review(args, SECOND_REVIEW_AGENTS, "phase 3 second review").await
+    run_composite_review(args, SECOND_REVIEW_AGENTS, "phase 3 second review").await
 }
 
-async fn run_parallel_review(
+/// Spawn ONE reviewer session and hand it a composite prompt that asks
+/// the agent to evaluate every dimension (quality, implementation,
+/// testing, …) in turn. The agent decides how to organise its own
+/// passes. This replaces the old N-parallel design which violated the
+/// "one client, one session" expectation of the upstream AI APIs and
+/// reliably hit rate limits.
+async fn run_composite_review(
     args: FirstReviewArgs<'_>,
     agent_names: &[&str],
     phase_label: &str,
 ) -> Result<ReviewOutcome> {
-    let reviewer_command = args.reviewer_command.to_string();
-    let plan_path = args.plan_path.to_path_buf();
-    let progress_path = args.progress_path.to_path_buf();
+    let plan_str = args.plan_path.to_string_lossy().to_string();
+    let progress_str = args.progress_path.to_string_lossy().to_string();
     let default_branch = args.default_branch.to_string();
-    let timeout = args.agent_timeout;
-    let review_template = args.prompts.review_first.clone();
     let repo_root = std::env::current_dir()?;
 
-    let total = agent_names.len();
-    let spinner =
-        crate::spinner::Spinner::start(format!("{phase_label}: spawning {total} reviewers"));
+    let spinner = crate::spinner::Spinner::start(format!(
+        "{phase_label}: composing prompt for {} review dimensions",
+        agent_names.len()
+    ));
 
-    let mut handles: Vec<tokio::task::JoinHandle<Result<(String, String, std::time::Duration)>>> =
-        Vec::new();
-    for name in agent_names {
-        let name = (*name).to_string();
-        let agent_template = args.prompts.agents.get(&name).cloned().unwrap_or_default();
-        let reviewer = reviewer_command.clone();
-        let plan = plan_path.clone();
-        let progress = progress_path.clone();
-        let default_branch = default_branch.clone();
-        let review_template = review_template.clone();
-        let repo_root = repo_root.clone();
-        // Each reviewer feeds its driver events into a no-op sink that
-        // only bumps the shared spinner's activity counter. Without
-        // this the spinner's "idle Ns" suffix would climb for the
-        // entire response time even though bytes are flowing.
-        let driver_sink: Option<crate::agent_driver::EventSink> = spinner.as_ref().map(|s| {
-            let s = s.clone();
-            let sink: crate::agent_driver::EventSink =
-                Arc::new(move |_ev: crate::agent_driver::DriverEvent| {
-                    s.bump_activity();
-                });
-            sink
-        });
-        handles.push(tokio::spawn(async move {
-            let started = std::time::Instant::now();
-            let transcript = run_one_reviewer(
-                &reviewer,
-                &review_template,
-                &agent_template,
-                &name,
-                &plan,
-                &progress,
-                &default_branch,
-                timeout,
-                &repo_root,
-                driver_sink,
-            )
-            .await?;
-            Ok((name, transcript, started.elapsed()))
-        }));
-    }
+    let composite_prompt = build_composite_review_prompt(
+        &args.prompts.review_first,
+        agent_names,
+        |name| args.prompts.agents.get(name).cloned().unwrap_or_default(),
+        &plan_str,
+        &progress_str,
+        &default_branch,
+    );
 
     if let Some(s) = spinner.as_ref() {
         s.set_label(format!(
-            "{phase_label}: 0/{total} reviewers complete (waiting for first return)"
+            "{phase_label}: reviewer running ({} dimensions in one session)",
+            agent_names.len()
         ));
     }
 
-    let mut findings: Vec<String> = Vec::new();
-    let mut done = 0usize;
-    for h in handles {
-        let (name, transcript, elapsed) = h
-            .await
-            .map_err(|e| anyhow::anyhow!("reviewer task panicked: {e}"))??;
-        // Per-agent heartbeat so the user sees individual reviewers
-        // returning instead of waiting silently for the whole phase.
-        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        println!(
-            "[{ts}]   reviewer '{name}' returned in {}s",
-            elapsed.as_secs()
-        );
-        if transcript_has_critical_issues(&transcript) {
-            findings.push(format!("[{name}] {}", first_line_of_findings(&transcript)));
-        }
-        done += 1;
-        if let Some(s) = spinner.as_ref() {
-            if done < total {
-                s.set_label(format!(
-                    "{phase_label}: {done}/{total} reviewers complete (waiting on {} more)",
-                    total - done
-                ));
-            } else {
-                s.set_label(format!("{phase_label}: aggregating findings"));
-            }
-        }
-    }
+    let bumper: Option<crate::agent_driver::EventSink> = spinner.as_ref().map(|s| {
+        let s = s.clone();
+        let sink: crate::agent_driver::EventSink = Arc::new(move |_ev| s.bump_activity());
+        sink
+    });
+
+    let run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
+        command: args.reviewer_command,
+        task_prompt: &composite_prompt,
+        repo_root: &repo_root,
+        idle_timeout: args.agent_timeout,
+        cancel: None,
+        event_sink: bumper,
+    })
+    .await?;
 
     if let Some(s) = spinner.as_ref() {
         s.stop();
     }
     drop(spinner);
+
+    if run.timed_out {
+        anyhow::bail!("{phase_label} reviewer timed out");
+    }
+
+    let transcript = run.captured_response.unwrap_or_else(|| {
+        crate::runner::transcript_without_prompt_echo(&run.transcript, &composite_prompt)
+    });
+
+    let mut findings: Vec<String> = Vec::new();
+    if transcript_has_critical_issues(&transcript) {
+        findings.push(first_line_of_findings(&transcript));
+    }
 
     if findings.is_empty() {
         Ok(ReviewOutcome::Pass)
@@ -146,47 +118,52 @@ async fn run_parallel_review(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_one_reviewer(
-    reviewer_command: &str,
+/// Build the single composite prompt that instructs the reviewer agent
+/// to walk through each review dimension in turn. Substitutes the
+/// per-dimension AGENT_INSTRUCTIONS bodies into the shared template
+/// for each dimension and concatenates the results with clear section
+/// headers so the agent can organise its own passes without ralphterm
+/// having to spawn multiple sessions.
+fn build_composite_review_prompt(
     review_template: &str,
-    agent_template: &str,
-    agent_name: &str,
-    plan_path: &std::path::Path,
-    progress_path: &std::path::Path,
+    agent_names: &[&str],
+    agent_template_for: impl Fn(&str) -> String,
+    plan_str: &str,
+    progress_str: &str,
     default_branch: &str,
-    timeout: Duration,
-    repo_root: &std::path::Path,
-    event_sink: Option<crate::agent_driver::EventSink>,
-) -> Result<String> {
-    let plan_str = plan_path.to_string_lossy().to_string();
-    let progress_str = progress_path.to_string_lossy().to_string();
-    let mut vars: HashMap<&str, &str> = HashMap::new();
-    vars.insert("PLAN_FILE", &plan_str);
-    vars.insert("PROGRESS_FILE", &progress_str);
-    vars.insert("DEFAULT_BRANCH", default_branch);
-    vars.insert("AGENT_NAME", agent_name);
-    vars.insert("AGENT_INSTRUCTIONS", agent_template);
+) -> String {
+    let dimensions = agent_names.join(", ");
+    let mut composite = String::new();
+    composite.push_str(&format!(
+        "# MULTI-DIMENSION REVIEW (single session, one client)\n\n\
+         You are the sole reviewer for this run. Evaluate the work along {n} dimensions: {dimensions}. \
+         Decide internally how to organise these passes (serial, interleaved, batched) — \
+         the orchestrator does NOT spawn additional sessions on your behalf, by design \
+         (one-client-one-session, no parallel API calls).\n\n\
+         For each dimension below, perform the review as specified. After all dimensions are \
+         done, write a SINGLE consolidated finding list. If ANY dimension surfaces critical or \
+         major issues, the run is blocked.\n\n\
+         ---\n\n",
+        n = agent_names.len(),
+        dimensions = dimensions
+    ));
 
-    let prompt = substitute(review_template, &vars);
-    let run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
-        command: reviewer_command,
-        task_prompt: &prompt,
-        repo_root,
-        idle_timeout: timeout,
-        cancel: None,
-        event_sink,
-    })
-    .await?;
-    if run.timed_out {
-        anyhow::bail!("reviewer {agent_name} timed out");
+    for name in agent_names {
+        let agent_body = agent_template_for(name);
+        let mut vars: HashMap<&str, &str> = HashMap::new();
+        vars.insert("PLAN_FILE", plan_str);
+        vars.insert("PROGRESS_FILE", progress_str);
+        vars.insert("DEFAULT_BRANCH", default_branch);
+        vars.insert("AGENT_NAME", name);
+        vars.insert("AGENT_INSTRUCTIONS", agent_body.as_str());
+        let pass_prompt = substitute(review_template, &vars);
+        composite.push_str(&format!(
+            "## Dimension: {name}\n\n{pass_prompt}\n\n---\n\n",
+            name = name
+        ));
     }
-    // Prefer the captured BEGIN..END slice (clean handoff); fall back to
-    // the full transcript so legacy reviewers that ignore the protocol
-    // still surface their verdict to the decision logic.
-    Ok(run
-        .captured_response
-        .unwrap_or_else(|| crate::runner::transcript_without_prompt_echo(&run.transcript, &prompt)))
+
+    composite
 }
 
 /// Decide whether an external (codex) reviewer transcript says the
