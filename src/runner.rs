@@ -410,8 +410,14 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                println!("[{ts}] {trimmed}");
+                let ts_now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                let stamp = crate::color::dim(&format!("[{ts_now}]"));
+                let body = if crate::color::is_section_header(trimmed) {
+                    crate::color::cyan(&crate::color::bold(trimmed))
+                } else {
+                    trimmed.to_string()
+                };
+                println!("{stamp} {body}");
                 let _ = progress.write_narration(trimmed);
             }
             if let Some(sink) = event_sink.as_ref() {
@@ -437,8 +443,12 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             } else {
                 "agent exited without writing a complete output file"
             };
-            let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-            println!("[{ts}] {reason}");
+            let ts_now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            println!(
+                "{} {}",
+                crate::color::dim(&format!("[{ts_now}]")),
+                crate::color::yellow(reason)
+            );
             let _ = progress.write_narration(reason);
         }
 

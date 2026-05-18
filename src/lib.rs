@@ -10,6 +10,8 @@ pub mod agent_driver;
 #[doc(hidden)]
 pub mod cli;
 #[doc(hidden)]
+pub mod color;
+#[doc(hidden)]
 pub mod config;
 #[doc(hidden)]
 pub mod docker;

@@ -1,32 +1,50 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::color;
+
+fn ts() -> String {
+    color::dim(&format!(
+        "[{}]",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    ))
+}
+
 pub fn print_version_banner() {
-    println!("ralphterm v{}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "{}",
+        color::bold(&format!("ralphterm v{}", env!("CARGO_PKG_VERSION")))
+    );
 }
 
 pub fn print_branch_creating(branch: &str) {
-    println!("creating branch: {branch}");
+    println!("creating branch: {}", color::cyan(branch));
 }
 
 pub fn print_task_execution_completed() {
     // Ralphex prefixes this line with its agent-narration timestamp; we
     // mirror the format so the side-by-side diff stays clean.
-    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    println!("[{ts}] task execution completed successfully");
+    println!(
+        "{} {}",
+        ts(),
+        color::green("task execution completed successfully")
+    );
 }
 
 /// Heartbeat printed when a review phase starts. Without this the user
 /// sees several minutes of dead terminal while parallel reviewer agents
 /// run silently.
 pub fn print_phase_start(label: &str) {
-    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    println!("[{ts}] {label} — running...");
+    println!("{} {} — running...", ts(), color::cyan(label));
 }
 
 pub fn print_phase_done(label: &str, elapsed: Duration) {
-    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    println!("[{ts}] {label} — done in {}s", elapsed.as_secs());
+    println!(
+        "{} {} — done in {}s",
+        ts(),
+        color::green(label),
+        elapsed.as_secs()
+    );
 }
 
 pub fn print_run_header(
@@ -49,7 +67,10 @@ pub fn print_task_phase_start() {
 }
 
 pub fn print_iteration_header(n: usize) {
-    println!("--- task iteration {n} ---");
+    println!(
+        "{}",
+        color::magenta(&color::bold(&format!("--- task iteration {n} ---")))
+    );
 }
 
 pub fn print_review_phase_start(label: &str) {
@@ -84,7 +105,10 @@ pub fn print_moved_plan(dest: &Path) {
 }
 
 pub fn print_all_tasks_completed() {
-    println!("all tasks completed, starting code review...");
+    println!(
+        "{}",
+        color::green("all tasks completed, starting code review...")
+    );
 }
 
 pub fn mode_label(tasks_only: bool, review_only: bool, external_only: bool) -> &'static str {
