@@ -112,6 +112,13 @@ async fn run_composite_review(
         crate::runner::transcript_without_prompt_echo(&run.transcript, &composite_prompt)
     });
 
+    // Stream the reviewer's captured response to stdout the same way
+    // the implementer's per-iteration narration is shown — so the
+    // operator can read what the reviewer actually said, not just
+    // pass/fail. Section headers (e.g. "Quality", "Findings") get
+    // the bold-cyan treatment.
+    stream_captured_to_stdout(&transcript);
+
     let mut findings: Vec<String> = Vec::new();
     if transcript_has_critical_issues(&transcript) {
         findings.push(first_line_of_findings(&transcript));
@@ -121,6 +128,26 @@ async fn run_composite_review(
         Ok(ReviewOutcome::Pass)
     } else {
         Ok(ReviewOutcome::Issues(findings))
+    }
+}
+
+/// Same stdout treatment the runner's iteration loop uses for the
+/// implementer's captured response: `[YYYY-MM-DD HH:MM:SS]` dim
+/// timestamp on each line, section-header lines emboldened.
+fn stream_captured_to_stdout(captured: &str) {
+    for line in captured.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let ts_now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let stamp = crate::color::dim(&format!("[{ts_now}]"));
+        let body = if crate::color::is_section_header(trimmed) {
+            crate::color::cyan(&crate::color::bold(trimmed))
+        } else {
+            trimmed.to_string()
+        };
+        println!("{stamp} {body}");
     }
 }
 
@@ -323,6 +350,7 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
         let agent_transcript = review_run.captured_response.clone().unwrap_or_else(|| {
             crate::runner::transcript_without_prompt_echo(&review_run.transcript, &review_prompt)
         });
+        stream_captured_to_stdout(&agent_transcript);
         let decision = external_review_decision(&agent_transcript);
         match decision {
             Some(true) => {
@@ -378,6 +406,10 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
                 if fix_run.timed_out {
                     anyhow::bail!("external review fixer iteration {iteration} timed out");
                 }
+                let fix_transcript = fix_run.captured_response.clone().unwrap_or_else(|| {
+                    crate::runner::transcript_without_prompt_echo(&fix_run.transcript, &fix_prompt)
+                });
+                stream_captured_to_stdout(&fix_transcript);
             }
             None => {
                 anyhow::bail!(
