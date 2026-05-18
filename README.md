@@ -8,7 +8,7 @@
 
 **Drop-in replacement for [ralphex](https://github.com/umputun/ralphex), with PTY-native CLI execution.**
 
-RalphTerm runs your existing ralphex plans, configs, agents, prompts, and review pipelines unchanged — but it executes the official AI CLIs inside real PTYs instead of relying on brittle `claude -p` / `--print` one-shot flags. The bundled `ralphex` binary alias means you can swap binaries without touching scripts.
+RalphTerm runs the same plans, configs, agents, prompts, and review pipelines you'd hand to ralphex — unchanged. It executes the official AI CLIs inside real PTYs and captures their output via a file-handoff contract, so it works against the same interactive CLI a human uses, not a one-shot prompt-mode adapter. The bundled `ralphex` binary alias means you can swap binaries without touching scripts.
 
 ## Install
 

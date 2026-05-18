@@ -154,6 +154,57 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; }
 }
 .rt-code-block + .rt-code-block { margin-top: 6px; }
 
+/* Copy-to-clipboard button overlay (added by /assets/copy.js) */
+.rt-copy-wrap {
+  position: relative;
+  margin: 0;
+}
+.rt-copy-wrap + .rt-copy-wrap { margin-top: 6px; }
+.rt-copy-wrap pre { margin: 0; }
+.rt-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  appearance: none;
+  border: 1px solid var(--rt-rule, rgba(255, 255, 255, 0.2));
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--rt-fg-invert, #fafafa);
+  font-family: var(--rt-font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.rt-copy-wrap:hover .rt-copy-btn,
+.rt-copy-wrap:focus-within .rt-copy-btn,
+.rt-copy-btn:focus { opacity: 1; }
+.rt-copy-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.rt-copy-btn.is-success {
+  opacity: 1;
+  border-color: currentColor;
+  background: rgba(255, 255, 255, 0.18);
+}
+.rt-copy-btn.is-error {
+  opacity: 1;
+  border-color: currentColor;
+  text-decoration: underline;
+}
+/* Light-background code blocks get a darker overlay variant. */
+.rt-copy-wrap pre:not(.rt-code-block) ~ .rt-copy-btn,
+.rt-copy-wrap > pre:not(.rt-code-block) + .rt-copy-btn {
+  border-color: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--rt-fg, #1a1a1a);
+}
+.rt-copy-wrap pre:not(.rt-code-block) ~ .rt-copy-btn:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
 /* Drop-in proof */
 .rt-compare {
   display: grid;
