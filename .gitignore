@@ -3,3 +3,4 @@
 *.log
 .superpowers/
 review-prompt.txt
+.claude/
