@@ -1,6 +1,6 @@
 [package]
 name = "ralphterm"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 rust-version = "1.85"
 description = "Programmable PTY for the official Claude Code and Codex CLIs. Drop-in for ralphex 1.2.0 without --print or -p — drives the real interactive REPL via PTY + file-handoff."
@@ -63,13 +63,17 @@ ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell"]
 # Target platforms to build apps for (Rust target-triple syntax).
-# Linux x86_64 only for the GitHub Release pipeline today — the
-# macOS and Windows hosted runner pools have been starved for hours
-# (jobs sit queued indefinitely), and aarch64-linux needs a cross
-# toolchain we haven't wired yet. Users on those platforms install
-# via `cargo install ralphterm`. Restore targets once runner capacity
-# is reliable.
-targets = ["x86_64-unknown-linux-gnu"]
+# All four mainstream desktop targets ship prebuilt binaries — the
+# curl|sh installer is marketed as a primary install path so it needs
+# to work on Apple Silicon, Intel macs, and Windows out of the box.
+# aarch64-linux is omitted until we wire `cross` (cargo-dist's default
+# ubuntu runner can't link aarch64-linux without it).
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
 # Path that installers should place binaries in
 install-path = "$HOME/.local/bin"
 # Which actions to run on pull requests
