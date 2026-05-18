@@ -198,12 +198,40 @@ fn current_branch(repo: &Path) -> Result<String> {
     Ok(output.trim().to_string())
 }
 
+/// Directory / file entries that represent per-machine tool state, not
+/// user work. We filter these out of the preflight dirty-worktree check
+/// because they bootstrap themselves (`.ralphex/trusted` is written by
+/// our own trust prompt) or get created by adjacent CLI tools that
+/// users run alongside ralphterm. Most are already in users' global
+/// gitignore but plenty of fresh workspaces don't ignore them locally.
+const TOOL_STATE_PATHS: &[&str] = &[
+    // ralphterm's own state.
+    ".ralphex",
+    // Claude Code / Codex / other interactive AI CLIs that drop a
+    // dot-dir into the workspace on first run.
+    ".claude",
+    ".codex",
+    ".cursor",
+    ".aider",
+    // OS noise.
+    ".DS_Store",
+    "Thumbs.db",
+];
+
+fn is_tool_state_path(p: &str) -> bool {
+    let p = p.trim_start_matches("./");
+    TOOL_STATE_PATHS.iter().any(|prefix| {
+        p == *prefix || p.starts_with(&format!("{prefix}/")) || p.starts_with(&format!("{prefix}."))
+    })
+}
+
 fn collect_uncommitted_paths(repo: &Path) -> Result<Vec<String>> {
     let output = git_output(repo, &["status", "--porcelain"])?;
     Ok(output
         .lines()
         .map(|line| line.get(3..).unwrap_or(line).to_string())
         .filter(|p| !p.is_empty())
+        .filter(|p| !is_tool_state_path(p))
         .collect())
 }
 
@@ -399,6 +427,59 @@ mod tests {
         };
         let err = p.check().unwrap_err().to_string();
         assert!(err.contains("uncommitted files"), "{err}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn tool_state_dirs_do_not_count_as_dirty_worktree() {
+        // Repro: trust prompt creates .ralphex/trusted, dirty check
+        // sees .ralphex/ as untracked, run bails before ever spawning
+        // the agent. Reported by user on 2026-05-18 in a fresh
+        // workspace. Same class of bug for .claude/, .codex/, etc.
+        // dropped by adjacent AI CLIs. Fix: collect_uncommitted_paths
+        // filters TOOL_STATE_PATHS out of the porcelain output.
+        let repo = init_repo();
+        let plan = repo.join("docs/plans/hello.md");
+        std::fs::create_dir_all(plan.parent().unwrap()).unwrap();
+        std::fs::write(&plan, "# plan\n").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "-A"])
+            .status()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-q", "-m", "add plan"])
+            .status()
+            .unwrap();
+        // Simulate ensure_workspace_trusted + drive_agent state, plus
+        // adjacent AI/IDE/OS noise that fresh workspaces often have.
+        std::fs::create_dir_all(repo.join(".ralphex/iteration-output")).unwrap();
+        std::fs::write(repo.join(".ralphex/trusted"), "accepted_at: 2026-05-18\n").unwrap();
+        std::fs::write(
+            repo.join(".ralphex/iteration-output/abc123.md"),
+            "<<<BEGIN>>>\nfoo\n<<<END>>>\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(repo.join(".claude")).unwrap();
+        std::fs::write(repo.join(".claude/settings.local.json"), "{}\n").unwrap();
+        std::fs::create_dir_all(repo.join(".codex")).unwrap();
+        std::fs::write(repo.join(".codex/state"), "x\n").unwrap();
+        std::fs::write(repo.join(".DS_Store"), "\0\0").unwrap();
+        std::fs::write(repo.join(".aider.chat.history.md"), "x\n").unwrap();
+
+        Preflight {
+            repo_root: &repo,
+            plan_path: &plan,
+            branch_override: None,
+            use_worktree: false,
+            allow_dirty: false,
+            skip_trust_check: true,
+        }
+        .check()
+        .expect("tool-state paths should not block the preflight clean-worktree check");
         let _ = std::fs::remove_dir_all(&repo);
     }
 
