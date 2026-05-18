@@ -121,9 +121,14 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     let prompt_path = output_dir.join(format!("{nonce}.prompt.txt"));
     let transcript_path = output_dir.join(format!("{nonce}.transcript.txt"));
 
-    let prompt = build_prompt_with_protocol(spec.task_prompt, &nonce, &output_path);
-    std::fs::write(&prompt_path, &prompt)
+    // ALWAYS write the full inline-form wrapped prompt to disk so the
+    // agent (or a curious operator) can read it. The pasted prompt may
+    // either be this full text (small prompts) or a short pointer to
+    // this file (large prompts) — see build_prompt_with_protocol.
+    let inline_prompt = build_inline_prompt_with_protocol(spec.task_prompt, &nonce, &output_path);
+    std::fs::write(&prompt_path, &inline_prompt)
         .with_context(|| format!("write {}", prompt_path.display()))?;
+    let prompt = build_prompt_with_protocol(spec.task_prompt, &nonce, &output_path, &prompt_path);
     // Touch the transcript so `tail -f` works the moment the run starts.
     let _ = std::fs::File::create(&transcript_path);
 
@@ -453,7 +458,15 @@ enum DriverShutdown {
     Cancelled,
 }
 
-fn build_prompt_with_protocol(task_prompt: &str, nonce: &str, output_path: &Path) -> String {
+/// Soft cap on inline-pasted prompts (bytes). Above this, we paste a
+/// short instruction that points at the prompt file on disk instead.
+/// 8 KiB is well under typical PTY buffer limits and observed to be a
+/// safe paste size for claude's REPL.
+const INLINE_PASTE_SOFT_CAP: usize = 8 * 1024;
+
+/// The full inline form of the wrapped prompt. Always written to
+/// `prompt_path` so the file-reference path has something to read.
+fn build_inline_prompt_with_protocol(task_prompt: &str, nonce: &str, output_path: &Path) -> String {
     format!(
         "RALPHTERM PROTOCOL — you MUST follow this exactly:\n\
          When you have a final response for this iteration, write the response to this file:\n\
@@ -468,6 +481,40 @@ fn build_prompt_with_protocol(task_prompt: &str, nonce: &str, output_path: &Path
         path = output_path.display(),
         task = task_prompt,
     )
+}
+
+fn build_prompt_with_protocol(
+    task_prompt: &str,
+    nonce: &str,
+    output_path: &Path,
+    prompt_path: &Path,
+) -> String {
+    // For large prompts (composite multi-dimension reviews especially),
+    // pasting tens of kilobytes through bracketed-paste is unreliable —
+    // user reproed a 1-hour silent hang on a ~30 KB composite prompt
+    // (claude's REPL stopped responding after the paste; zero PTY
+    // bytes for 24+ minutes idle). Above 8 KiB we paste a tiny
+    // instruction that tells the agent to read the prompt from disk
+    // instead. The agent then reads the file via its own tool, which
+    // is a single short request that doesn't blow any input buffer.
+    if task_prompt.len() > INLINE_PASTE_SOFT_CAP {
+        return format!(
+            "RALPHTERM PROTOCOL — you MUST follow this exactly:\n\n\
+             1. Read your task instructions from this file (it's too large to paste inline):\n\
+                    {prompt}\n\
+             2. Perform the task it describes.\n\
+             3. When you have a final response, write it to this file:\n\
+                    {out}\n\
+                The file MUST start with the literal line `<<<BEGIN>>>` on its own line, \
+                followed by your response (a concise account of what was done), and end with \
+                the literal line `<<<END>>>` on its own line. After writing the file you do \
+                not need to print anything special — the orchestrator polls the file. \
+                (Reference nonce: {nonce})\n",
+            prompt = prompt_path.display(),
+            out = output_path.display(),
+        );
+    }
+    build_inline_prompt_with_protocol(task_prompt, nonce, output_path)
 }
 
 fn make_nonce() -> String {
@@ -604,13 +651,42 @@ mod tests {
 
     #[test]
     fn build_prompt_includes_path_and_task_text() {
-        let p = build_prompt_with_protocol("DO THE THING", "abc123", Path::new("/tmp/x/abc123.md"));
+        let p = build_prompt_with_protocol(
+            "DO THE THING",
+            "abc123",
+            Path::new("/tmp/x/abc123.md"),
+            Path::new("/tmp/x/abc123.prompt.txt"),
+        );
         assert!(p.contains("/tmp/x/abc123.md"));
         assert!(p.contains("<<<BEGIN>>>"));
         assert!(p.contains("<<<END>>>"));
         assert!(p.contains("DO THE THING"));
         assert!(p.contains("RALPHTERM PROTOCOL"));
         assert!(p.contains("abc123"));
+    }
+
+    #[test]
+    fn build_prompt_uses_file_reference_for_large_prompts() {
+        // Reproduces the user's 24-minute-silent-hang scenario: a
+        // composite multi-dimension review prompt that's tens of KB.
+        // Above INLINE_PASTE_SOFT_CAP we paste a short pointer to the
+        // prompt file instead of the prompt body.
+        let huge = "X".repeat(INLINE_PASTE_SOFT_CAP + 1);
+        let p = build_prompt_with_protocol(
+            &huge,
+            "abc123",
+            Path::new("/tmp/x/abc123.md"),
+            Path::new("/tmp/x/abc123.prompt.txt"),
+        );
+        // Pasted form should be tiny (instruction only, no body).
+        assert!(
+            p.len() < 1024,
+            "large-prompt form should be a short pointer, got {} bytes",
+            p.len()
+        );
+        assert!(p.contains("/tmp/x/abc123.prompt.txt"));
+        assert!(p.contains("/tmp/x/abc123.md"));
+        assert!(!p.contains(&huge));
     }
 
     #[test]
