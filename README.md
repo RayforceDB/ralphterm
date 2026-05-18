@@ -49,9 +49,9 @@ ralphterm needs Claude Code to trust this workspace.
 Have you run `claude` here once and accepted the trust dialog? [y/N]
 ```
 
-Run `claude` once in the workspace, accept the dialog, exit (Ctrl+D), then answer `y`. RalphTerm drops a `.ralphex/trusted` sentinel (SSH-`known_hosts`-style) so subsequent runs skip the prompt. In CI / non-TTY environments, set `RALPHTERM_ASSUME_TRUSTED=1` to bypass the check after you've validated trust out of band.
+Run `claude` once in the workspace, accept the dialog, exit (Ctrl+D), then answer `y`. RalphTerm drops a `.ralphterm/trusted` sentinel (SSH-`known_hosts`-style) so subsequent runs skip the prompt. In CI / non-TTY environments, set `RALPHTERM_ASSUME_TRUSTED=1` to bypass the check after you've validated trust out of band.
 
-Inside the loop, RalphTerm hands each iteration's response off through a file at `.ralphex/iteration-output/<nonce>.md` (wrapped in `<<<BEGIN>>>`/`<<<END>>>` markers). The captured slice — claude's own account of what changed — is appended to the progress log and fed to the next iteration's fresh implementer. This is robust against TUI rendering quirks: the marker channel is on disk, never in the PTY stream.
+Inside the loop, RalphTerm hands each iteration's response off through a file at `.ralphterm/iteration-output/<nonce>.md` (wrapped in `<<<BEGIN>>>`/`<<<END>>>` markers). The captured slice — claude's own account of what changed — is appended to the progress log and fed to the next iteration's fresh implementer. This is robust against TUI rendering quirks: the marker channel is on disk, never in the PTY stream.
 
 ## Why
 
@@ -59,13 +59,13 @@ AI coding tools are becoming interactive terminal products. Automation built aro
 
 ## Features
 
-- ✓ Full ralphex CLI surface (see [`docs/ralphex-compat.md`](docs/ralphex-compat.md))
+- ✓ Plan loop with per-task commits + auto-move on completion
+- ✓ 3-phase parallel review pipeline before merge
 - ✓ Notifications (Telegram, Slack, Email, Webhook)
 - ✓ Docker isolation
 - ✓ Alternate providers: Codex, Copilot, Gemini, OpenCode
 - ✓ Worktree-isolated runs
 - ✓ Review retry with patience
-- ✓ Plan auto-move on completion
 
 ## Links
 
@@ -73,8 +73,6 @@ AI coding tools are becoming interactive terminal products. Automation built aro
 - Documentation: [ralphterm.rayforcedb.com/docs/](https://ralphterm.rayforcedb.com/docs/)
 - Workflows: [ralphterm.rayforcedb.com/docs/workflows.html](https://ralphterm.rayforcedb.com/docs/workflows.html)
 - Social preview: [assets/social-preview.png](https://ralphterm.rayforcedb.com/assets/social-preview.png)
-- Migration guide: [`docs/migrate-from-ralphex.md`](docs/migrate-from-ralphex.md)
-- Ralphex compatibility: [`docs/ralphex-compat.md`](docs/ralphex-compat.md)
 - CLI reference: [`docs/cli-reference.md`](docs/cli-reference.md)
 - Milestone 1: [`docs/milestones/m1-autonomous-engineering.md`](docs/milestones/m1-autonomous-engineering.md)
 - Security model: [`docs/security.md`](docs/security.md)
@@ -86,7 +84,7 @@ AI coding tools are becoming interactive terminal products. Automation built aro
 - Sends prompts and follow-up input as terminal keystrokes.
 - Streams raw terminal output over WebSocket.
 - Keeps transcripts and status for every session.
-- Detects workflow signals such as `COMPLETED`, `FAILED`, `PLAN_READY`, `QUESTION`, `REVIEW_DONE`, and the `<<<RALPHEX:*>>>` aliases.
+- Detects workflow signals such as `COMPLETED`, `FAILED`, `PLAN_READY`, `QUESTION`, `REVIEW_DONE`, and the `<<<RALPHTERM:*>>>` prefixed variants.
 - Exposes REST controls for create, input, resize, cancel, status, transcript, and events.
 - Binds to `127.0.0.1` by default because the API controls local terminals.
 

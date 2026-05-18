@@ -11,7 +11,7 @@ pub struct ProgressLog {
 
 impl ProgressLog {
     pub fn open(repo_root: &Path, plan_slug: &str) -> Result<Self> {
-        let dir = repo_root.join(".ralphex").join("progress");
+        let dir = repo_root.join(".ralphterm").join("progress");
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("create progress dir {}", dir.display()))?;
         let path = dir.join(format!("progress-{plan_slug}.txt"));
@@ -70,7 +70,7 @@ mod tests {
         drop(log);
 
         let body =
-            std::fs::read_to_string(tmp.join(".ralphex/progress/progress-hello.txt")).unwrap();
+            std::fs::read_to_string(tmp.join(".ralphterm/progress/progress-hello.txt")).unwrap();
         assert!(body.contains("creating branch: hello\n"));
         assert!(
             body.contains("] Picking Task 1.\n"),

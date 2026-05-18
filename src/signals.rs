@@ -27,25 +27,24 @@ pub fn detect_signal(text: &str) -> Option<AgentSignal> {
     if upper.contains("FAILED") {
         return Some(AgentSignal::Failed);
     }
-    // Fall back to ralphex-style signals (RALPHEX:* with optional <<<...>>>
-    // delimiters). These are checked after the canonical aliases.
-    if contains_ralphex_signal(&upper, "ALL_TASKS_DONE") {
+    // Fall back to prefixed signals: <<<RALPHTERM:X>>>.
+    if contains_prefixed_signal(&upper, "ALL_TASKS_DONE") {
         return Some(AgentSignal::Completed);
     }
-    if contains_ralphex_signal(&upper, "TASK_FAILED") {
+    if contains_prefixed_signal(&upper, "TASK_FAILED") {
         return Some(AgentSignal::Failed);
     }
-    if contains_ralphex_signal(&upper, "REVIEW_DONE")
-        || contains_ralphex_signal(&upper, "CODEX_REVIEW_DONE")
+    if contains_prefixed_signal(&upper, "REVIEW_DONE")
+        || contains_prefixed_signal(&upper, "CODEX_REVIEW_DONE")
     {
         return Some(AgentSignal::ReviewDone);
     }
     None
 }
 
-fn contains_ralphex_signal(upper_text: &str, signal: &str) -> bool {
-    let bracketed = format!("<<<RALPHEX:{signal}>>>");
-    let bare = format!("RALPHEX:{signal}");
+fn contains_prefixed_signal(upper_text: &str, signal: &str) -> bool {
+    let bracketed = format!("<<<RALPHTERM:{signal}>>>");
+    let bare = format!("RALPHTERM:{signal}");
     upper_text.contains(&bracketed) || upper_text.contains(&bare)
 }
 
@@ -82,28 +81,36 @@ mod tests {
     }
 
     #[test]
-    fn detects_ralphex_signal_aliases() {
+    fn detects_ralphterm_prefixed_signals() {
         assert_eq!(
-            detect_signal("<<<RALPHEX:ALL_TASKS_DONE>>>"),
+            detect_signal("<<<RALPHTERM:ALL_TASKS_DONE>>>"),
             Some(AgentSignal::Completed)
         );
         assert_eq!(
-            detect_signal("noise\nRALPHEX:TASK_FAILED\nmore"),
+            detect_signal("noise\nRALPHTERM:TASK_FAILED\nmore"),
             Some(AgentSignal::Failed)
         );
         assert_eq!(
-            detect_signal("<<<RALPHEX:REVIEW_DONE>>>"),
+            detect_signal("<<<RALPHTERM:REVIEW_DONE>>>"),
             Some(AgentSignal::ReviewDone)
         );
         assert_eq!(
-            detect_signal("RALPHEX:CODEX_REVIEW_DONE"),
+            detect_signal("RALPHTERM:CODEX_REVIEW_DONE"),
             Some(AgentSignal::ReviewDone)
         );
-        // Original aliases still take precedence.
-        assert_eq!(
-            detect_signal("COMPLETED\n<<<RALPHEX:TASK_FAILED>>>"),
-            Some(AgentSignal::Completed)
-        );
+    }
+
+    #[test]
+    fn legacy_ralphex_prefix_no_longer_detected() {
+        // After 0.4.x we dropped the RALPHEX prefix entirely. Only the
+        // canonical bare signals ("ALL_TASKS_DONE", "REVIEW_DONE",
+        // etc.) and the RALPHTERM: prefix are recognised. Bare prefixed
+        // RALPHEX:* lines are no longer signal carriers.
+        // The bare word ALL_TASKS_DONE still matches via the first
+        // branch (contains check), so we test a TASK_FAILED variant
+        // that has no bare equivalent.
+        assert_eq!(detect_signal("RALPHEX:TASK_FAILED"), None);
+        assert_eq!(detect_signal("<<<RALPHEX:CODEX_REVIEW_DONE>>>"), None);
     }
 
     #[test]

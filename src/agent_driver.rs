@@ -114,7 +114,7 @@ pub struct AgentRun {
 /// The main entry point.
 pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     let nonce = make_nonce();
-    let output_dir = spec.repo_root.join(".ralphex").join("iteration-output");
+    let output_dir = spec.repo_root.join(".ralphterm").join("iteration-output");
     std::fs::create_dir_all(&output_dir)
         .with_context(|| format!("create {}", output_dir.display()))?;
     let output_path = output_dir.join(format!("{nonce}.md"));
@@ -252,6 +252,7 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     //   - Idle timer elapses with no PTY output activity (failure)
     let end_marker = "<<<END>>>";
     let mut last_byte_at = Instant::now();
+    let mut last_data_event_at = Instant::now();
     let mut shutdown: Option<DriverShutdown> = None;
     let mut file_complete = false;
     let mut file_check_tick = tokio::time::interval(Duration::from_millis(200));
@@ -273,6 +274,23 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
                     Some(bytes) => {
                         last_byte_at = Instant::now();
                         transcript.push_str(&String::from_utf8_lossy(&bytes));
+                        // Throttled heartbeat: emit at most once per
+                        // 2 s while the agent is streaming. The spinner
+                        // uses this to refresh its "last byte Ns ago"
+                        // liveness indicator without flooding event
+                        // sinks on every 8 KiB chunk.
+                        if last_byte_at.duration_since(last_data_event_at)
+                            >= Duration::from_secs(2)
+                        {
+                            last_data_event_at = last_byte_at;
+                            if let Some(sink) = spec.event_sink.as_ref() {
+                                sink(DriverEvent {
+                                    kind: "agent_data",
+                                    nonce: nonce.clone(),
+                                    detail: Some(format!("{} bytes", transcript.len())),
+                                });
+                            }
+                        }
                     }
                     None => {
                         // Reader sender dropped without sending shutdown.

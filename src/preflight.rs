@@ -34,6 +34,11 @@ impl<'a> Preflight<'a> {
             .unwrap_or_else(|| plan_slug.clone());
         let default_branch = detect_default_branch(self.repo_root)?;
 
+        // One-time migration: previous releases stored state under
+        // `.ralphex/`. Rename to `.ralphterm/` if the new dir doesn't
+        // already exist. Safe no-op when there's nothing to migrate.
+        migrate_dot_ralphex_state(self.repo_root)?;
+
         if !self.skip_trust_check {
             ensure_workspace_trusted(self.repo_root)?;
         }
@@ -93,6 +98,30 @@ impl<'a> Preflight<'a> {
     }
 }
 
+/// Rename a legacy `.ralphex/` state dir to `.ralphterm/` so users
+/// don't lose their trusted sentinel, progress logs, or iteration-output
+/// files across the 0.4.x rename. Quiet success when the legacy dir
+/// doesn't exist (the typical case) or when both dirs exist (operator
+/// likely already migrated).
+fn migrate_dot_ralphex_state(repo_root: &Path) -> Result<()> {
+    let legacy = repo_root.join(".ralphex");
+    let target = repo_root.join(".ralphterm");
+    if !legacy.exists() || target.exists() {
+        return Ok(());
+    }
+    std::fs::rename(&legacy, &target)
+        .with_context(|| format!("migrate {} → {}", legacy.display(), target.display()))?;
+    eprintln!(
+        "{}",
+        crate::color::info_line(format!(
+            "migrated legacy state directory {} → {}",
+            legacy.display(),
+            target.display()
+        ))
+    );
+    Ok(())
+}
+
 /// Verify the workspace has been trusted by Claude Code at least once.
 ///
 /// Claude Code refuses to start (it shows a blocking "Is this project
@@ -103,7 +132,7 @@ impl<'a> Preflight<'a> {
 /// to satisfy claude's trust check once per workspace, the same way
 /// SSH `known_hosts` works: run `claude` in the directory manually,
 /// accept the dialog, exit. Ralphterm then records a small sentinel
-/// at `.ralphex/trusted` so it doesn't ask again.
+/// at `.ralphterm/trusted` so it doesn't ask again.
 ///
 /// Escape hatches:
 ///   - `RALPHTERM_ASSUME_TRUSTED=1` env var — skip the check entirely
@@ -117,7 +146,7 @@ pub fn ensure_workspace_trusted(repo_root: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let sentinel = repo_root.join(".ralphex").join("trusted");
+    let sentinel = repo_root.join(".ralphterm").join("trusted");
     if sentinel.is_file() {
         return Ok(());
     }
@@ -224,13 +253,13 @@ fn current_branch(repo: &Path) -> Result<String> {
 
 /// Directory / file entries that represent per-machine tool state, not
 /// user work. We filter these out of the preflight dirty-worktree check
-/// because they bootstrap themselves (`.ralphex/trusted` is written by
+/// because they bootstrap themselves (`.ralphterm/trusted` is written by
 /// our own trust prompt) or get created by adjacent CLI tools that
 /// users run alongside ralphterm. Most are already in users' global
 /// gitignore but plenty of fresh workspaces don't ignore them locally.
 const TOOL_STATE_PATHS: &[&str] = &[
     // ralphterm's own state.
-    ".ralphex",
+    ".ralphterm",
     // Claude Code / Codex / other interactive AI CLIs that drop a
     // dot-dir into the workspace on first run.
     ".claude",
@@ -375,9 +404,9 @@ mod tests {
     #[test]
     fn ensure_workspace_trusted_passes_when_sentinel_exists() {
         let repo = init_repo();
-        std::fs::create_dir_all(repo.join(".ralphex")).unwrap();
+        std::fs::create_dir_all(repo.join(".ralphterm")).unwrap();
         std::fs::write(
-            repo.join(".ralphex").join("trusted"),
+            repo.join(".ralphterm").join("trusted"),
             "accepted_at: 2026-05-18T00:00:00Z\n",
         )
         .unwrap();
@@ -510,8 +539,8 @@ mod tests {
 
     #[test]
     fn tool_state_dirs_do_not_count_as_dirty_worktree() {
-        // Repro: trust prompt creates .ralphex/trusted, dirty check
-        // sees .ralphex/ as untracked, run bails before ever spawning
+        // Repro: trust prompt creates .ralphterm/trusted, dirty check
+        // sees .ralphterm/ as untracked, run bails before ever spawning
         // the agent. Reported by user on 2026-05-18 in a fresh
         // workspace. Same class of bug for .claude/, .codex/, etc.
         // dropped by adjacent AI CLIs. Fix: collect_uncommitted_paths
@@ -534,10 +563,10 @@ mod tests {
             .unwrap();
         // Simulate ensure_workspace_trusted + drive_agent state, plus
         // adjacent AI/IDE/OS noise that fresh workspaces often have.
-        std::fs::create_dir_all(repo.join(".ralphex/iteration-output")).unwrap();
-        std::fs::write(repo.join(".ralphex/trusted"), "accepted_at: 2026-05-18\n").unwrap();
+        std::fs::create_dir_all(repo.join(".ralphterm/iteration-output")).unwrap();
+        std::fs::write(repo.join(".ralphterm/trusted"), "accepted_at: 2026-05-18\n").unwrap();
         std::fs::write(
-            repo.join(".ralphex/iteration-output/abc123.md"),
+            repo.join(".ralphterm/iteration-output/abc123.md"),
             "<<<BEGIN>>>\nfoo\n<<<END>>>\n",
         )
         .unwrap();

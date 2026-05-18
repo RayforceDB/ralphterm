@@ -382,6 +382,8 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             let sink: crate::agent_driver::EventSink =
                 Arc::new(move |ev: crate::agent_driver::DriverEvent| {
                     if let Some(spinner) = spinner.as_ref() {
+                        // Any event = activity (resets idle counter).
+                        spinner.bump_activity();
                         if let Some(label) = crate::spinner::label_for_event(ev.kind) {
                             spinner.set_label(format!("iteration {attempt}: {label}"));
                         }
@@ -402,7 +404,7 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
 
         // Drive the agent through the v0.3 TTY-native file-handoff
         // contract: PTY-only (no --print), bracketed-paste keystrokes,
-        // captured response retrieved from .ralphex/iteration-output/
+        // captured response retrieved from .ralphterm/iteration-output/
         // <nonce>.md (see agent_driver.rs for the formal protocol).
         let run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
             command: &agent_cmd,
@@ -480,7 +482,7 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         let all_done_signal = run
             .captured_response
             .as_deref()
-            .map(|c| c.contains("RALPHEX:ALL_TASKS_DONE") || c.contains("ALL_TASKS_DONE"))
+            .map(|c| c.contains("RALPHTERM:ALL_TASKS_DONE") || c.contains("ALL_TASKS_DONE"))
             .unwrap_or(false);
         if all_done_signal {
             agent_declared_done = true;
@@ -2303,17 +2305,17 @@ pub(crate) fn review_output_decision(transcript: &str, _prompt: &str) -> Option<
         .filter_map(|line| {
             let line = line.trim();
             if line == "REVIEW_PASS"
-                || line == "<<<RALPHEX:REVIEW_DONE>>>"
-                || line == "RALPHEX:REVIEW_DONE"
-                || line == "<<<RALPHEX:CODEX_REVIEW_DONE>>>"
-                || line == "RALPHEX:CODEX_REVIEW_DONE"
+                || line == "<<<RALPHTERM:REVIEW_DONE>>>"
+                || line == "RALPHTERM:REVIEW_DONE"
+                || line == "<<<RALPHTERM:CODEX_REVIEW_DONE>>>"
+                || line == "RALPHTERM:CODEX_REVIEW_DONE"
             {
                 Some(true)
             } else if line == "REVIEW_FAIL"
                 || line.starts_with("REVIEW_FAIL ")
                 || line.starts_with("REVIEW_FAIL:")
-                || line == "<<<RALPHEX:TASK_FAILED>>>"
-                || line == "RALPHEX:TASK_FAILED"
+                || line == "<<<RALPHTERM:TASK_FAILED>>>"
+                || line == "RALPHTERM:TASK_FAILED"
             {
                 Some(false)
             } else {

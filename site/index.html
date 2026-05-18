@@ -96,7 +96,7 @@
       <table class="rt-table">
         <thead><tr><th>Surface</th><th class="rt-status">Status</th></tr></thead>
         <tbody>
-          <tr><td>ralphex CLI surface</td><td class="rt-status">supported</td></tr>
+          <tr><td>plan loop &nbsp;·&nbsp; per-task commits, auto-move on completion</td><td class="rt-status">supported</td></tr>
           <tr><td>notifications &nbsp;·&nbsp; telegram, slack, email, webhook</td><td class="rt-status">supported</td></tr>
           <tr><td>docker isolation</td><td class="rt-status">supported</td></tr>
           <tr><td>providers &nbsp;·&nbsp; codex, copilot, gemini, opencode</td><td class="rt-status">supported</td></tr>
@@ -112,7 +112,7 @@
       <p class="rt-eyebrow">— how it works</p>
       <p style="max-width:var(--rt-read-max);margin-bottom:12px"><strong>Spawn the real CLI in a PTY.</strong> Same binary a human would type. Same login, same model, same safety prompts, same rate limits — those still belong to the upstream tool.</p>
       <hr>
-      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>Drive the plan loop.</strong> Read the next unchecked checkbox, paste it as the prompt, capture the response via a file-handoff side channel, commit, mark done, repeat. Per-iteration transcripts written to <code>.ralphex/progress/</code>.</p>
+      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>Drive the plan loop.</strong> Read the next unchecked checkbox, paste it as the prompt, capture the response via a file-handoff side channel, commit, mark done, repeat. Per-iteration transcripts written to <code>.ralphterm/progress/</code>.</p>
       <hr>
       <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>Gate the merge.</strong> Optional 3-phase parallel review pipeline (5 reviewers → external/codex fixer loop → 2 reviewers). Critical findings block the merge; the implementer gets a retry budget.</p>
       <hr>
@@ -142,7 +142,7 @@
     <div class="rt-features">
       <article><p class="rt-feature-label">Worktrees</p><p>Isolated git worktrees per plan; auto-derived branch slug from the plan filename.</p></article>
       <article><p class="rt-feature-label">Notifications</p><p>Telegram, Slack, Email (SMTP), and Webhook deliveries on plan / task / review / rate-limit events.</p></article>
-      <article><p class="rt-feature-label">Docker</p><p>Optional containerized execution. Honors RALPHEX_EXTRA_VOLUMES + EXTRA_ENV.</p></article>
+      <article><p class="rt-feature-label">Docker</p><p>Optional containerized execution. Honors RALPHTERM_EXTRA_VOLUMES + EXTRA_ENV.</p></article>
       <article><p class="rt-feature-label">Multi-provider</p><p>Bundled wrappers for Codex, Copilot, Gemini, and OpenCode CLIs.</p></article>
       <article><p class="rt-feature-label">Review retry</p><p>Implementer + reviewer fixer loop with patience / stalemate detection.</p></article>
       <article><p class="rt-feature-label">Plan auto-move</p><p>Successful plans relocate to docs/plans/completed/ on configurable opt-in.</p></article>
@@ -162,7 +162,7 @@
     <span>MIT License</span>
     <a href="https://github.com/RayforceDB/ralphterm">GitHub</a>
     <a href="/docs/">Docs</a>
-    <a href="/docs/ralphex-compat.html">Ralphex compat</a>
+    <a href="https://crates.io/crates/ralphterm">crates.io</a>
   </footer>
 </body>
 </html>

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -67,6 +68,18 @@ async fn run_parallel_review(
         let default_branch = default_branch.clone();
         let review_template = review_template.clone();
         let repo_root = repo_root.clone();
+        // Each reviewer feeds its driver events into a no-op sink that
+        // only bumps the shared spinner's activity counter. Without
+        // this the spinner's "idle Ns" suffix would climb for the
+        // entire response time even though bytes are flowing.
+        let driver_sink: Option<crate::agent_driver::EventSink> = spinner.as_ref().map(|s| {
+            let s = s.clone();
+            let sink: crate::agent_driver::EventSink =
+                Arc::new(move |_ev: crate::agent_driver::DriverEvent| {
+                    s.bump_activity();
+                });
+            sink
+        });
         handles.push(tokio::spawn(async move {
             let started = std::time::Instant::now();
             let transcript = run_one_reviewer(
@@ -79,6 +92,7 @@ async fn run_parallel_review(
                 &default_branch,
                 timeout,
                 &repo_root,
+                driver_sink,
             )
             .await?;
             Ok((name, transcript, started.elapsed()))
@@ -143,6 +157,7 @@ async fn run_one_reviewer(
     default_branch: &str,
     timeout: Duration,
     repo_root: &std::path::Path,
+    event_sink: Option<crate::agent_driver::EventSink>,
 ) -> Result<String> {
     let plan_str = plan_path.to_string_lossy().to_string();
     let progress_str = progress_path.to_string_lossy().to_string();
@@ -160,7 +175,7 @@ async fn run_one_reviewer(
         repo_root,
         idle_timeout: timeout,
         cancel: None,
-        event_sink: None,
+        event_sink,
     })
     .await?;
     if run.timed_out {
@@ -301,13 +316,18 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
         vars.insert("DEFAULT_BRANCH", &default_branch);
 
         let review_prompt = substitute(&args.prompts.codex_review, &vars);
+        let bumper: Option<crate::agent_driver::EventSink> = spinner.as_ref().map(|s| {
+            let s = s.clone();
+            let sink: crate::agent_driver::EventSink = Arc::new(move |_ev| s.bump_activity());
+            sink
+        });
         let review_run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
             command: args.reviewer_command,
             task_prompt: &review_prompt,
             repo_root: &repo_root,
             idle_timeout: args.agent_timeout,
             cancel: None,
-            event_sink: None,
+            event_sink: bumper,
         })
         .await?;
         if review_run.timed_out {
@@ -356,13 +376,20 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
                 let mut fix_vars = vars.clone();
                 fix_vars.insert("REVIEW_FINDINGS", &findings);
                 let fix_prompt = substitute(&args.prompts.codex, &fix_vars);
+                let fix_bumper: Option<crate::agent_driver::EventSink> =
+                    spinner.as_ref().map(|s| {
+                        let s = s.clone();
+                        let sink: crate::agent_driver::EventSink =
+                            Arc::new(move |_ev| s.bump_activity());
+                        sink
+                    });
                 let fix_run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
                     command: args.implementer_command,
                     task_prompt: &fix_prompt,
                     repo_root: &repo_root,
                     idle_timeout: args.agent_timeout,
                     cancel: None,
-                    event_sink: None,
+                    event_sink: fix_bumper,
                 })
                 .await?;
                 if fix_run.timed_out {

@@ -1,6 +1,6 @@
 [package]
 name = "ralphterm"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 rust-version = "1.85"
 description = "Programmable PTY for the official Claude Code and Codex CLIs. Runs long multi-task plans unattended — iterates, validates, commits per task, and gates merge behind a parallel review pipeline."
@@ -10,7 +10,7 @@ repository = "https://github.com/RayforceDB/ralphterm"
 homepage = "https://ralphterm.rayforcedb.com"
 documentation = "https://ralphterm.rayforcedb.com/docs/"
 readme = "README.md"
-keywords = ["ralphex", "claude", "codex", "pty", "plan-runner"]
+keywords = ["claude", "codex", "pty", "plan-runner", "automation"]
 categories = ["command-line-utilities", "development-tools"]
 include = [
     "src/**/*",

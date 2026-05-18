@@ -154,7 +154,7 @@ struct Cli {
     compat_no_color: bool,
     #[arg(
         long = "config-dir",
-        env = "RALPHEX_CONFIG_DIR",
+        env = "RALPHTERM_CONFIG_DIR",
         help = "ralphex-compatible: directory containing the global config file"
     )]
     compat_config_dir: Option<PathBuf>,
@@ -973,8 +973,6 @@ codex installed) or --external-review-tool=custom --custom-review-script <cmd>"
     })
     .await?;
 
-    install_ralphex_progress_symlink();
-
     let mut moved_dest: Option<PathBuf> = None;
     if move_plan_on_completion && move_eligible {
         let dest = move_completed_plan(&final_plan_path)?;
@@ -1039,11 +1037,11 @@ fn build_notify_config(
 }
 
 fn build_docker_config(cli: &Cli) -> crate::docker::DockerConfig {
-    let extra_volumes = std::env::var("RALPHEX_EXTRA_VOLUMES")
+    let extra_volumes = std::env::var("RALPHTERM_EXTRA_VOLUMES")
         .ok()
         .and_then(|raw| crate::docker::parse_extra_volumes(&raw).ok())
         .unwrap_or_default();
-    let extra_env = std::env::var("RALPHEX_EXTRA_ENV")
+    let extra_env = std::env::var("RALPHTERM_EXTRA_ENV")
         .map(|raw| crate::docker::parse_extra_env(&raw))
         .unwrap_or_default();
     let tz = std::env::var("TZ").ok();
@@ -1127,78 +1125,6 @@ fn move_completed_plan(plan: &FsPath) -> anyhow::Result<PathBuf> {
     // Prefer the canonical (absolute) path in user-facing output so tooling
     // can compare against an absolute filesystem location.
     Ok(dest.canonicalize().unwrap_or(dest))
-}
-
-/// Surface ralphterm progress artifacts under `.ralphex/progress` so legacy
-/// ralphex tooling that tails those paths still works. Installs a symlink
-/// `.ralphex/progress -> .ralphterm/progress` when `.ralphterm/progress`
-/// exists. Never overwrites a pre-existing regular file or directory at the
-/// target location — only stale symlinks are replaced. Failures are
-/// non-fatal: a warning is printed and the run is otherwise unaffected.
-fn install_ralphex_progress_symlink() {
-    let progress = FsPath::new(".ralphterm").join("progress");
-    if !progress.exists() {
-        return;
-    }
-    let ralphex_dir = FsPath::new(".ralphex");
-    let target = ralphex_dir.join("progress");
-    let desired_target = FsPath::new(".ralphterm").join("progress");
-
-    match fs::symlink_metadata(&target) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            let current = fs::read_link(&target).ok();
-            if current.as_deref() == Some(desired_target.as_path()) {
-                return;
-            }
-            if let Err(err) = fs::remove_file(&target) {
-                eprintln!(
-                    "[warning] could not refresh {} symlink: {err}",
-                    target.display()
-                );
-                return;
-            }
-        }
-        Ok(_) => {
-            eprintln!(
-                "[warning] {} already exists; leaving ralphex progress mirror in place",
-                target.display()
-            );
-            return;
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => {
-            eprintln!("[warning] could not inspect {}: {err}", target.display());
-            return;
-        }
-    }
-
-    if !ralphex_dir.exists() {
-        if let Err(err) = fs::create_dir_all(ralphex_dir) {
-            eprintln!(
-                "[warning] could not create {}: {err}",
-                ralphex_dir.display()
-            );
-            return;
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        if let Err(err) = std::os::unix::fs::symlink(&desired_target, &target) {
-            eprintln!(
-                "[warning] could not create symlink {}: {err}",
-                target.display()
-            );
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = desired_target;
-        eprintln!(
-            "[warning] symlinks unsupported on this platform; skipping {}",
-            target.display()
-        );
-    }
 }
 
 struct CompatWorktreeInfo {

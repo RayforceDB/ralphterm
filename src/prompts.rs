@@ -14,7 +14,7 @@ pub(crate) const TASK_TXT: &str = r####"# task execution prompt
 
 # Read the plan file at {{PLAN_FILE}}. Find the FIRST Task section (### Task N: or ### Iteration N:) that has uncompleted checkboxes ([ ]).
 
-# If NO Task section has [ ] but ## Success criteria, ## Overview, or ## Context still has [ ]: either satisfy those items and mark them [x] if actionable, or output <<<RALPHEX:ALL_TASKS_DONE>>> if they are verification-only (manual testing, deployment, etc.) — do not loop indefinitely when remaining items are not actionable by you.
+# If NO Task section has [ ] but ## Success criteria, ## Overview, or ## Context still has [ ]: either satisfy those items and mark them [x] if actionable, or output <<<RALPHTERM:ALL_TASKS_DONE>>> if they are verification-only (manual testing, deployment, etc.) — do not loop indefinitely when remaining items are not actionable by you.
 
 # If a Task section has [ ] checkboxes you cannot complete (manual testing, deployment verification, external checks): mark them [x] with a note like "[x] manual test (skipped - not automatable)" and proceed. Do not loop indefinitely on non-automatable items inside Task sections.
 
@@ -45,10 +45,10 @@ pub(crate) const TASK_TXT: &str = r####"# task execution prompt
 # - Update progress: edit {{PLAN_FILE}} and change [ ] to [x] for each checkbox you implemented in the current Task section. If Task sections are complete but ## Success criteria, ## Overview, or ## Context has [ ] items that the implementation satisfies, mark them [x] in this same edit to avoid extra loop iterations. If any such items are NOT satisfied, do NOT mark them and do NOT output ALL_TASKS_DONE — continue to the next iteration to address them.
 # - Commit all changes (code + updated plan) with message: feat: <brief task description>
 # - Check if any [ ] checkboxes remain in Task sections (### Task N: or ### Iteration N:)
-# - If NO more [ ] checkboxes in the entire plan, output exactly: <<<RALPHEX:ALL_TASKS_DONE>>>
+# - If NO more [ ] checkboxes in the entire plan, output exactly: <<<RALPHTERM:ALL_TASKS_DONE>>>
 # - If more Task sections have [ ] checkboxes, STOP HERE - do not continue
 
-# If any phase fails after reasonable fix attempts, output exactly: <<<RALPHEX:TASK_FAILED>>>
+# If any phase fails after reasonable fix attempts, output exactly: <<<RALPHTERM:TASK_FAILED>>>
 
 # REMINDER: ONE section (Task/Iteration) per loop cycle. After commit, STOP and let the loop handle the next section.
 
@@ -75,7 +75,7 @@ pub(crate) const MAKE_PLAN_TXT: &str = r#"# plan creation prompt
 
 # FIRST, check if a plan file already exists in {{PLANS_DIR}}/ matching this request.
 # If a plan file for this feature already exists:
-# - Output <<<RALPHEX:PLAN_READY>>> immediately
+# - Output <<<RALPHTERM:PLAN_READY>>> immediately
 # - Do NOT modify the existing plan
 # - STOP - do not output anything else
 
@@ -98,9 +98,9 @@ pub(crate) const MAKE_PLAN_TXT: &str = r#"# plan creation prompt
 
 # If you need user input to create a good plan, emit a QUESTION signal:
 
-# <<<RALPHEX:QUESTION>>>
+# <<<RALPHTERM:QUESTION>>>
 # {"question": "Your question here?", "options": ["Option 1", "Option 2", "Option 3"]}
-# <<<RALPHEX:END>>>
+# <<<RALPHTERM:END>>>
 
 # Rules for questions:
 # - Ask ONE question at a time
@@ -117,7 +117,7 @@ pub(crate) const MAKE_PLAN_TXT: &str = r#"# plan creation prompt
 
 # Emit the plan draft:
 
-# <<<RALPHEX:PLAN_DRAFT>>>
+# <<<RALPHTERM:PLAN_DRAFT>>>
 # <Title>
 
 ## Overview
@@ -129,7 +129,7 @@ pub(crate) const MAKE_PLAN_TXT: &str = r#"# plan creation prompt
 
 ## Implementation Steps
 # ...
-# <<<RALPHEX:END>>>
+# <<<RALPHTERM:END>>>
 
 # CRITICAL: After emitting PLAN_DRAFT, STOP immediately. Do not continue. Do not write the plan file yet.
 
@@ -152,7 +152,7 @@ pub(crate) const MAKE_PLAN_TXT: &str = r#"# plan creation prompt
 # - STOP and wait for next review
 
 # If user REJECTS (progress file contains "DRAFT REVIEW: reject"):
-# - Output exactly: <<<RALPHEX:TASK_FAILED>>>
+# - Output exactly: <<<RALPHTERM:TASK_FAILED>>>
 # - STOP immediately - the user has cancelled plan creation
 
 ## Step 4: Write Plan File (after draft accepted)
@@ -241,13 +241,13 @@ pub(crate) const MAKE_PLAN_TXT: &str = r#"# plan creation prompt
 # 1. Emit PLAN_DRAFT (Step 3.5) and wait for user review
 # 2. If user accepts, write the plan file (Step 4)
 # 3. After writing the file, emit PLAN_READY:
-#    - Output exactly: <<<RALPHEX:PLAN_READY>>>
+#    - Output exactly: <<<RALPHTERM:PLAN_READY>>>
 #    - STOP IMMEDIATELY - do not output anything else after this signal
 
 # CRITICAL RULES:
 # - DO NOT ask "Would you like to proceed?" or "Should I implement this?" or similar
 # - DO NOT wait for user approval - ralphex handles confirmation externally
-# - DO NOT use natural language questions - only use <<<RALPHEX:QUESTION>>> signal format
+# - DO NOT use natural language questions - only use <<<RALPHTERM:QUESTION>>> signal format
 # - DO NOT iterate or refine the plan after validation passes
 # - DO NOT translate the `### Task N:` and `### Iteration N:` section headers. These are structural tokens required by ralphex's parser and MUST use those exact English keywords even when the plan content is written in another language (Russian, Chinese, Spanish, etc.). Task titles and body text may be in the requested language; only the `Task` / `Iteration` keyword and the numbered format are fixed.
 # - The PLAN_READY signal means "plan is complete, session is done"
@@ -335,7 +335,7 @@ pub(crate) const REVIEW_FIRST_TXT: &str = r#"# first review prompt
 
 # Path A - NO confirmed issues found:
 # - You reviewed the code and found nothing to fix
-# - Output: <<<RALPHEX:REVIEW_DONE>>>
+# - Output: <<<RALPHTERM:REVIEW_DONE>>>
 
 # Path B - Issues found AND fixed:
 # - You found issues, fixed them, and committed
@@ -344,7 +344,7 @@ pub(crate) const REVIEW_FIRST_TXT: &str = r#"# first review prompt
 # - Your fixes might have introduced new issues - another iteration must check.
 
 # Path C - Issues found but cannot fix:
-# - Output: <<<RALPHEX:TASK_FAILED>>>
+# - Output: <<<RALPHTERM:TASK_FAILED>>>
 
 # OUTPUT FORMAT: No markdown formatting (no **bold**, `code`, # headers). Plain text and - lists are fine.
 "#;
@@ -411,7 +411,7 @@ pub(crate) const REVIEW_SECOND_TXT: &str = r#"# second review prompt
 
 # Path A - NO issues found in this iteration:
 # - You reviewed the code and found nothing critical/major to fix
-# - Output: <<<RALPHEX:REVIEW_DONE>>>
+# - Output: <<<RALPHTERM:REVIEW_DONE>>>
 
 # Path B - Issues found AND fixed:
 # 1. Fix verified critical/major issues only
@@ -422,7 +422,7 @@ pub(crate) const REVIEW_SECOND_TXT: &str = r#"# second review prompt
 #    Your fixes might have introduced new issues - another iteration must check.
 
 # Path C - Issues found but cannot fix:
-# - Output: <<<RALPHEX:TASK_FAILED>>>
+# - Output: <<<RALPHTERM:TASK_FAILED>>>
 
 # OUTPUT FORMAT: No markdown formatting (no **bold**, `code`, # headers). Plain text and - lists are fine.
 "#;
@@ -479,7 +479,7 @@ pub(crate) const CODEX_TXT: &str = r#"# codex evaluation prompt
 # **If Codex reports NO actionable issues** (empty output, "no issues found", "NO ISSUES FOUND"):
 # - Run `git diff` to review ALL uncommitted changes (accumulated fixes from multiple iterations)
 # - Commit all fixes with message: "fix: address codex review findings"
-# - Output exactly: <<<RALPHEX:CODEX_REVIEW_DONE>>>
+# - Output exactly: <<<RALPHTERM:CODEX_REVIEW_DONE>>>
 
 # CRITICAL: The CODEX_REVIEW_DONE signal means "codex found nothing to fix". Only output it when codex itself reported no issues. If you fixed anything, do NOT output the signal.
 
@@ -579,7 +579,7 @@ pub(crate) const CUSTOM_EVAL_TXT: &str = r#"# custom evaluation prompt
 # **If the review tool reports NO actionable issues** (empty output, "no issues found", "NO ISSUES FOUND"):
 # - Run `git diff` to review ALL uncommitted changes (accumulated fixes from multiple iterations)
 # - Commit all fixes with message: "fix: address external review findings"
-# - Output exactly: <<<RALPHEX:CODEX_REVIEW_DONE>>>
+# - Output exactly: <<<RALPHTERM:CODEX_REVIEW_DONE>>>
 
 # CRITICAL: Never run the external review tool yourself. The external loop handles tool execution.
 
@@ -933,7 +933,7 @@ impl Prompts {
     pub fn load(project_root: &Path, global_dir: Option<&Path>) -> Self {
         let read = |name: &str, default: &str, subdir: &str| -> String {
             let project = project_root
-                .join(".ralphex")
+                .join(".ralphterm")
                 .join(subdir)
                 .join(format!("{name}.txt"));
             if let Some(text) = read_if_exists(&project) {
@@ -1043,7 +1043,7 @@ mod tests {
     fn load_prefers_project_override_over_embedded() {
         let tmp =
             std::env::temp_dir().join(format!("rt-prompts-test-override-{}", std::process::id()));
-        let prompts_dir = tmp.join(".ralphex").join("prompts");
+        let prompts_dir = tmp.join(".ralphterm").join("prompts");
         std::fs::create_dir_all(&prompts_dir).unwrap();
         std::fs::write(prompts_dir.join("task.txt"), "MY OVERRIDE").unwrap();
         let prompts = Prompts::load(&tmp, None);

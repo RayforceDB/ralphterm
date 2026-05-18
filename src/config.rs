@@ -292,7 +292,7 @@ fn parse_bool(value: &str) -> Option<bool> {
 }
 
 /// Load configuration from the global ralphex directory and the project-local
-/// `.ralphex/config.json` (or `.ralphex/config`) file. Project values override
+/// `.ralphterm/config.json` (or `.ralphterm/config`) file. Project values override
 /// global values per field. If neither file exists, returns the default
 /// configuration.
 pub fn load(config_dir: Option<&Path>, project_root: &Path) -> Result<RalphexConfig> {
@@ -473,7 +473,7 @@ fn load_global(config_dir: Option<&Path>) -> Result<Option<RalphexConfig>> {
 }
 
 fn resolve_default_global_dir() -> Option<PathBuf> {
-    if let Some(env_dir) = std::env::var_os("RALPHEX_CONFIG_DIR") {
+    if let Some(env_dir) = std::env::var_os("RALPHTERM_CONFIG_DIR") {
         return Some(PathBuf::from(env_dir));
     }
     let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
@@ -484,8 +484,8 @@ fn resolve_default_global_dir() -> Option<PathBuf> {
 
 fn load_project(project_root: &Path) -> Result<Option<RalphexConfig>> {
     let candidates = [
-        project_root.join(".ralphex").join("config.json"),
-        project_root.join(".ralphex").join("config"),
+        project_root.join(".ralphterm").join("config.json"),
+        project_root.join(".ralphterm").join("config"),
     ];
     for candidate in candidates {
         if !candidate.exists() {

@@ -138,8 +138,8 @@ fn project_local_config_overrides_global() {
     );
     fs::write(config_dir.join("config"), global_body).expect("write global config");
 
-    let project_dir = repo.path.join(".ralphex");
-    fs::create_dir(&project_dir).expect("create .ralphex dir");
+    let project_dir = repo.path.join(".ralphterm");
+    fs::create_dir(&project_dir).expect("create .ralphterm dir");
     let project_body = serde_json::json!({
         "claude_command": fixture_path("fake-agent.sh").to_str().expect("utf8 fixture"),
         "external_review_tool": "none"
@@ -196,8 +196,8 @@ fn cli_flag_overrides_config_files() {
     );
     fs::write(config_dir.join("config"), global_body).expect("write global config");
 
-    let project_dir = repo.path.join(".ralphex");
-    fs::create_dir(&project_dir).expect("create .ralphex dir");
+    let project_dir = repo.path.join(".ralphterm");
+    fs::create_dir(&project_dir).expect("create .ralphterm dir");
     let project_body = serde_json::json!({
         "claude_command": bad_script.to_str().expect("utf8 path"),
         "external_review_tool": "none"

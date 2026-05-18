@@ -5,8 +5,8 @@
 //! the requested environment. The runner can pass the wrapped command to the
 //! existing PTY-based execution path unchanged.
 //!
-//! Volume passthrough (`RALPHEX_EXTRA_VOLUMES`) and env passthrough
-//! (`RALPHEX_EXTRA_ENV`) follow ralphex semantics:
+//! Volume passthrough (`RALPHTERM_EXTRA_VOLUMES`) and env passthrough
+//! (`RALPHTERM_EXTRA_ENV`) follow ralphex semantics:
 //!
 //!   * Extra volumes are colon-separated `host:container[:ro]` triples. Pairs
 //!     are read greedily so the parser tolerates colon-separated lists with
@@ -133,7 +133,7 @@ pub fn docker_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Parse `RALPHEX_EXTRA_VOLUMES` colon-separated entries. The format is a
+/// Parse `RALPHTERM_EXTRA_VOLUMES` colon-separated entries. The format is a
 /// greedy `host:container[:ro]` list; pairs are picked off from the left so
 /// multiple volumes can be packed into a single env var.
 pub fn parse_extra_volumes(raw: &str) -> Result<Vec<VolumeSpec>, String> {
@@ -178,7 +178,7 @@ pub fn parse_extra_volumes(raw: &str) -> Result<Vec<VolumeSpec>, String> {
     Ok(out)
 }
 
-/// Parse `RALPHEX_EXTRA_ENV` comma-separated env-passthrough entries. Each
+/// Parse `RALPHTERM_EXTRA_ENV` comma-separated env-passthrough entries. Each
 /// entry is either `KEY=VALUE` (forwarded with the given literal value) or
 /// `KEY` (forwarded with whatever value the env var currently holds).
 pub fn parse_extra_env(raw: &str) -> Vec<(String, Option<String>)> {

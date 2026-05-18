@@ -24,6 +24,7 @@ const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"
 /// await the painter task.
 pub struct Spinner {
     label_tx: watch::Sender<String>,
+    activity_tx: watch::Sender<Instant>,
     stop_tx: watch::Sender<bool>,
     handle: Option<JoinHandle<()>>,
 }
@@ -45,22 +46,34 @@ impl Spinner {
         }
 
         let initial = initial_label.into();
-        let (label_tx, label_rx) = watch::channel(initial);
-        let (stop_tx, stop_rx) = watch::channel(false);
         let started = Instant::now();
+        let (label_tx, label_rx) = watch::channel(initial);
+        let (activity_tx, activity_rx) = watch::channel(started);
+        let (stop_tx, stop_rx) = watch::channel(false);
 
-        let handle = tokio::spawn(paint_loop(label_rx, stop_rx, started));
+        let handle = tokio::spawn(paint_loop(label_rx, activity_rx, stop_rx, started));
 
         Some(Arc::new(Self {
             label_tx,
+            activity_tx,
             stop_tx,
             handle: Some(handle),
         }))
     }
 
-    /// Update the right-hand text shown next to the spinner.
+    /// Update the right-hand text shown next to the spinner. Also
+    /// counts as activity (resets the "idle Ns" suffix).
     pub fn set_label(&self, label: impl Into<String>) {
         let _ = self.label_tx.send(label.into());
+        let _ = self.activity_tx.send(Instant::now());
+    }
+
+    /// Mark activity without changing the label. Use this when an
+    /// event arrived but doesn't need a new label — typically a data
+    /// heartbeat from a long-running child. The painter resets its
+    /// "idle Ns" counter on the next frame.
+    pub fn bump_activity(&self) {
+        let _ = self.activity_tx.send(Instant::now());
     }
 
     /// Stop the spinner and clear its line. Safe to call multiple times.
@@ -88,6 +101,7 @@ impl Drop for Spinner {
 
 async fn paint_loop(
     mut label_rx: watch::Receiver<String>,
+    mut activity_rx: watch::Receiver<Instant>,
     mut stop_rx: watch::Receiver<bool>,
     started: Instant,
 ) {
@@ -100,16 +114,26 @@ async fn paint_loop(
                 if *stop_rx.borrow() { break; }
             }
             _ = label_rx.changed() => {}
+            _ = activity_rx.changed() => {}
             _ = tick.tick() => {}
         }
         let label = label_rx.borrow().clone();
+        let last_activity = *activity_rx.borrow();
         let elapsed = started.elapsed().as_secs();
+        let idle = last_activity.elapsed().as_secs();
         let frame = FRAMES[frame_idx % FRAMES.len()];
         frame_idx = frame_idx.wrapping_add(1);
         // ANSI: \r → carriage return to column 0;
         //       \x1b[2K → clear the whole line.
-        // Dim cyan for the spinner glyph, dim for the elapsed seconds.
-        let painted = format!("\r\x1b[2K\x1b[36m{frame}\x1b[0m {label} \x1b[2m({elapsed}s)\x1b[0m");
+        // Dim cyan glyph, dim trailing timestamps. When `idle` climbs
+        // significantly past zero with no label change, that's the
+        // signal: the agent is silent, suspect rate-limit or hang.
+        let timing = if idle >= 3 {
+            format!("({elapsed}s elapsed, idle {idle}s)")
+        } else {
+            format!("({elapsed}s)")
+        };
+        let painted = format!("\r\x1b[2K\x1b[36m{frame}\x1b[0m {label} \x1b[2m{timing}\x1b[0m");
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(painted.as_bytes());
         let _ = stderr.flush();
@@ -135,6 +159,10 @@ pub fn label_for_event(kind: &str) -> Option<&'static str> {
         "agent_cancelled" => Some("cancelled"),
         "agent_crashed_before_done" => Some("agent crashed before END marker"),
         "agent_exited_without_file" => Some("agent exited without writing output file"),
+        // agent_data fires every ~2s while the child is streaming
+        // bytes; the runner's event sink should call bump_activity()
+        // on it rather than overwriting the label.
+        "agent_data" => None,
         _ => None,
     }
 }

@@ -79,7 +79,7 @@ where
 }
 
 #[test]
-fn after_run_progress_log_written_under_ralphex_progress() {
+fn after_run_progress_log_written_under_ralphterm_progress() {
     let repo = TestRepo::new();
     let plan_path = repo.path().join("plan.md");
     write_minimal_plan(&plan_path);
@@ -108,7 +108,7 @@ fn after_run_progress_log_written_under_ralphex_progress() {
 
     let progress_path = repo
         .path()
-        .join(".ralphex")
+        .join(".ralphterm")
         .join("progress")
         .join("progress-plan.txt");
     let body = fs::read_to_string(&progress_path).unwrap_or_else(|err| {
@@ -123,9 +123,9 @@ fn after_run_progress_log_written_under_ralphex_progress() {
     );
 }
 
-// preexisting_ralphex_progress_file_is_not_overwritten removed: the new
-// runner writes per-plan files at .ralphex/progress/progress-<slug>.txt
-// instead of treating .ralphex/progress as a single user-owned file, so
+// preexisting_ralphterm_progress_file_is_not_overwritten removed: the new
+// runner writes per-plan files at .ralphterm/progress/progress-<slug>.txt
+// instead of treating .ralphterm/progress as a single user-owned file, so
 // the legacy "preserve external file" contract no longer applies.
 
 #[test]

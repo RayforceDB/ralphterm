@@ -277,7 +277,7 @@ fn ralphex_style_cli_runs_plan_without_run_subcommand() {
 // the agent never gets the chance to flip subsequent checkboxes.
 
 #[test]
-fn run_command_writes_progress_log_under_ralphex() {
+fn run_command_writes_progress_log_under_ralphterm() {
     let repo = TempRepo::new();
     repo.init_git();
     let plan_path = repo.path.join("plan.md");
@@ -309,7 +309,7 @@ fn run_command_writes_progress_log_under_ralphex() {
 
     let progress_path = repo
         .path
-        .join(".ralphex")
+        .join(".ralphterm")
         .join("progress")
         .join("progress-plan.txt");
     assert!(
