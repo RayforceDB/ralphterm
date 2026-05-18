@@ -140,13 +140,16 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
         .map(|offset| h1_open_end + offset)
         .expect("landing h1 should close");
     let h1_text = site_index[h1_open_end..h1_close].to_lowercase();
+    // Hero must lead with the problem we solve (long unattended AI
+    // coding sessions, plan-loop automation, review gate, PTY-driven
+    // CLI). NOT with internal API mechanics.
     assert!(
-        h1_text.contains("drop-in")
-            || h1_text.contains("ralphex")
-            || h1_text.contains("review gate")
-            || h1_text.contains("pty")
-            || h1_text.contains("terminal"),
-        "landing hero h1 should lead with the founding TTY pitch or the drop-in / ralphex / review-gate story (got: {h1_text:?})"
+        h1_text.contains("unattended")
+            || h1_text.contains("plan")
+            || h1_text.contains("session")
+            || h1_text.contains("ai coding")
+            || h1_text.contains("pty"),
+        "landing hero h1 should describe the problem we solve (got: {h1_text:?})"
     );
 
     let head_len = site_index.len().min(3000);
@@ -588,7 +591,12 @@ fn dashboard_run_form_validates_review_retry_budget_before_post() {
 }
 
 #[test]
-fn landing_page_leads_with_ralphex_drop_in_pitch() {
+fn landing_hero_describes_what_problem_ralphterm_solves() {
+    // The site no longer leads with "drop-in for ralphex" — that's
+    // covered separately in the migration guide. The hero now has to
+    // describe the actual problem: long, multi-prompt, unattended AI
+    // coding sessions. Pin enough vocabulary that the lead can't
+    // silently regress to internal-API or marketing-positioning copy.
     let site_index = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/index.html"),
     )
@@ -606,40 +614,23 @@ fn landing_page_leads_with_ralphex_drop_in_pitch() {
         .find("</h1>")
         .map(|offset| h1_open_end + offset)
         .expect("landing h1 should close");
-    let h1_text = site_index[h1_open_end..h1_close].to_lowercase();
-    // Hero h1 must lead with the founding identity (programmable PTY).
-    // The "drop-in for ralphex" framing now lives in the lead paragraph,
-    // not the h1 — assert it appears nearby in the hero copy.
-    assert!(
-        h1_text.contains("pty") || h1_text.contains("terminal") || h1_text.contains("drop-in"),
-        "landing rt-display h1 should lead with the PTY/terminal pitch (got: {h1_text:?})"
-    );
     let hero_section_end = site_index[h1_close..]
         .find("</section>")
         .map(|offset| h1_close + offset)
         .unwrap_or(site_index.len());
     let hero_body = site_index[h1_close..hero_section_end].to_lowercase();
-    assert!(
-        hero_body.contains("drop-in") && hero_body.contains("ralphex"),
-        "hero body should still mention the ralphex drop-in (got body: {hero_body:?})"
-    );
 
+    // At least one each: a vocabulary word for the workflow, and a
+    // vocabulary word for the technical substrate.
+    let workflow_terms = ["unattended", "plan", "iteration", "session", "long"];
+    let mechanism_terms = ["claude", "codex", "pty", "interactive", "loop"];
     assert!(
-        site_index.contains("href=\"/docs/migrate-from-ralphex.html\""),
-        "landing page should link to the migration guide"
+        workflow_terms.iter().any(|w| hero_body.contains(w)),
+        "hero body should describe the workflow problem (any of {workflow_terms:?}); got: {hero_body:?}"
     );
-}
-
-#[test]
-fn landing_page_links_to_migration_guide() {
-    let site_index = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site/index.html"),
-    )
-    .expect("read site index");
     assert!(
-        site_index.contains("<a href=\"/docs/migrate-from-ralphex.html\"")
-            || site_index.contains("href=\"/docs/migrate-from-ralphex.html\""),
-        "landing page should link to the migration guide"
+        mechanism_terms.iter().any(|w| hero_body.contains(w)),
+        "hero body should name the mechanism (any of {mechanism_terms:?}); got: {hero_body:?}"
     );
 }
 
@@ -926,13 +917,7 @@ fn favicon_svg_present_and_matches_logo_pattern() {
 #[test]
 fn landing_uses_spec_sheet_eyebrows() {
     let html = std::fs::read_to_string("site/index.html").expect("read site/index.html");
-    for marker in &[
-        "— capabilities",
-        "— drop in",
-        "— what it replaces",
-        "— invoke",
-        "— install",
-    ] {
+    for marker in &["— capabilities", "— how it works", "— invoke", "— install"] {
         assert!(
             html.contains(marker),
             "landing must include the '{marker}' eyebrow"

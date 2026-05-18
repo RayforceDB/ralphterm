@@ -6,9 +6,9 @@
 [![Website](https://img.shields.io/badge/website-ralphterm.rayforcedb.com-00d992)](https://ralphterm.rayforcedb.com)
 [![Social Preview](https://img.shields.io/badge/social-preview-818cf8)](https://ralphterm.rayforcedb.com/assets/social-preview.png)
 
-**Drop-in replacement for [ralphex](https://github.com/umputun/ralphex), with PTY-native CLI execution.**
+**Long AI coding sessions, unattended.**
 
-RalphTerm runs the same plans, configs, agents, prompts, and review pipelines you'd hand to ralphex — unchanged. It executes the official AI CLIs inside real PTYs and captures their output via a file-handoff contract, so it works against the same interactive CLI a human uses, not a one-shot prompt-mode adapter. The bundled `ralphex` binary alias means you can swap binaries without touching scripts.
+The official `claude` and `codex` CLIs are interactive REPLs built for one prompt at a time. Real work isn't one prompt — it's read the plan, pick the next task, edit files, run validation, commit, mark done, do the next one, for hours. RalphTerm wraps the interactive CLI in a controlled PTY and runs that loop for you. Per-task commits. Parallel review gate before merge. Transcripts of every iteration. A web dashboard to watch from.
 
 ## Install
 
@@ -23,22 +23,22 @@ irm https://ralphterm.rayforcedb.com/install.ps1 | iex
 cargo install ralphterm
 ```
 
-Both binaries — `ralphterm` and the `ralphex` alias — are installed.
+The installer lands `ralphterm` in `~/.local/bin` and supports `ralphterm update` for in-place upgrades.
 
-## Drop in
+## Run a plan
 
 ```sh
-# Before
-ralphex --tasks-only docs/plans/feature.md
-
-# After (literally the same command, ralphex is now a ralphterm alias)
-ralphex --tasks-only docs/plans/feature.md
-
-# Or use ralphterm directly
+# Implementation loop only (skip the review gate)
 ralphterm --tasks-only docs/plans/feature.md
+
+# Full mode — implementation + 3-phase review pipeline
+ralphterm docs/plans/feature.md
+
+# Web dashboard at http://127.0.0.1:7878/dashboard
+ralphterm serve
 ```
 
-Keep the rest of your `~/.config/ralphex/` setup. RalphTerm reads it.
+Plan files are markdown. Each `- [ ]` is a task; the implementer agent picks the next one, edits files, runs validation commands, commits, marks it done. See [`docs/workflows.md`](docs/workflows.md) for the format and the per-phase contract.
 
 ## First-run trust precondition
 

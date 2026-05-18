@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RalphTerm — Drop-in for ralphex. Real PTY. Real review gates.</title>
-  <meta name="description" content="Drop-in replacement for ralphex. Runs your existing plans through the official AI CLIs in real PTY sessions. No --print, no -p, no one-shot prompt mode.">
-  <meta name="keywords" content="RalphTerm, ralphex, Claude Code, Codex, AI coding agents, plan runner, terminal automation, CLI orchestration, autonomous coding, PTY">
+  <title>RalphTerm — long AI coding sessions, unattended.</title>
+  <meta name="description" content="Hand `claude` or `codex` a multi-task markdown plan. RalphTerm drives the official interactive CLI through it iteratively — validating per task, committing each one, retrying on review failures, streaming progress.">
+  <meta name="keywords" content="RalphTerm, Claude Code, Codex, AI coding agents, plan runner, terminal automation, CLI orchestration, autonomous coding, PTY">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://ralphterm.rayforcedb.com/">
 
   <meta property="og:type" content="website">
-  <meta property="og:title" content="RalphTerm — Drop-in for ralphex. Real PTY.">
-  <meta property="og:description" content="Drop-in replacement for ralphex. Runs your existing plans through the official AI CLIs in real PTY sessions.">
+  <meta property="og:title" content="RalphTerm — long AI coding sessions, unattended.">
+  <meta property="og:description" content="Hand `claude` or `codex` a multi-task plan. RalphTerm drives the interactive CLI through it: validates, commits per task, parallel review gate before merge.">
   <meta property="og:url" content="https://ralphterm.rayforcedb.com/">
   <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png">
   <meta property="og:site_name" content="RalphTerm">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="RalphTerm — Drop-in for ralphex. Real PTY.">
-  <meta name="twitter:description" content="Drop-in replacement for ralphex. Real PTY, real review gates.">
+  <meta name="twitter:title" content="RalphTerm — long AI coding sessions, unattended.">
+  <meta name="twitter:description" content="Drives the real `claude` / `codex` CLIs through multi-task plans. Per-task commits. Parallel review gate. Watch it in a dashboard.">
   <meta name="twitter:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png">
 
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
@@ -32,7 +32,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "RalphTerm",
-    "description": "Drop-in replacement for ralphex. Runs the official AI CLIs in real PTY sessions, validates task output, requires independent review when configured, commits progress, and keeps transcripts.",
+    "description": "Drives the official Claude Code and Codex CLIs through long multi-task plans. Wraps the interactive REPL in a controlled PTY, iterates through plan checkboxes, runs validation per task, commits, gates merge behind a parallel review pipeline, and streams progress.",
     "url": "https://ralphterm.rayforcedb.com",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS",
@@ -71,18 +71,18 @@
     <!-- Hero -->
     <section class="rt-hero" id="overview">
       <div>
-        <p class="rt-eyebrow is-tagline">RALPHTERM / v0.3.0 / MIT</p>
-        <h1 class="rt-display">A programmable PTY for the official AI CLIs.</h1>
-        <p class="rt-lead">Drop-in for ralphex 1.2.0. Same plan, same flags, same 3-phase review pipeline — but driven through a real PTY against the interactive <code>claude</code> and <code>codex</code> CLIs. The official tools own login, model selection, safety prompts, and rate limits; ralphterm owns the loop, transcripts, signals, review gates, and notifications.</p>
+        <p class="rt-eyebrow is-tagline">RALPHTERM / v0.3.11 / MIT</p>
+        <h1 class="rt-display">Long AI coding sessions, unattended.</h1>
+        <p class="rt-lead">The official <code>claude</code> and <code>codex</code> CLIs are interactive REPLs built for one prompt at a time. Real work isn't one prompt — it's read the plan, pick the next task, edit files, run validation, commit, mark done, do the next one, for hours. RalphTerm wraps the interactive CLI in a controlled PTY and runs that loop for you. Per-task commits. Parallel review gate before merge. Transcripts of every iteration. A web dashboard to watch from.</p>
         <div class="rt-cta-row">
           <a class="rt-btn is-primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
-          <a class="rt-btn" href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
+          <a class="rt-btn" href="/docs/">Docs</a>
         </div>
       </div>
       <aside class="rt-hero-spec" aria-label="At a glance">
         <p class="rt-eyebrow">— spec</p>
         <div><dt>language</dt>  <dd>Rust 2021</dd></div>
-        <div><dt>binaries</dt>  <dd>ralphterm, ralphex</dd></div>
+        <div><dt>binary</dt>    <dd>ralphterm</dd></div>
         <div><dt>license</dt>   <dd>MIT</dd></div>
         <div><dt>drives</dt>    <dd>claude, codex (interactive)</dd></div>
         <div><dt>install</dt>   <dd>curl | sh &nbsp;·&nbsp; cargo install ralphterm</dd></div>
@@ -107,25 +107,16 @@
       </table>
     </section>
 
-    <!-- Drop-in proof -->
+    <!-- How it works -->
     <section class="rt-section" id="cli">
-      <p class="rt-eyebrow">— drop in</p>
-      <div class="rt-compare">
-        <pre class="rt-code-block">$ ralphex --tasks-only docs/plans/feature.md</pre>
-        <span class="rt-equiv" aria-hidden="true">≡</span>
-        <pre class="rt-code-block">$ ralphterm --tasks-only docs/plans/feature.md</pre>
-      </div>
-      <p style="margin-top:12px;font-size:12px;color:var(--rt-muted)">Same flags, same plan, same output. The <code>ralphex</code> binary is an alias for <code>ralphterm</code> — point your scripts at either.</p>
-    </section>
-
-    <!-- What it replaces -->
-    <section class="rt-section">
-      <p class="rt-eyebrow">— what it replaces</p>
-      <p style="max-width:var(--rt-read-max);margin-bottom:12px"><strong>Prompt mode breaks.</strong> Long plan runs hit login screens, approval prompts, rate limits, follow-up questions, and output changes.</p>
+      <p class="rt-eyebrow">— how it works</p>
+      <p style="max-width:var(--rt-read-max);margin-bottom:12px"><strong>Spawn the real CLI in a PTY.</strong> Same binary a human would type. Same login, same model, same safety prompts, same rate limits — those still belong to the upstream tool.</p>
       <hr>
-      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>PTY mode survives.</strong> The official CLI keeps its real terminal. RalphTerm watches output and sends input like a controlled operator.</p>
+      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>Drive the plan loop.</strong> Read the next unchecked checkbox, paste it as the prompt, capture the response via a file-handoff side channel, commit, mark done, repeat. Per-iteration transcripts written to <code>.ralphex/progress/</code>.</p>
       <hr>
-      <p style="max-width:var(--rt-read-max);margin-top:12px"><strong>Runs stay auditable.</strong> Every task exposes validation results, completion signals, commit hashes, and the raw transcript.</p>
+      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>Gate the merge.</strong> Optional 3-phase parallel review pipeline (5 reviewers → external/codex fixer loop → 2 reviewers). Critical findings block the merge; the implementer gets a retry budget.</p>
+      <hr>
+      <p style="max-width:var(--rt-read-max);margin-top:12px"><strong>Watch from a dashboard.</strong> <code>ralphterm serve</code> exposes a local HTTP API + WebSocket transcripts. Notifications go out over Telegram, Slack, Email, or Webhook.</p>
     </section>
 
     <!-- Invoke -->
@@ -141,7 +132,7 @@
       <pre class="rt-code-block">$ curl -sSf https://ralphterm.rayforcedb.com/install.sh | sh</pre>
       <pre class="rt-code-block">PS&gt; irm https://ralphterm.rayforcedb.com/install.ps1 | iex</pre>
       <pre class="rt-code-block">$ cargo install ralphterm</pre>
-      <p style="margin-top:10px;font-size:12px;color:var(--rt-muted)">Both binaries — <code>ralphterm</code> and the <code>ralphex</code> alias — land in <code>~/.local/bin</code>.</p>
+      <p style="margin-top:10px;font-size:12px;color:var(--rt-muted)">The installer lands <code>ralphterm</code> in <code>~/.local/bin</code> and supports <code>ralphterm update</code> for in-place upgrades.</p>
     </section>
 
     <!-- Features grid -->
@@ -163,7 +154,6 @@
       <div class="rt-cta-row">
         <a class="rt-btn is-primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
         <a class="rt-btn" href="/docs/">Read the docs</a>
-        <a class="rt-btn" href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
       </div>
     </section>
   </main>

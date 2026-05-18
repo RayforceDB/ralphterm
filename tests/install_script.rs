@@ -67,17 +67,12 @@ fn cargo_toml_has_publish_metadata() {
         assert!(cargo.contains(field), "Cargo.toml must declare {field}");
     }
     assert!(
-        cargo.contains("\"ralphex\""),
-        "Cargo.toml keywords must include \"ralphex\""
-    );
-    assert!(
         cargo.contains("[[bin]]\nname = \"ralphterm\"")
             || cargo.contains("[[bin]]\r\nname = \"ralphterm\""),
         "Cargo.toml must declare the ralphterm binary"
     );
     assert!(
-        cargo.contains("[[bin]]\nname = \"ralphex\"")
-            || cargo.contains("[[bin]]\r\nname = \"ralphex\""),
-        "Cargo.toml must declare the ralphex binary"
+        !cargo.contains("name = \"ralphex\""),
+        "ralphex binary was dropped from the package; Cargo.toml must not re-declare it"
     );
 }
