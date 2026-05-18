@@ -1,6 +1,6 @@
 [package]
 name = "ralphterm"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 rust-version = "1.85"
 description = "Programmable PTY for the official Claude Code and Codex CLIs. Drop-in for ralphex 1.2.0 without --print or -p — drives the real interactive REPL via PTY + file-handoff."
