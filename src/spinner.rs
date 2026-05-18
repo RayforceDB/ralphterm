@@ -188,6 +188,34 @@ async fn paint_loop(
     let _ = stderr.flush();
 }
 
+/// Translate a `crate::agent_driver::DriverEvent.kind` into a
+/// human-friendly spinner label. Returns `None` for kinds we don't
+/// want to surface (so the previous label stays).
+pub fn label_for_event(kind: &str) -> Option<&'static str> {
+    match kind {
+        "agent_started" => Some("agent spawned, waiting for REPL ready"),
+        "bypass_permissions_dialog_seen" => Some("dismissing bypass-permissions dialog"),
+        "agent_prompt_pasted" => Some("prompt delivered, waiting for response"),
+        "agent_prompt_submitted" => Some("waiting for agent response"),
+        "agent_output_file_complete" => Some("captured response, reaping agent"),
+        "agent_completed" => Some("iteration complete"),
+        "agent_timed_out" => Some("idle timeout"),
+        "agent_cancelled" => Some("cancelled"),
+        "agent_crashed_before_done" => Some("agent crashed before END marker"),
+        "agent_exited_without_file" => Some("agent exited without writing output file"),
+        // agent_data fires every ~2s while the child is streaming
+        // bytes; the runner's event sink should call bump_activity()
+        // on it rather than overwriting the label.
+        "agent_data" => None,
+        // agent_writing_output fires every time the output file grows.
+        // We don't overwrite the per-phase label, but it counts as
+        // activity and the runner can append a "(writing response)"
+        // suffix if it wants stronger signal.
+        "agent_writing_output" => None,
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,33 +242,5 @@ mod tests {
         assert_eq!(fit_to_width("hello world", 3), "hel");
         assert_eq!(fit_to_width("hello world", 1), "h");
         assert_eq!(fit_to_width("hello world", 4), "hel…");
-    }
-}
-
-/// Translate a `crate::agent_driver::DriverEvent.kind` into a
-/// human-friendly spinner label. Returns `None` for kinds we don't
-/// want to surface (so the previous label stays).
-pub fn label_for_event(kind: &str) -> Option<&'static str> {
-    match kind {
-        "agent_started" => Some("agent spawned, waiting for REPL ready"),
-        "bypass_permissions_dialog_seen" => Some("dismissing bypass-permissions dialog"),
-        "agent_prompt_pasted" => Some("prompt delivered, waiting for response"),
-        "agent_prompt_submitted" => Some("waiting for agent response"),
-        "agent_output_file_complete" => Some("captured response, reaping agent"),
-        "agent_completed" => Some("iteration complete"),
-        "agent_timed_out" => Some("idle timeout"),
-        "agent_cancelled" => Some("cancelled"),
-        "agent_crashed_before_done" => Some("agent crashed before END marker"),
-        "agent_exited_without_file" => Some("agent exited without writing output file"),
-        // agent_data fires every ~2s while the child is streaming
-        // bytes; the runner's event sink should call bump_activity()
-        // on it rather than overwriting the label.
-        "agent_data" => None,
-        // agent_writing_output fires every time the output file grows.
-        // We don't overwrite the per-phase label, but it counts as
-        // activity and the runner can append a "(writing response)"
-        // suffix if it wants stronger signal.
-        "agent_writing_output" => None,
-        _ => None,
     }
 }
