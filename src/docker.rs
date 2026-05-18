@@ -86,7 +86,11 @@ pub fn docker_wrap_command(
     // container CMD where its iteration-output file lives. The paths
     // themselves are valid inside the container because the working
     // tree is bind-mounted at the same path on both sides (see -v above).
-    for key in ["RALPHTERM_OUTPUT_FILE", "RALPHTERM_PROMPT_FILE", "RALPHTERM_NONCE"] {
+    for key in [
+        "RALPHTERM_OUTPUT_FILE",
+        "RALPHTERM_PROMPT_FILE",
+        "RALPHTERM_NONCE",
+    ] {
         wrapped.push("-e".to_string());
         wrapped.push(key.to_string());
     }
