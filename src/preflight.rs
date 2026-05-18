@@ -38,25 +38,45 @@ impl<'a> Preflight<'a> {
             ensure_workspace_trusted(self.repo_root)?;
         }
 
-        if !self.allow_dirty && !self.use_worktree {
+        // Detect resume: we're already on the plan's branch from a
+        // previous (probably interrupted) run. In that case the dirty
+        // files in the worktree are the agent's partial work, not the
+        // user's WIP, and we should pick up where we left off rather
+        // than refuse to start. Only print a heads-up if files are
+        // actually dirty so the operator knows something carried over.
+        let current = if self.use_worktree {
+            String::new()
+        } else {
+            current_branch(self.repo_root)?
+        };
+        let resuming = !self.use_worktree && current == branch;
+
+        if !self.allow_dirty && !self.use_worktree && !resuming {
             let dirty = collect_uncommitted_paths(self.repo_root)?;
             if !dirty.is_empty() {
                 bail!(format_dirty_message(&dirty, self.plan_path));
             }
         }
 
+        if resuming {
+            let dirty = collect_uncommitted_paths(self.repo_root)?;
+            if !dirty.is_empty() {
+                eprintln!(
+                    "resuming on branch {branch} with {} uncommitted file(s) — the next iteration will pick up where the previous run was interrupted",
+                    dirty.len()
+                );
+            }
+        }
+
         let mut created = false;
-        if !self.use_worktree {
-            let current = current_branch(self.repo_root)?;
-            if current != branch {
-                if branch_exists(self.repo_root, &branch)? {
-                    git(self.repo_root, &["checkout", &branch])
-                        .with_context(|| format!("switch to existing branch {branch}"))?;
-                } else {
-                    git(self.repo_root, &["checkout", "-b", &branch])
-                        .with_context(|| format!("create branch {branch}"))?;
-                    created = true;
-                }
+        if !self.use_worktree && !resuming {
+            if branch_exists(self.repo_root, &branch)? {
+                git(self.repo_root, &["checkout", &branch])
+                    .with_context(|| format!("switch to existing branch {branch}"))?;
+            } else {
+                git(self.repo_root, &["checkout", "-b", &branch])
+                    .with_context(|| format!("create branch {branch}"))?;
+                created = true;
             }
         }
 
@@ -427,6 +447,60 @@ mod tests {
         };
         let err = p.check().unwrap_err().to_string();
         assert!(err.contains("uncommitted files"), "{err}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn already_on_plan_branch_resumes_without_dirty_refusal() {
+        // Repro: user runs ralphterm against a plan, agent makes
+        // changes mid-iteration, user hits Ctrl+C. Re-running the
+        // same command should pick up where it left off, not bail
+        // because of the agent's own uncommitted files. Fix: when
+        // current_branch == plan-derived branch we treat the run as
+        // a resume and skip the dirty refusal.
+        let repo = init_repo();
+        let plan = repo.join("docs/plans/hello.md");
+        std::fs::create_dir_all(plan.parent().unwrap()).unwrap();
+        std::fs::write(&plan, "# plan\n").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "-A"])
+            .status()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-q", "-m", "init"])
+            .status()
+            .unwrap();
+        // Simulate a previous interrupted run: branch exists, we're
+        // on it, and there's an uncommitted agent edit.
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["checkout", "-q", "-b", "hello"])
+            .status()
+            .unwrap();
+        std::fs::write(
+            repo.join("partial-work.txt"),
+            "agent left this mid-iteration\n",
+        )
+        .unwrap();
+
+        let out = Preflight {
+            repo_root: &repo,
+            plan_path: &plan,
+            branch_override: None,
+            use_worktree: false,
+            allow_dirty: false,
+            skip_trust_check: true,
+        }
+        .check()
+        .expect("resume on plan branch should not bail on dirty worktree");
+        assert_eq!(out.branch, "hello");
+        // We did not CREATE the branch this run — we were already on it.
+        assert!(!out.created_branch);
         let _ = std::fs::remove_dir_all(&repo);
     }
 
