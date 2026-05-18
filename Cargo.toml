@@ -1,6 +1,6 @@
 [package]
 name = "ralphterm"
-version = "0.3.5"
+version = "0.3.6"
 edition = "2021"
 rust-version = "1.85"
 description = "Programmable PTY for the official Claude Code and Codex CLIs. Drop-in for ralphex 1.2.0 without --print or -p — drives the real interactive REPL via PTY + file-handoff."
@@ -92,4 +92,4 @@ cargo-dist-version = "0.22.0"
 #  - aarch64-apple-darwin → macos-14 (Apple Silicon; was: macos-13, Intel-only)
 #  - x86_64-apple-darwin → macos-13 (still live for Intel macs)
 #  - x86_64-pc-windows-msvc → windows-latest (was: windows-2019, retired)
-github-custom-runners = { "aarch64-unknown-linux-gnu" = "ubuntu-latest", "x86_64-unknown-linux-gnu" = "ubuntu-latest", "aarch64-apple-darwin" = "macos-14", "x86_64-apple-darwin" = "macos-13", "x86_64-pc-windows-msvc" = "windows-latest" }
+github-custom-runners = { "aarch64-unknown-linux-gnu" = "ubuntu-latest", "x86_64-unknown-linux-gnu" = "ubuntu-latest", "aarch64-apple-darwin" = "macos-14", "x86_64-apple-darwin" = "macos-14", "x86_64-pc-windows-msvc" = "windows-latest" }
