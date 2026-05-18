@@ -368,22 +368,37 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         let prompt = substitute(&prompts.task, &vars);
         let idle_timeout = agent_timeout.unwrap_or_else(agent_timeout_default);
 
-        let driver_sink = event_sink
-            .as_ref()
-            .map(|sink| -> crate::agent_driver::EventSink {
-                let sink = sink.clone();
-                let attempt = iteration;
+        // Liveness spinner. Returns None when stderr isn't a TTY or
+        // the user opts out via NO_COLOR / RALPHTERM_NO_SPINNER, in
+        // which case driver events still flow through to event_sink
+        // but no spinner paints.
+        let spinner =
+            crate::spinner::Spinner::start(format!("iteration {iteration}: starting agent"));
+
+        let driver_sink = {
+            let outer_sink = event_sink.clone();
+            let attempt = iteration;
+            let spinner = spinner.clone();
+            let sink: crate::agent_driver::EventSink =
                 Arc::new(move |ev: crate::agent_driver::DriverEvent| {
-                    let _ = sink(PlanRunEvent {
-                        event_type: ev.kind,
-                        task_number: None,
-                        task_title: None,
-                        attempt: Some(attempt),
-                        artifact_path: None,
-                        message: ev.detail.clone(),
-                    });
-                })
-            });
+                    if let Some(spinner) = spinner.as_ref() {
+                        if let Some(label) = crate::spinner::label_for_event(ev.kind) {
+                            spinner.set_label(format!("iteration {attempt}: {label}"));
+                        }
+                    }
+                    if let Some(ref sink) = outer_sink {
+                        let _ = sink(PlanRunEvent {
+                            event_type: ev.kind,
+                            task_number: None,
+                            task_title: None,
+                            attempt: Some(attempt),
+                            artifact_path: None,
+                            message: ev.detail.clone(),
+                        });
+                    }
+                });
+            Some(sink)
+        };
 
         // Drive the agent through the v0.3 TTY-native file-handoff
         // contract: PTY-only (no --print), bracketed-paste keystrokes,
@@ -398,6 +413,13 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             event_sink: driver_sink,
         })
         .await?;
+
+        // Stop the spinner before we start printing the captured
+        // response so the lines don't get overwritten by the next paint.
+        if let Some(s) = spinner.as_ref() {
+            s.stop();
+        }
+        drop(spinner);
 
         // Stream the captured response (the agent's curated account of
         // this iteration) into the progress log so the next iteration's

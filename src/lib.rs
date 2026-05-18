@@ -38,6 +38,8 @@ pub mod runs;
 #[doc(hidden)]
 pub mod signals;
 #[doc(hidden)]
+pub mod spinner;
+#[doc(hidden)]
 pub mod store;
 #[doc(hidden)]
 pub mod workspace;
