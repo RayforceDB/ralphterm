@@ -303,6 +303,14 @@ enum Command {
         #[command(subcommand)]
         command: WorkspaceCommand,
     },
+    /// Update ralphterm in place by re-running the official installer.
+    ///
+    /// Downloads https://ralphterm.rayforcedb.com/install.sh and pipes
+    /// it to `sh`. install.sh tries the cargo-dist prebuilt binary for
+    /// your platform first and falls back to `cargo install ralphterm`
+    /// if no prebuilt exists (so works the same whether your original
+    /// install was via curl|sh or `cargo install`).
+    Update,
 }
 
 #[derive(Debug, Subcommand)]
@@ -475,6 +483,7 @@ pub async fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Workspace { command }) => run_workspace_command(command),
+        Some(Command::Update) => run_self_update(),
         None => {
             if cli.compat_serve {
                 run_compat_serve(cli).await
@@ -1329,6 +1338,40 @@ fn run_workspace_command(command: WorkspaceCommand) -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Self-update entrypoint. Pipes the canonical install.sh through
+/// `sh` so the user gets exactly the same install logic as a fresh
+/// `curl | sh` — prebuilt cargo-dist artifact when available, cargo
+/// install fallback otherwise. Returns the installer's exit code as
+/// our own. Requires `curl` and `sh` on PATH.
+fn run_self_update() -> anyhow::Result<()> {
+    use std::process::Command as StdCommand;
+
+    const INSTALL_URL: &str = "https://ralphterm.rayforcedb.com/install.sh";
+    println!(
+        "ralphterm v{} → fetching {} …",
+        env!("CARGO_PKG_VERSION"),
+        INSTALL_URL
+    );
+
+    // curl -sSf <url> | sh, expressed as one shell pipeline so the
+    // installer's stdout streams to the user's terminal live (no
+    // buffering, no temp file).
+    let pipeline = format!("curl -sSf {INSTALL_URL} | sh");
+    let status = StdCommand::new("sh")
+        .arg("-c")
+        .arg(&pipeline)
+        .status()
+        .context("spawn sh for self-update")?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "update failed (exit code {}); see installer output above",
+            status.code().unwrap_or(-1)
+        );
+    }
     Ok(())
 }
 
