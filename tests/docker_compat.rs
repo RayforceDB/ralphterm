@@ -209,11 +209,14 @@ fn docker_smoke_runs_plan_against_in_test_image() {
     let plan_path = repo.path().join("plan.md");
     write_minimal_plan(&plan_path);
 
-    // Build a tiny image whose entrypoint prints COMPLETED and creates first.txt.
+    // Build a tiny image whose entrypoint creates first.txt and satisfies
+    // ralphterm's v0.3 file-handoff contract by writing BEGIN/END
+    // markers (with ALL_TASKS_DONE) to $RALPHTERM_OUTPUT_FILE. The env
+    // var is propagated by src/docker.rs::docker_wrap_command.
     let dockerfile = repo.path().join("Dockerfile.smoke");
     fs::write(
         &dockerfile,
-        "FROM debian:stable-slim\nCMD [\"sh\",\"-c\",\"echo created > first.txt; echo RALPHEX:ALL_TASKS_DONE; echo COMPLETED\"]\n",
+        "FROM debian:stable-slim\nCMD [\"sh\",\"-c\",\"echo created > first.txt; printf '<<<BEGIN>>>\\\\ndocker smoke done\\\\nALL_TASKS_DONE\\\\n<<<END>>>\\\\n' > \\\"$RALPHTERM_OUTPUT_FILE\\\"\"]\n",
     )
     .unwrap();
 

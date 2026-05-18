@@ -80,6 +80,16 @@ pub fn docker_wrap_command(
         wrapped.push("-e".to_string());
         wrapped.push("ANTHROPIC_API_KEY".to_string());
     }
+    // Pass the v0.3 file-handoff contract through to the container so
+    // the in-container agent can satisfy
+    // crate::agent_driver::drive_agent without us having to teach the
+    // container CMD where its iteration-output file lives. The paths
+    // themselves are valid inside the container because the working
+    // tree is bind-mounted at the same path on both sides (see -v above).
+    for key in ["RALPHTERM_OUTPUT_FILE", "RALPHTERM_PROMPT_FILE", "RALPHTERM_NONCE"] {
+        wrapped.push("-e".to_string());
+        wrapped.push(key.to_string());
+    }
     if let Some(tz) = &cfg.tz {
         wrapped.push("-e".to_string());
         wrapped.push(format!("TZ={tz}"));
