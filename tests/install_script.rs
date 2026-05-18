@@ -1,5 +1,5 @@
 #[test]
-fn vanity_install_sh_redirects_to_cargo_dist_installer() {
+fn vanity_install_sh_routes_through_cargo_dist_with_cargo_fallback() {
     let body = std::fs::read_to_string("site/install.sh").expect("read site/install.sh");
     assert!(
         body.starts_with("#!/bin/sh\n"),
@@ -10,20 +10,25 @@ fn vanity_install_sh_redirects_to_cargo_dist_installer() {
         body.contains(
             "github.com/RayforceDB/ralphterm/releases/latest/download/ralphterm-installer.sh"
         ),
-        "install.sh must redirect to the cargo-dist installer URL"
+        "install.sh must reference the cargo-dist installer URL"
     );
     assert!(
-        body.contains("exec sh -c"),
-        "install.sh must exec the downloaded installer"
+        body.contains("cargo install ralphterm"),
+        "install.sh must fall back to `cargo install ralphterm` when no prebuilt binary exists for the host platform"
     );
     assert!(
-        body.contains("\"$@\""),
-        "install.sh must forward args to the downstream installer"
+        body.contains("isn't a download for your platform")
+            || body.contains("no precompiled binaries"),
+        "install.sh must detect the cargo-dist \"no download for your platform\" failure to trigger the fallback"
+    );
+    assert!(
+        body.contains("rustup.rs"),
+        "install.sh must point at https://rustup.rs when cargo isn't installed either"
     );
 }
 
 #[test]
-fn vanity_install_ps1_redirects_to_cargo_dist_installer() {
+fn vanity_install_ps1_routes_through_cargo_dist_with_cargo_fallback() {
     let body = std::fs::read_to_string("site/install.ps1").expect("read site/install.ps1");
     assert!(
         body.contains("ErrorActionPreference = 'Stop'"),
@@ -33,11 +38,15 @@ fn vanity_install_ps1_redirects_to_cargo_dist_installer() {
         body.contains(
             "github.com/RayforceDB/ralphterm/releases/latest/download/ralphterm-installer.ps1"
         ),
-        "install.ps1 must redirect to the cargo-dist installer URL"
+        "install.ps1 must reference the cargo-dist installer URL"
     );
     assert!(
-        body.contains("iex (irm $installerUrl)"),
-        "install.ps1 must invoke the downloaded installer via iex (irm ...)"
+        body.contains("cargo install ralphterm"),
+        "install.ps1 must fall back to `cargo install ralphterm` when no prebuilt binary exists for the host platform"
+    );
+    assert!(
+        body.contains("rustup.rs"),
+        "install.ps1 must point at https://rustup.rs when cargo isn't installed either"
     );
 }
 
