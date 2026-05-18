@@ -17,6 +17,33 @@ use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+/// Best-effort terminal width. Falls back to 80 when we can't get one.
+fn terminal_columns() -> usize {
+    if let Ok(val) = std::env::var("COLUMNS") {
+        if let Ok(n) = val.parse::<usize>() {
+            if n > 0 {
+                return n;
+            }
+        }
+    }
+    80
+}
+
+/// Truncate `text` so the painted line stays on ONE physical row.
+/// Without this, a long label wraps and the painter's `\r\x1b[2K`
+/// (clear current line only) leaks a new row every frame.
+fn fit_to_width(text: &str, columns: usize) -> String {
+    if text.chars().count() <= columns {
+        return text.to_string();
+    }
+    if columns < 4 {
+        return text.chars().take(columns).collect();
+    }
+    let take = columns.saturating_sub(1);
+    let truncated: String = text.chars().take(take).collect();
+    format!("{truncated}…")
+}
+
 const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// Background spinner. Drop the inner Arc and the spinner clears its
@@ -140,7 +167,17 @@ async fn paint_loop(
         } else {
             format!("({elapsed}s)")
         };
-        let painted = format!("\r\x1b[2K\x1b[36m{frame}\x1b[0m {label} \x1b[2m{timing}\x1b[0m");
+        // Truncate label + timing to fit the terminal width so a long
+        // label can't wrap. `\r\x1b[2K` only clears the line the
+        // cursor is on, so wrapped output leaks a new physical row
+        // every paint frame (user reported this on v0.4.6).
+        // 2-char budget for the frame glyph + space; rest for label
+        // and the dim timing suffix.
+        let cols = terminal_columns();
+        let body = format!("{label} {timing}");
+        let body_budget = cols.saturating_sub(3); // glyph + space + safety
+        let body_fitted = fit_to_width(&body, body_budget);
+        let painted = format!("\r\x1b[2K\x1b[36m{frame}\x1b[0m \x1b[2m{body_fitted}\x1b[0m");
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(painted.as_bytes());
         let _ = stderr.flush();
@@ -149,6 +186,35 @@ async fn paint_loop(
     let mut stderr = std::io::stderr().lock();
     let _ = write!(stderr, "\r\x1b[2K");
     let _ = stderr.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fit_to_width_passes_through_short_text() {
+        assert_eq!(fit_to_width("hello", 80), "hello");
+        assert_eq!(fit_to_width("hello", 5), "hello");
+    }
+
+    #[test]
+    fn fit_to_width_truncates_long_text_with_ellipsis() {
+        let long = "abcdefghijklmnopqrstuvwxyz";
+        let got = fit_to_width(long, 10);
+        // 9 chars + ellipsis
+        assert_eq!(got, "abcdefghi…");
+        assert_eq!(got.chars().count(), 10);
+    }
+
+    #[test]
+    fn fit_to_width_handles_tiny_widths() {
+        // Below 4 columns the ellipsis-budget collapses; we just take
+        // whatever we can fit. Anything ≥ 4 keeps the trailing ellipsis.
+        assert_eq!(fit_to_width("hello world", 3), "hel");
+        assert_eq!(fit_to_width("hello world", 1), "h");
+        assert_eq!(fit_to_width("hello world", 4), "hel…");
+    }
 }
 
 /// Translate a `crate::agent_driver::DriverEvent.kind` into a
