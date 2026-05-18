@@ -422,6 +422,11 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
 
         let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
 
+        crate::output_format::print_phase_start(
+            "phase 1 first review (5 parallel agents: quality, implementation, testing, simplification, documentation)",
+        );
+        progress.write_control("phase 1 first review (5 parallel agents)")?;
+        let started = std::time::Instant::now();
         let outcome = crate::review_phases::first_review(crate::review_phases::FirstReviewArgs {
             prompts: &prompts,
             reviewer_command: &reviewer_cmd,
@@ -430,6 +435,7 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
             default_branch: &preflight.default_branch,
             agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
         })?;
+        crate::output_format::print_phase_done("phase 1 first review", started.elapsed());
         if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
             for f in findings {
                 eprintln!("[review-first] {f}");
@@ -440,6 +446,11 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
 
     if !matches!(mode, RunMode::TasksOnly | RunMode::ReviewOnly) {
         let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
+        crate::output_format::print_phase_start(
+            "phase 2 external review (codex, iterative fixer loop)",
+        );
+        progress.write_control("phase 2 external review")?;
+        let started = std::time::Instant::now();
         let outcome =
             crate::review_phases::external_review(crate::review_phases::ExternalReviewArgs {
                 prompts: &prompts,
@@ -451,6 +462,7 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
                 agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
                 max_iterations: 3,
             })?;
+        crate::output_format::print_phase_done("phase 2 external review", started.elapsed());
         if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
             for f in findings {
                 eprintln!("[review-external] {f}");
@@ -464,6 +476,11 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         RunMode::TasksOnly | RunMode::ReviewOnly | RunMode::ExternalOnly
     ) {
         let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
+        crate::output_format::print_phase_start(
+            "phase 3 second review (2 parallel agents: quality, implementation)",
+        );
+        progress.write_control("phase 3 second review (2 parallel agents)")?;
+        let started = std::time::Instant::now();
         let outcome = crate::review_phases::second_review(crate::review_phases::FirstReviewArgs {
             prompts: &prompts,
             reviewer_command: &reviewer_cmd,
@@ -472,6 +489,7 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
             default_branch: &preflight.default_branch,
             agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
         })?;
+        crate::output_format::print_phase_done("phase 3 second review", started.elapsed());
         if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
             for f in findings {
                 eprintln!("[review-second] {f}");
@@ -1576,7 +1594,7 @@ fn completion_signal(transcript: &str, prompt: &str) -> CompletionSignal {
     }
 }
 
-fn transcript_without_prompt_echo(transcript: &str, prompt: &str) -> String {
+pub(crate) fn transcript_without_prompt_echo(transcript: &str, prompt: &str) -> String {
     let mut normalized = transcript.replace("\r\n", "\n").replace('\r', "\n");
     let prompt = prompt.replace("\r\n", "\n").replace('\r', "\n");
     if let Some(start) = normalized.find(&prompt) {

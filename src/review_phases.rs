@@ -46,7 +46,8 @@ fn run_parallel_review(args: FirstReviewArgs<'_>, agent_names: &[&str]) -> Resul
     let timeout = args.agent_timeout;
     let review_template = args.prompts.review_first.clone();
 
-    let mut handles: Vec<std::thread::JoinHandle<Result<(String, String)>>> = Vec::new();
+    let mut handles: Vec<std::thread::JoinHandle<Result<(String, String, std::time::Duration)>>> =
+        Vec::new();
     for name in agent_names {
         let name = (*name).to_string();
         let agent_template = args.prompts.agents.get(&name).cloned().unwrap_or_default();
@@ -56,7 +57,8 @@ fn run_parallel_review(args: FirstReviewArgs<'_>, agent_names: &[&str]) -> Resul
         let default_branch = default_branch.clone();
         let review_template = review_template.clone();
         handles.push(std::thread::spawn(move || {
-            run_one_reviewer(
+            let started = std::time::Instant::now();
+            let res = run_one_reviewer(
                 &reviewer,
                 &review_template,
                 &agent_template,
@@ -65,16 +67,23 @@ fn run_parallel_review(args: FirstReviewArgs<'_>, agent_names: &[&str]) -> Resul
                 &progress,
                 &default_branch,
                 timeout,
-            )
-            .map(|transcript| (name, transcript))
+            );
+            res.map(|transcript| (name, transcript, started.elapsed()))
         }));
     }
 
     let mut findings: Vec<String> = Vec::new();
     for h in handles {
-        let (name, transcript) = h
+        let (name, transcript, elapsed) = h
             .join()
             .map_err(|_| anyhow::anyhow!("reviewer thread panicked"))??;
+        // Per-agent heartbeat so the user sees individual reviewers
+        // returning instead of waiting silently for the whole phase.
+        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        println!(
+            "[{ts}]   reviewer '{name}' returned in {}s",
+            elapsed.as_secs()
+        );
         if transcript_has_critical_issues(&transcript) {
             findings.push(format!("[{name}] {}", first_line_of_findings(&transcript)));
         }
@@ -112,21 +121,99 @@ fn run_one_reviewer(
     if run.exit_code != 0 {
         anyhow::bail!("reviewer {agent_name} exited with {}", run.exit_code);
     }
-    Ok(run.transcript)
+    // Strip the prompt echo so substring matching on "CRITICAL"/"MAJOR"
+    // sees only the agent's actual findings, not the literal "# CRITICAL:"
+    // instructions baked into review_first.txt that claude echoes back in
+    // --print mode.
+    Ok(crate::runner::transcript_without_prompt_echo(
+        &run.transcript,
+        &prompt,
+    ))
+}
+
+/// Decide whether an external (codex) reviewer transcript says the
+/// codebase is clean. The vendored codex_review.txt template asks the
+/// reviewer to say "NO ISSUES FOUND" for clean reviews and otherwise
+/// list findings with file:line refs. Older protocols used REVIEW_PASS
+/// / REVIEW_FAIL — we still recognise those so users can override the
+/// prompt with a stricter contract.
+///
+/// Returns:
+///   Some(true)  – clean ("NO ISSUES FOUND" or REVIEW_PASS)
+///   Some(false) – explicit failure (REVIEW_FAIL or critical/major
+///                 findings detected by `transcript_has_critical_issues`)
+///   None        – ambiguous; caller decides (we currently treat None as
+///                 pass to avoid blocking on reviewers that respond
+///                 narratively without any of these markers).
+fn external_review_decision(transcript: &str) -> Option<bool> {
+    let upper = transcript.to_ascii_uppercase();
+    if upper.contains("REVIEW_FAIL") {
+        return Some(false);
+    }
+    if upper.contains("REVIEW_PASS") {
+        return Some(true);
+    }
+    if upper.contains("NO ISSUES FOUND")
+        || upper.contains("NO ISSUES.")
+        || upper.contains("NO ISSUES\n")
+    {
+        return Some(true);
+    }
+    if transcript_has_critical_issues(transcript) {
+        return Some(false);
+    }
+    // No explicit marker. Treat as pass — the reviewer ran, exited 0,
+    // and didn't surface critical findings.
+    Some(true)
 }
 
 fn transcript_has_critical_issues(transcript: &str) -> bool {
-    let upper = transcript.to_ascii_uppercase();
-    upper.contains("CRITICAL") || upper.contains("MAJOR")
+    // Only treat findings-style markers as critical, never the bare word.
+    // Common shapes claude/codex actually emit when reporting an issue:
+    //   - "Severity: critical"
+    //   - "[CRITICAL]" / "**CRITICAL**" / "Critical:" at the start of a line
+    //   - "CRITICAL ISSUE" / "CRITICAL FINDING" / "CRITICAL BUG"
+    // We deliberately do NOT match the bare word "critical" anywhere in
+    // the transcript because review prompts use it for procedural framing
+    // (e.g. "CRITICAL: Do NOT proceed to Step 3 until ...") and the agent
+    // tends to quote that phrasing back even when the underlying review
+    // finds no problems.
+    transcript.lines().any(line_flags_issue)
+}
+
+fn line_flags_issue(line: &str) -> bool {
+    let trimmed = line.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    if upper.starts_with("SEVERITY:") {
+        return upper.contains("CRITICAL") || upper.contains("MAJOR");
+    }
+    for marker in [
+        "[CRITICAL]",
+        "[MAJOR]",
+        "**CRITICAL**",
+        "**MAJOR**",
+        "CRITICAL ISSUE",
+        "CRITICAL BUG",
+        "CRITICAL FINDING",
+        "MAJOR ISSUE",
+        "MAJOR BUG",
+        "MAJOR FINDING",
+    ] {
+        if upper.contains(marker) {
+            return true;
+        }
+    }
+    // "Critical:" / "Major:" at the start of a line (common bullet style).
+    if upper.starts_with("CRITICAL:") || upper.starts_with("MAJOR:") {
+        return true;
+    }
+    false
 }
 
 fn first_line_of_findings(transcript: &str) -> String {
     transcript
         .lines()
-        .find(|l| {
-            let u = l.to_ascii_uppercase();
-            u.contains("CRITICAL") || u.contains("MAJOR")
-        })
+        .find(|line| line_flags_issue(line))
         .unwrap_or("")
         .trim()
         .to_string()
@@ -170,8 +257,14 @@ pub fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutcome> {
             );
         }
 
-        let decision =
-            crate::runner::review_output_decision(&review_run.transcript, &review_prompt);
+        // The codex_review.txt prompt template doesn't ask for
+        // REVIEW_PASS/REVIEW_FAIL — it asks codex to print "NO ISSUES
+        // FOUND" when the review is clean and otherwise list findings.
+        // Strip the prompt echo first so substring matches don't pick up
+        // the instructions themselves.
+        let agent_transcript =
+            crate::runner::transcript_without_prompt_echo(&review_run.transcript, &review_prompt);
+        let decision = external_review_decision(&agent_transcript);
         match decision {
             Some(true) => return Ok(ReviewOutcome::Pass),
             Some(false) => {

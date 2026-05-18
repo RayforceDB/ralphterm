@@ -16,6 +16,19 @@ pub fn print_task_execution_completed() {
     println!("[{ts}] task execution completed successfully");
 }
 
+/// Heartbeat printed when a review phase starts. Without this the user
+/// sees several minutes of dead terminal while parallel reviewer agents
+/// run silently.
+pub fn print_phase_start(label: &str) {
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    println!("[{ts}] {label} — running...");
+}
+
+pub fn print_phase_done(label: &str, elapsed: Duration) {
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    println!("[{ts}] {label} — done in {}s", elapsed.as_secs());
+}
+
 pub fn print_run_header(
     max_iterations: usize,
     mode_label: &str,
