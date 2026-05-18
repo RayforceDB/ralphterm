@@ -212,11 +212,20 @@ fn docker_smoke_runs_plan_against_in_test_image() {
     // Build a tiny image whose entrypoint creates first.txt and satisfies
     // ralphterm's v0.3 file-handoff contract by writing BEGIN/END
     // markers (with ALL_TASKS_DONE) to $RALPHTERM_OUTPUT_FILE. The env
-    // var is propagated by src/docker.rs::docker_wrap_command.
+    // var is propagated by src/docker.rs::docker_wrap_command. The
+    // entrypoint also writes a debug breadcrumb (`docker-smoke-ran`)
+    // unconditionally so the test can tell the container ran at all,
+    // even if the env var is unset.
     let dockerfile = repo.path().join("Dockerfile.smoke");
+    let entrypoint = repo.path().join("entrypoint.sh");
+    fs::write(
+        &entrypoint,
+        "#!/bin/sh\nset -u\necho \"docker-smoke-ran cwd=$(pwd) out=${RALPHTERM_OUTPUT_FILE:-UNSET}\" > docker-smoke-ran.txt\necho created > first.txt\nif [ -n \"${RALPHTERM_OUTPUT_FILE:-}\" ]; then\n  mkdir -p \"$(dirname \"$RALPHTERM_OUTPUT_FILE\")\"\n  printf '<<<BEGIN>>>\\ndocker smoke done\\nALL_TASKS_DONE\\n<<<END>>>\\n' > \"$RALPHTERM_OUTPUT_FILE\"\nfi\n",
+    )
+    .unwrap();
     fs::write(
         &dockerfile,
-        "FROM debian:stable-slim\nCMD [\"sh\",\"-c\",\"echo created > first.txt; printf '<<<BEGIN>>>\\\\ndocker smoke done\\\\nALL_TASKS_DONE\\\\n<<<END>>>\\\\n' > \\\"$RALPHTERM_OUTPUT_FILE\\\"\"]\n",
+        "FROM debian:stable-slim\nCOPY entrypoint.sh /entrypoint.sh\nRUN chmod +x /entrypoint.sh\nCMD [\"/entrypoint.sh\"]\n",
     )
     .unwrap();
 
@@ -225,7 +234,7 @@ fn docker_smoke_runs_plan_against_in_test_image() {
     // for the run.
     let _ = Command::new("git")
         .current_dir(repo.path())
-        .args(["add", "plan.md", "Dockerfile.smoke"])
+        .args(["add", "plan.md", "Dockerfile.smoke", "entrypoint.sh"])
         .output();
     let _ = Command::new("git")
         .current_dir(repo.path())
