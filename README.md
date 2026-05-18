@@ -6,9 +6,9 @@
 [![Website](https://img.shields.io/badge/website-ralphterm.rayforcedb.com-00d992)](https://ralphterm.rayforcedb.com)
 [![Social Preview](https://img.shields.io/badge/social-preview-818cf8)](https://ralphterm.rayforcedb.com/assets/social-preview.png)
 
-**Long AI coding sessions, unattended.**
+**Write a plan. Walk away.**
 
-The official `claude` and `codex` CLIs are interactive REPLs built for one prompt at a time. Real work isn't one prompt — it's read the plan, pick the next task, edit files, run validation, commit, mark done, do the next one, for hours. RalphTerm wraps the interactive CLI in a controlled PTY and runs that loop for you. Per-task commits. Parallel review gate before merge. Transcripts of every iteration. A web dashboard to watch from.
+Hand RalphTerm a markdown checkbox plan and let two AI agents do the work. One agent picks the next task, edits files, runs validation, commits. A different agent — different vendor if you want — cross-reviews the resulting diff across five dimensions (quality, implementation, testing, simplification, documentation) in a single session. They go back and forth until the plan is done and the review is clean. You read the branch when you come back.
 
 ## Install
 

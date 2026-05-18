@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RalphTerm — long AI coding sessions, unattended.</title>
-  <meta name="description" content="Hand `claude` or `codex` a multi-task markdown plan. RalphTerm drives the official interactive CLI through it iteratively — validating per task, committing each one, retrying on review failures, streaming progress.">
-  <meta name="keywords" content="RalphTerm, Claude Code, Codex, AI coding agents, plan runner, terminal automation, CLI orchestration, autonomous coding, PTY">
+  <title>RalphTerm — Write a plan. Walk away.</title>
+  <meta name="description" content="Write a markdown checkbox plan and walk away. RalphTerm has one AI agent implement it task by task, then a different agent cross-reviews the diff across multiple dimensions before merge. You read the result when you come back.">
+  <meta name="keywords" content="RalphTerm, Claude Code, Codex, multi-agent, cross-review, plan runner, unattended coding, AI coding, PTY">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://ralphterm.rayforcedb.com/">
 
   <meta property="og:type" content="website">
-  <meta property="og:title" content="RalphTerm — long AI coding sessions, unattended.">
-  <meta property="og:description" content="Hand `claude` or `codex` a multi-task plan. RalphTerm drives the interactive CLI through it: validates, commits per task, parallel review gate before merge.">
+  <meta property="og:title" content="RalphTerm — Write a plan. Walk away.">
+  <meta property="og:description" content="One agent implements task by task, a different agent cross-reviews the diff. You read the result when you come back.">
   <meta property="og:url" content="https://ralphterm.rayforcedb.com/">
   <meta property="og:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png">
   <meta property="og:site_name" content="RalphTerm">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="RalphTerm — long AI coding sessions, unattended.">
-  <meta name="twitter:description" content="Drives the real `claude` / `codex` CLIs through multi-task plans. Per-task commits. Parallel review gate. Watch it in a dashboard.">
+  <meta name="twitter:title" content="RalphTerm — Write a plan. Walk away.">
+  <meta name="twitter:description" content="Different agents implement and cross-review your plan. You walk away, come back to a finished branch.">
   <meta name="twitter:image" content="https://ralphterm.rayforcedb.com/assets/social-preview.png">
 
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
@@ -32,7 +32,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "RalphTerm",
-    "description": "Drives the official Claude Code and Codex CLIs through long multi-task plans. Wraps the interactive REPL in a controlled PTY, iterates through plan checkboxes, runs validation per task, commits, gates merge behind a parallel review pipeline, and streams progress.",
+    "description": "Write a markdown plan and walk away. RalphTerm has one AI agent implement the plan task by task — picking the next checkbox, editing files, running validation, committing — and a different agent cross-review the resulting diff across multiple dimensions before merge.",
     "url": "https://ralphterm.rayforcedb.com",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS",
@@ -71,9 +71,9 @@
     <!-- Hero -->
     <section class="rt-hero" id="overview">
       <div>
-        <p class="rt-eyebrow is-tagline">RALPHTERM / v0.3.11 / MIT</p>
-        <h1 class="rt-display">Long AI coding sessions, unattended.</h1>
-        <p class="rt-lead">The official <code>claude</code> and <code>codex</code> CLIs are interactive REPLs built for one prompt at a time. Real work isn't one prompt — it's read the plan, pick the next task, edit files, run validation, commit, mark done, do the next one, for hours. RalphTerm wraps the interactive CLI in a controlled PTY and runs that loop for you. Per-task commits. Parallel review gate before merge. Transcripts of every iteration. A web dashboard to watch from.</p>
+        <p class="rt-eyebrow is-tagline">RALPHTERM / v0.4.4 / MIT</p>
+        <h1 class="rt-display">Write a plan. Walk away.</h1>
+        <p class="rt-lead">Hand RalphTerm a markdown checkbox plan and let two AI agents do the work. One agent picks the next task, edits files, runs validation, commits. A different agent — different vendor if you want — cross-reviews the resulting diff against quality, implementation, testing, simplification, and documentation in a single session. They go back and forth until the plan is done and the review is clean. You read the branch when you come back.</p>
         <div class="rt-cta-row">
           <a class="rt-btn is-primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
           <a class="rt-btn" href="/docs/">Docs</a>
@@ -81,12 +81,13 @@
       </div>
       <aside class="rt-hero-spec" aria-label="At a glance">
         <p class="rt-eyebrow">— spec</p>
-        <div><dt>language</dt>  <dd>Rust 2021</dd></div>
-        <div><dt>binary</dt>    <dd>ralphterm</dd></div>
-        <div><dt>license</dt>   <dd>MIT</dd></div>
-        <div><dt>drives</dt>    <dd>claude, codex (interactive)</dd></div>
-        <div><dt>install</dt>   <dd>curl | sh &nbsp;·&nbsp; cargo install ralphterm</dd></div>
-        <div><dt>update</dt>    <dd>ralphterm update</dd></div>
+        <div><dt>language</dt>    <dd>Rust 2021</dd></div>
+        <div><dt>binary</dt>      <dd>ralphterm</dd></div>
+        <div><dt>license</dt>     <dd>MIT</dd></div>
+        <div><dt>implementer</dt> <dd>claude / codex / …</dd></div>
+        <div><dt>reviewer</dt>    <dd>different agent, your pick</dd></div>
+        <div><dt>install</dt>     <dd>curl | sh &nbsp;·&nbsp; cargo install ralphterm</dd></div>
+        <div><dt>update</dt>      <dd>ralphterm update</dd></div>
       </aside>
     </section>
 
@@ -97,12 +98,13 @@
         <thead><tr><th>Surface</th><th class="rt-status">Status</th></tr></thead>
         <tbody>
           <tr><td>plan loop &nbsp;·&nbsp; per-task commits, auto-move on completion</td><td class="rt-status">supported</td></tr>
+          <tr><td>cross-review &nbsp;·&nbsp; different agent than implementer, 5-dimension single-session</td><td class="rt-status">supported</td></tr>
+          <tr><td>review retry &nbsp;·&nbsp; implementer fixes findings, then re-review, with patience / stalemate</td><td class="rt-status">supported</td></tr>
+          <tr><td>providers &nbsp;·&nbsp; claude, codex, copilot, gemini, opencode</td><td class="rt-status">supported</td></tr>
+          <tr><td>resume &nbsp;·&nbsp; Ctrl+C mid-iteration, rerun, pick up where you left off</td><td class="rt-status">supported</td></tr>
+          <tr><td>worktrees &nbsp;·&nbsp; branch flag, plan-slug auto-id, docker isolation</td><td class="rt-status">supported</td></tr>
           <tr><td>notifications &nbsp;·&nbsp; telegram, slack, email, webhook</td><td class="rt-status">supported</td></tr>
-          <tr><td>docker isolation</td><td class="rt-status">supported</td></tr>
-          <tr><td>providers &nbsp;·&nbsp; codex, copilot, gemini, opencode</td><td class="rt-status">supported</td></tr>
-          <tr><td>worktrees &nbsp;·&nbsp; branch flag, plan-slug auto-id</td><td class="rt-status">supported</td></tr>
-          <tr><td>review retry &nbsp;·&nbsp; with patience / stalemate detection</td><td class="rt-status">supported</td></tr>
-          <tr><td>filesystem watch &nbsp;·&nbsp; idle timeout</td><td class="rt-status is-pending">pending</td></tr>
+          <tr><td>dashboard &nbsp;·&nbsp; <code>ralphterm serve</code>, live transcripts + run history</td><td class="rt-status">supported</td></tr>
         </tbody>
       </table>
     </section>
@@ -110,20 +112,22 @@
     <!-- How it works -->
     <section class="rt-section" id="cli">
       <p class="rt-eyebrow">— how it works</p>
-      <p style="max-width:var(--rt-read-max);margin-bottom:12px"><strong>Spawn the real CLI in a PTY.</strong> Same binary a human would type. Same login, same model, same safety prompts, same rate limits — those still belong to the upstream tool.</p>
+      <p style="max-width:var(--rt-read-max);margin-bottom:12px"><strong>1. You write the plan.</strong> A markdown file. Each <code>- [ ]</code> is a task — one prompt's worth of work, with the validation command that proves it's done. That's the input; nothing else.</p>
       <hr>
-      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>Drive the plan loop.</strong> Read the next unchecked checkbox, paste it as the prompt, capture the response via a file-handoff side channel, commit, mark done, repeat. Per-iteration transcripts written to <code>.ralphterm/progress/</code>.</p>
+      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>2. The implementer picks tasks.</strong> RalphTerm spawns your chosen agent (claude, codex, …) inside a real PTY and hands it the plan. The agent picks the next <code>- [ ]</code>, edits files, runs your validation command, commits, ticks the box. Repeats until the plan is done.</p>
       <hr>
-      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>Gate the merge.</strong> Optional 3-phase parallel review pipeline (5 reviewers → external/codex fixer loop → 2 reviewers). Critical findings block the merge; the implementer gets a retry budget.</p>
+      <p style="max-width:var(--rt-read-max);margin:12px 0"><strong>3. A different agent cross-reviews.</strong> When the implementer signals done, a separate reviewer session — different vendor, different model, your choice — walks the diff across five dimensions: quality, implementation, testing, simplification, documentation. Critical findings get sent back to the implementer with a retry budget. The branch only lands when the cross-review is clean.</p>
       <hr>
-      <p style="max-width:var(--rt-read-max);margin-top:12px"><strong>Watch from a dashboard.</strong> <code>ralphterm serve</code> exposes a local HTTP API + WebSocket transcripts. Notifications go out over Telegram, Slack, Email, or Webhook.</p>
+      <p style="max-width:var(--rt-read-max);margin-top:12px"><strong>4. You walk away.</strong> Per-task commits + transcripts let you read what happened. A web dashboard, notifications (Telegram, Slack, Email, Webhook), and clean Ctrl+C resume mean you don't have to babysit it. Come back to a finished branch — or a clear "here's what blocked" if the cross-review couldn't be satisfied.</p>
     </section>
 
     <!-- Invoke -->
     <section class="rt-section">
       <p class="rt-eyebrow">— invoke</p>
-      <pre class="rt-code-block">$ ralphterm --tasks-only docs/plans/feature.md</pre>
-      <p style="margin-top:10px;font-size:12px;color:var(--rt-muted)">Tasks-only mode skips the independent review gate. For full mode add <code>--external-review-tool=custom --custom-review-script &lt;cmd&gt;</code>.</p>
+      <pre class="rt-code-block">$ ralphterm docs/plans/feature.md                      # write plan, walk away (implement + cross-review)</pre>
+      <pre class="rt-code-block">$ ralphterm --tasks-only docs/plans/feature.md         # implement only, no cross-review</pre>
+      <pre class="rt-code-block">$ ralphterm serve                                      # web dashboard at 127.0.0.1:7878</pre>
+      <p style="margin-top:10px;font-size:12px;color:var(--rt-muted)">Implementer defaults to <code>claude</code>; reviewer defaults to <code>codex</code>. Override either with <code>--claude-command</code> / <code>--review-command</code> to mix any combination of agents.</p>
     </section>
 
     <!-- Install -->

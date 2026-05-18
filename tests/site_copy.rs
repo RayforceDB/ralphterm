@@ -140,16 +140,15 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
         .map(|offset| h1_open_end + offset)
         .expect("landing h1 should close");
     let h1_text = site_index[h1_open_end..h1_close].to_lowercase();
-    // Hero must lead with the problem we solve (long unattended AI
-    // coding sessions, plan-loop automation, review gate, PTY-driven
-    // CLI). NOT with internal API mechanics.
+    // Hero must speak to the workflow story: a plan, walking away,
+    // unattended automation. NOT internal API mechanics.
     assert!(
-        h1_text.contains("unattended")
-            || h1_text.contains("plan")
+        h1_text.contains("plan")
+            || h1_text.contains("walk")
+            || h1_text.contains("unattended")
             || h1_text.contains("session")
-            || h1_text.contains("ai coding")
-            || h1_text.contains("pty"),
-        "landing hero h1 should describe the problem we solve (got: {h1_text:?})"
+            || h1_text.contains("ai coding"),
+        "landing hero h1 should describe the plan-and-walk-away workflow (got: {h1_text:?})"
     );
 
     let head_len = site_index.len().min(3000);
@@ -620,10 +619,19 @@ fn landing_hero_describes_what_problem_ralphterm_solves() {
         .unwrap_or(site_index.len());
     let hero_body = site_index[h1_close..hero_section_end].to_lowercase();
 
-    // At least one each: a vocabulary word for the workflow, and a
-    // vocabulary word for the technical substrate.
-    let workflow_terms = ["unattended", "plan", "iteration", "session", "long"];
-    let mechanism_terms = ["claude", "codex", "pty", "interactive", "loop"];
+    // At least one each: the workflow (plan + walk-away + cross-review)
+    // and the mechanism (which agents drive it). Lets the marketing
+    // text shift without false-positive-ing on every paragraph rewrite.
+    let workflow_terms = [
+        "plan",
+        "walk away",
+        "unattended",
+        "cross-review",
+        "review",
+        "implement",
+        "agent",
+    ];
+    let mechanism_terms = ["claude", "codex", "pty", "interactive", "agent"];
     assert!(
         workflow_terms.iter().any(|w| hero_body.contains(w)),
         "hero body should describe the workflow problem (any of {workflow_terms:?}); got: {hero_body:?}"
