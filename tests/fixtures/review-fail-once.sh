@@ -1,6 +1,12 @@
 #!/usr/bin/env sh
 set -eu
-prompt=$(cat)
+if [ -n "${RALPHTERM_OUTPUT_FILE:-}" ]; then
+  prompt=$(cat "$RALPHTERM_PROMPT_FILE")
+  driver_mode=1
+else
+  prompt=$(cat)
+  driver_mode=0
+fi
 state_dir=.ralphterm/review-fail-once
 mkdir -p "$state_dir"
 printf '%s\n' "$prompt" > "$state_dir/review-prompt.txt"
@@ -14,9 +20,20 @@ count=$((count + 1))
 printf '%s\n' "$count" > "$count_file"
 printf '%s\n' "$count" > review-count.txt
 if [ "$count" -eq 1 ]; then
-  printf 'Review: first attempt needs fix\n'
-  printf 'REVIEW_FAIL\n'
+  verdict="REVIEW_FAIL"
+  reason="Review: first attempt needs fix"
 else
-  printf 'Review: retry accepted\n'
-  printf 'REVIEW_PASS\n'
+  verdict="REVIEW_PASS"
+  reason="Review: retry accepted"
+fi
+if [ "$driver_mode" = "1" ]; then
+  {
+    echo "<<<BEGIN>>>"
+    printf '%s\n' "$reason"
+    printf '%s\n' "$verdict"
+    echo "<<<END>>>"
+  } > "$RALPHTERM_OUTPUT_FILE"
+else
+  printf '%s\n' "$reason"
+  printf '%s\n' "$verdict"
 fi

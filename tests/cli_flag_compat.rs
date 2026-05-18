@@ -124,7 +124,10 @@ fn version_flag_prints_crate_version() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("0.2.1"), "stdout: {stdout}");
+    assert!(
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]

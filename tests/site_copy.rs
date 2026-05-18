@@ -143,8 +143,10 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
     assert!(
         h1_text.contains("drop-in")
             || h1_text.contains("ralphex")
-            || h1_text.contains("review gate"),
-        "landing hero h1 should lead with the drop-in / ralphex / review-gate story (got: {h1_text:?})"
+            || h1_text.contains("review gate")
+            || h1_text.contains("pty")
+            || h1_text.contains("terminal"),
+        "landing hero h1 should lead with the founding TTY pitch or the drop-in / ralphex / review-gate story (got: {h1_text:?})"
     );
 
     let head_len = site_index.len().min(3000);
@@ -605,13 +607,23 @@ fn landing_page_leads_with_ralphex_drop_in_pitch() {
         .map(|offset| h1_open_end + offset)
         .expect("landing h1 should close");
     let h1_text = site_index[h1_open_end..h1_close].to_lowercase();
+    // Hero h1 must lead with the founding identity (programmable PTY).
+    // The "drop-in for ralphex" framing now lives in the lead paragraph,
+    // not the h1 — assert it appears nearby in the hero copy.
     assert!(
-        h1_text.contains("drop-in"),
-        "landing rt-display h1 should mention drop-in (got: {h1_text:?})"
+        h1_text.contains("pty")
+            || h1_text.contains("terminal")
+            || h1_text.contains("drop-in"),
+        "landing rt-display h1 should lead with the PTY/terminal pitch (got: {h1_text:?})"
     );
+    let hero_section_end = site_index[h1_close..]
+        .find("</section>")
+        .map(|offset| h1_close + offset)
+        .unwrap_or(site_index.len());
+    let hero_body = site_index[h1_close..hero_section_end].to_lowercase();
     assert!(
-        h1_text.contains("ralphex"),
-        "landing rt-display h1 should mention ralphex (got: {h1_text:?})"
+        hero_body.contains("drop-in") && hero_body.contains("ralphex"),
+        "hero body should still mention the ralphex drop-in (got body: {hero_body:?})"
     );
 
     assert!(

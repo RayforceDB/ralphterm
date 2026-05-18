@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -28,26 +29,31 @@ const FIRST_REVIEW_AGENTS: &[&str] = &[
     "documentation",
 ];
 
-pub fn first_review(args: FirstReviewArgs<'_>) -> Result<ReviewOutcome> {
-    run_parallel_review(args, FIRST_REVIEW_AGENTS)
+pub async fn first_review(args: FirstReviewArgs<'_>) -> Result<ReviewOutcome> {
+    run_parallel_review(args, FIRST_REVIEW_AGENTS).await
 }
 
 const SECOND_REVIEW_AGENTS: &[&str] = &["quality", "implementation"];
 
-pub fn second_review(args: FirstReviewArgs<'_>) -> Result<ReviewOutcome> {
-    run_parallel_review(args, SECOND_REVIEW_AGENTS)
+pub async fn second_review(args: FirstReviewArgs<'_>) -> Result<ReviewOutcome> {
+    run_parallel_review(args, SECOND_REVIEW_AGENTS).await
 }
 
-fn run_parallel_review(args: FirstReviewArgs<'_>, agent_names: &[&str]) -> Result<ReviewOutcome> {
+async fn run_parallel_review(
+    args: FirstReviewArgs<'_>,
+    agent_names: &[&str],
+) -> Result<ReviewOutcome> {
     let reviewer_command = args.reviewer_command.to_string();
     let plan_path = args.plan_path.to_path_buf();
     let progress_path = args.progress_path.to_path_buf();
     let default_branch = args.default_branch.to_string();
     let timeout = args.agent_timeout;
     let review_template = args.prompts.review_first.clone();
+    let repo_root = std::env::current_dir()?;
 
-    let mut handles: Vec<std::thread::JoinHandle<Result<(String, String, std::time::Duration)>>> =
-        Vec::new();
+    let mut handles: Vec<
+        tokio::task::JoinHandle<Result<(String, String, std::time::Duration)>>,
+    > = Vec::new();
     for name in agent_names {
         let name = (*name).to_string();
         let agent_template = args.prompts.agents.get(&name).cloned().unwrap_or_default();
@@ -56,9 +62,10 @@ fn run_parallel_review(args: FirstReviewArgs<'_>, agent_names: &[&str]) -> Resul
         let progress = progress_path.clone();
         let default_branch = default_branch.clone();
         let review_template = review_template.clone();
-        handles.push(std::thread::spawn(move || {
+        let repo_root = repo_root.clone();
+        handles.push(tokio::spawn(async move {
             let started = std::time::Instant::now();
-            let res = run_one_reviewer(
+            let transcript = run_one_reviewer(
                 &reviewer,
                 &review_template,
                 &agent_template,
@@ -67,16 +74,18 @@ fn run_parallel_review(args: FirstReviewArgs<'_>, agent_names: &[&str]) -> Resul
                 &progress,
                 &default_branch,
                 timeout,
-            );
-            res.map(|transcript| (name, transcript, started.elapsed()))
+                &repo_root,
+            )
+            .await?;
+            Ok((name, transcript, started.elapsed()))
         }));
     }
 
     let mut findings: Vec<String> = Vec::new();
     for h in handles {
         let (name, transcript, elapsed) = h
-            .join()
-            .map_err(|_| anyhow::anyhow!("reviewer thread panicked"))??;
+            .await
+            .map_err(|e| anyhow::anyhow!("reviewer task panicked: {e}"))??;
         // Per-agent heartbeat so the user sees individual reviewers
         // returning instead of waiting silently for the whole phase.
         let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
@@ -97,7 +106,7 @@ fn run_parallel_review(args: FirstReviewArgs<'_>, agent_names: &[&str]) -> Resul
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_one_reviewer(
+async fn run_one_reviewer(
     reviewer_command: &str,
     review_template: &str,
     agent_template: &str,
@@ -106,6 +115,7 @@ fn run_one_reviewer(
     progress_path: &std::path::Path,
     default_branch: &str,
     timeout: Duration,
+    repo_root: &std::path::Path,
 ) -> Result<String> {
     let plan_str = plan_path.to_string_lossy().to_string();
     let progress_str = progress_path.to_string_lossy().to_string();
@@ -117,18 +127,24 @@ fn run_one_reviewer(
     vars.insert("AGENT_INSTRUCTIONS", agent_template);
 
     let prompt = substitute(review_template, &vars);
-    let run = crate::runner::run_agent_command_with_timeout(reviewer_command, &prompt, timeout)?;
-    if run.exit_code != 0 {
-        anyhow::bail!("reviewer {agent_name} exited with {}", run.exit_code);
+    let run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
+        command: reviewer_command,
+        task_prompt: &prompt,
+        repo_root,
+        idle_timeout: timeout,
+        cancel: None,
+        event_sink: None,
+    })
+    .await?;
+    if run.timed_out {
+        anyhow::bail!("reviewer {agent_name} timed out");
     }
-    // Strip the prompt echo so substring matching on "CRITICAL"/"MAJOR"
-    // sees only the agent's actual findings, not the literal "# CRITICAL:"
-    // instructions baked into review_first.txt that claude echoes back in
-    // --print mode.
-    Ok(crate::runner::transcript_without_prompt_echo(
-        &run.transcript,
-        &prompt,
-    ))
+    // Prefer the captured BEGIN..END slice (clean handoff); fall back to
+    // the full transcript so legacy reviewers that ignore the protocol
+    // still surface their verdict to the decision logic.
+    Ok(run
+        .captured_response
+        .unwrap_or_else(|| crate::runner::transcript_without_prompt_echo(&run.transcript, &prompt)))
 }
 
 /// Decide whether an external (codex) reviewer transcript says the
@@ -230,10 +246,11 @@ pub struct ExternalReviewArgs<'a> {
     pub max_iterations: usize,
 }
 
-pub fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutcome> {
+pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutcome> {
     let plan_str = args.plan_path.to_string_lossy().to_string();
     let progress_str = args.progress_path.to_string_lossy().to_string();
     let default_branch = args.default_branch.to_string();
+    let repo_root: PathBuf = std::env::current_dir()?;
 
     let mut last_category: Option<String> = None;
     let mut consecutive = 0usize;
@@ -245,25 +262,25 @@ pub fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutcome> {
         vars.insert("DEFAULT_BRANCH", &default_branch);
 
         let review_prompt = substitute(&args.prompts.codex_review, &vars);
-        let review_run = crate::runner::run_agent_command_with_timeout(
-            args.reviewer_command,
-            &review_prompt,
-            args.agent_timeout,
-        )?;
-        if review_run.exit_code != 0 {
-            anyhow::bail!(
-                "external reviewer iteration {iteration} exited with {}",
-                review_run.exit_code
-            );
+        let review_run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
+            command: args.reviewer_command,
+            task_prompt: &review_prompt,
+            repo_root: &repo_root,
+            idle_timeout: args.agent_timeout,
+            cancel: None,
+            event_sink: None,
+        })
+        .await?;
+        if review_run.timed_out {
+            anyhow::bail!("external reviewer iteration {iteration} timed out");
         }
 
-        // The codex_review.txt prompt template doesn't ask for
-        // REVIEW_PASS/REVIEW_FAIL — it asks codex to print "NO ISSUES
-        // FOUND" when the review is clean and otherwise list findings.
-        // Strip the prompt echo first so substring matches don't pick up
-        // the instructions themselves.
-        let agent_transcript =
-            crate::runner::transcript_without_prompt_echo(&review_run.transcript, &review_prompt);
+        // Prefer the captured BEGIN..END slice; fall back to the
+        // ANSI-prompt-stripped full transcript so legacy reviewers still
+        // surface their verdict.
+        let agent_transcript = review_run.captured_response.clone().unwrap_or_else(|| {
+            crate::runner::transcript_without_prompt_echo(&review_run.transcript, &review_prompt)
+        });
         let decision = external_review_decision(&agent_transcript);
         match decision {
             Some(true) => return Ok(ReviewOutcome::Pass),
@@ -284,16 +301,17 @@ pub fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutcome> {
                 let mut fix_vars = vars.clone();
                 fix_vars.insert("REVIEW_FINDINGS", &findings);
                 let fix_prompt = substitute(&args.prompts.codex, &fix_vars);
-                let fix_run = crate::runner::run_agent_command_with_timeout(
-                    args.implementer_command,
-                    &fix_prompt,
-                    args.agent_timeout,
-                )?;
-                if fix_run.exit_code != 0 {
-                    anyhow::bail!(
-                        "external review fixer iteration {iteration} exited with {}",
-                        fix_run.exit_code
-                    );
+                let fix_run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
+                    command: args.implementer_command,
+                    task_prompt: &fix_prompt,
+                    repo_root: &repo_root,
+                    idle_timeout: args.agent_timeout,
+                    cancel: None,
+                    event_sink: None,
+                })
+                .await?;
+                if fix_run.timed_out {
+                    anyhow::bail!("external review fixer iteration {iteration} timed out");
                 }
             }
             None => {

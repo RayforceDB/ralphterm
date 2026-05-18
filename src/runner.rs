@@ -513,7 +513,8 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             progress_path: progress.path(),
             default_branch: &preflight.default_branch,
             agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
-        })?;
+        })
+        .await?;
         crate::output_format::print_phase_done("phase 1 first review", started.elapsed());
         if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
             for f in findings {
@@ -540,7 +541,8 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
                 default_branch: &preflight.default_branch,
                 agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
                 max_iterations: 3,
-            })?;
+            })
+            .await?;
         crate::output_format::print_phase_done("phase 2 external review", started.elapsed());
         if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
             for f in findings {
@@ -567,7 +569,8 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             progress_path: progress.path(),
             default_branch: &preflight.default_branch,
             agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
-        })?;
+        })
+        .await?;
         crate::output_format::print_phase_done("phase 3 second review", started.elapsed());
         if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
             for f in findings {
@@ -663,7 +666,7 @@ async fn run_plan_review_only(options: RunOptions) -> Result<String> {
         default_branch: &preflight.default_branch,
         agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
     };
-    let outcome = crate::review_phases::first_review(args)?;
+    let outcome = crate::review_phases::first_review(args).await?;
     if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
         for f in findings {
             eprintln!("[review-first] {f}");
@@ -681,7 +684,7 @@ async fn run_plan_review_only(options: RunOptions) -> Result<String> {
         default_branch: &preflight.default_branch,
         agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
     };
-    let outcome = crate::review_phases::second_review(args)?;
+    let outcome = crate::review_phases::second_review(args).await?;
     if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
         for f in findings {
             eprintln!("[review-second] {f}");
@@ -732,7 +735,8 @@ async fn run_plan_external_only(options: RunOptions) -> Result<String> {
             default_branch: &preflight.default_branch,
             agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
             max_iterations: max_external_iterations.unwrap_or(3),
-        })?;
+        })
+        .await?;
     if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
         for f in findings {
             eprintln!("[review-external] {f}");
