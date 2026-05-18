@@ -6,6 +6,8 @@
 //! every release.
 
 #[doc(hidden)]
+pub mod agent_driver;
+#[doc(hidden)]
 pub mod cli;
 #[doc(hidden)]
 pub mod config;

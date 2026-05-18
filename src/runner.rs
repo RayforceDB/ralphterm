@@ -2415,45 +2415,27 @@ pub(crate) fn run_agent_command_with_timeout(
     })
 }
 
-struct SpawnedAgent {
-    child: Box<dyn portable_pty::Child + Send + Sync>,
-    master: Box<dyn portable_pty::MasterPty + Send>,
+pub(crate) struct SpawnedAgent {
+    pub(crate) child: Box<dyn portable_pty::Child + Send + Sync>,
+    pub(crate) master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
+/// Legacy entrypoint used by `run_agent_command_with_timeout` and
+/// `run_smoke`. Spawns the agent AND writes the prompt to the PTY
+/// writer + newline. The new async driver in `agent_driver.rs` instead
+/// uses `spawn_agent_command_promptless` so it can defer prompt
+/// writing until after it sees the REPL is ready (and so it can
+/// inject the BEGIN/END protocol preamble).
 fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent> {
     let mut parts = parse_agent_command(agent_command)?;
     let command = parts.remove(0);
-
-    // Founding-mission contract for bare `claude` invocation:
-    //   - NO --print, NO -p, NO argv prompt. ralphterm drives the
-    //     official CLI inside a real PTY the way a human does. Anthropic
-    //     has said they intend to sunset --print; the whole point of
-    //     ralphterm is to survive that removal. Auto-injecting --print
-    //     would put us back on the bus we are the lifeboat for.
-    //     Workspace trust is therefore a precondition the operator must
-    //     satisfy once per directory (run `claude` interactively, accept
-    //     the trust dialog); ralphterm's preflight verifies it via a
-    //     .ralphex/trusted sentinel.
-    //   - YES --dangerously-skip-permissions. Autonomous session loops
-    //     have no human to click per-tool approval dialogs. Ralphex
-    //     itself sets this flag by default and the project goal is full
-    //     drop-in compatibility for autonomous runs. Independent of the
-    //     --print discussion.
-    //   - RALPHTERM_NO_CLAUDE_AUTOFLAGS=1 escape hatch for tests that
-    //     symlink fake-agent.sh onto bin/claude (they don't understand
-    //     --dangerously-skip-permissions).
-    let claude_autoflags_disabled =
-        std::env::var_os("RALPHTERM_NO_CLAUDE_AUTOFLAGS").is_some_and(|v| !v.is_empty());
-    let command_basename = std::path::Path::new(&command)
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| command.clone());
-    if command_basename == "claude"
-        && !claude_autoflags_disabled
-        && !parts.iter().any(|a| a == "--dangerously-skip-permissions")
-    {
-        parts.push("--dangerously-skip-permissions".to_string());
-    }
+    // Founding-mission contract for bare `claude` invocation lives in
+    // `apply_claude_autoflags` (shared with the promptless spawn used by
+    // `agent_driver`): only --dangerously-skip-permissions is auto-added;
+    // never --print or -p (Anthropic intends to sunset --print and
+    // ralphterm exists to survive that removal). Workspace trust is the
+    // operator's responsibility, enforced by `preflight::ensure_workspace_trusted`.
+    apply_claude_autoflags(&command, &mut parts);
 
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -2496,6 +2478,62 @@ fn spawn_agent_command(agent_command: &str, prompt: &str) -> Result<SpawnedAgent
 
 pub fn agent_commands_equivalent(agent_command: &str, review_command: &str) -> Result<bool> {
     Ok(parse_agent_command(agent_command)? == parse_agent_command(review_command)?)
+}
+
+/// Same as `spawn_agent_command` but does NOT write the prompt to the
+/// PTY after spawn. Callers (notably `agent_driver::drive_agent`) write
+/// the prompt themselves so they can: (a) prepend a BEGIN/END protocol
+/// preamble with a per-iteration nonce, (b) optionally wait for a REPL
+/// ready indicator before pasting keystrokes, (c) keep ownership of the
+/// PTY writer for later mid-run input.
+pub(crate) fn spawn_agent_command_promptless(agent_command: &str) -> Result<SpawnedAgent> {
+    let mut parts = parse_agent_command(agent_command)?;
+    let command = parts.remove(0);
+    apply_claude_autoflags(&command, &mut parts);
+
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .context("open pty")?;
+
+    let mut cmd = CommandBuilder::new(command);
+    for arg in parts {
+        cmd.arg(arg);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        cmd.cwd(cwd);
+    }
+
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .context("spawn agent command")?;
+    drop(pair.slave);
+
+    Ok(SpawnedAgent {
+        child,
+        master: pair.master,
+    })
+}
+
+fn apply_claude_autoflags(command: &str, parts: &mut Vec<String>) {
+    let claude_autoflags_disabled =
+        std::env::var_os("RALPHTERM_NO_CLAUDE_AUTOFLAGS").is_some_and(|v| !v.is_empty());
+    let command_basename = std::path::Path::new(command)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| command.to_string());
+    if command_basename == "claude"
+        && !claude_autoflags_disabled
+        && !parts.iter().any(|a| a == "--dangerously-skip-permissions")
+    {
+        parts.push("--dangerously-skip-permissions".to_string());
+    }
 }
 
 fn parse_agent_command(agent_command: &str) -> Result<Vec<String>> {
@@ -2623,7 +2661,7 @@ fn agent_timeout_default() -> std::time::Duration {
 /// Strip ANSI escape sequences (CSI, OSC, simple ESC-prefixed) from a
 /// transcript so downstream signal detection and progress logging can
 /// operate on plain text.
-fn strip_ansi_escapes(input: &str) -> String {
+pub(crate) fn strip_ansi_escapes(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
