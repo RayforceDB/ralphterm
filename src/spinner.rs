@@ -135,6 +135,11 @@ async fn paint_loop(
     let mut frame_idx: usize = 0;
     let mut tick = tokio::time::interval(Duration::from_millis(120));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Print the "agent may be in silent tool-use / extended-thinking"
+    // hint ONCE when idle first crosses 30s, instead of embedding it
+    // in the spinner timing (which would push timing past most
+    // terminal widths). Hint goes to stderr as its own line.
+    let mut emitted_idle_hint = false;
     loop {
         tokio::select! {
             _ = stop_rx.changed() => {
@@ -150,34 +155,46 @@ async fn paint_loop(
         let idle = last_activity.elapsed().as_secs();
         let frame = FRAMES[frame_idx % FRAMES.len()];
         frame_idx = frame_idx.wrapping_add(1);
-        // ANSI: \r → carriage return to column 0;
-        //       \x1b[2K → clear the whole line.
-        // Dim cyan glyph, dim trailing timestamps. When `idle` climbs
-        // significantly past zero with no label change, that's the
-        // signal: the agent is silent, suspect rate-limit or hang.
-        // Past 30 s of idle we add a heads-up about claude's silent
-        // tool-use / extended-thinking phase so the user can tell
-        // "still working" from "actually stuck".
-        let timing = if idle >= 30 {
-            format!(
-                "({elapsed}s elapsed, idle {idle}s — agent may be in silent tool-use / extended-thinking)"
-            )
-        } else if idle >= 3 {
-            format!("({elapsed}s elapsed, idle {idle}s)")
+
+        // Compact timing: always short enough to fit in any reasonable
+        // terminal. The numbers are what the operator looks at; the
+        // narrative hint is printed separately, once.
+        let timing = if idle >= 3 {
+            format!("({elapsed}s, idle {idle}s)")
         } else {
             format!("({elapsed}s)")
         };
-        // Truncate label + timing to fit the terminal width so a long
-        // label can't wrap. `\r\x1b[2K` only clears the line the
-        // cursor is on, so wrapped output leaks a new physical row
-        // every paint frame (user reported this on v0.4.6).
-        // 2-char budget for the frame glyph + space; rest for label
-        // and the dim timing suffix.
+
+        // One-time "long idle, agent may be silently thinking" hint.
+        // Prints above the spinner so it stays visible in scrollback.
+        if idle >= 30 && !emitted_idle_hint {
+            emitted_idle_hint = true;
+            let hint = "\r\x1b[2Kℹ  info: agent has been silent on the PTY for 30s — \
+                claude with extended thinking / tool-use can stay quiet for several minutes. \
+                Watch live: tail -f $(ls -1t .ralphterm/iteration-output/*.transcript.txt | head -n1)\n";
+            let mut stderr = std::io::stderr().lock();
+            let _ = stderr.write_all(hint.as_bytes());
+            let _ = stderr.flush();
+            drop(stderr);
+        }
+
+        // Layout: ⠹ (elapsed, idle) label…
+        // Timing goes FIRST so the elapsed/idle numbers are always
+        // visible — even when the terminal is narrower than the label.
+        // Truncation eats the label tail with an ellipsis.
+        //
+        // \r\x1b[2K only clears the current row, so wrapped output
+        // leaks a new physical row every paint frame. Truncating to
+        // terminal-width-minus-3 (frame glyph + two spaces) keeps the
+        // painted line on one row.
         let cols = terminal_columns();
-        let body = format!("{label} {timing}");
-        let body_budget = cols.saturating_sub(3); // glyph + space + safety
-        let body_fitted = fit_to_width(&body, body_budget);
-        let painted = format!("\r\x1b[2K\x1b[36m{frame}\x1b[0m \x1b[2m{body_fitted}\x1b[0m");
+        let timing_visible_len = timing.chars().count();
+        let label_budget = cols
+            .saturating_sub(3) // glyph + space + safety
+            .saturating_sub(timing_visible_len + 1); // " " separator
+        let label_fitted = fit_to_width(&label, label_budget);
+        let painted =
+            format!("\r\x1b[2K\x1b[36m{frame}\x1b[0m \x1b[2m{timing}\x1b[0m {label_fitted}");
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(painted.as_bytes());
         let _ = stderr.flush();

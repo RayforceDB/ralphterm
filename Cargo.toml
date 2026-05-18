@@ -1,6 +1,6 @@
 [package]
 name = "ralphterm"
-version = "0.4.7"
+version = "0.4.8"
 edition = "2021"
 rust-version = "1.85"
 description = "Programmable PTY for the official Claude Code and Codex CLIs. Runs long multi-task plans unattended — iterates, validates, commits per task, and gates merge behind a parallel review pipeline."

@@ -79,7 +79,7 @@ async fn run_composite_review(
     eprintln!(
         "{}",
         crate::color::info_line(
-            "live transcript: tail -f .ralphterm/iteration-output/<latest-nonce>.transcript.txt"
+            "live transcript: tail -f $(ls -1t .ralphterm/iteration-output/*.transcript.txt | head -n1)"
         )
     );
 
