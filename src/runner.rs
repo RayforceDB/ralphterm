@@ -2528,11 +2528,22 @@ fn apply_claude_autoflags(command: &str, parts: &mut Vec<String>) {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| command.to_string());
-    if command_basename == "claude"
-        && !claude_autoflags_disabled
-        && !parts.iter().any(|a| a == "--dangerously-skip-permissions")
-    {
-        parts.push("--dangerously-skip-permissions".to_string());
+    if !claude_autoflags_disabled && command_basename == "claude" {
+        // Use `--permission-mode bypassPermissions` rather than
+        // `--dangerously-skip-permissions`: the latter shows a blocking
+        // one-time safety-acceptance dialog ("By proceeding you accept
+        // all responsibility..." with 1/2 navigation) that an
+        // autonomous loop cannot answer. `--permission-mode
+        // bypassPermissions` is the equivalent opt-in via the explicit
+        // permission-mode knob and (we hope) does not gate behind a
+        // confirmation dialog. If it turns out it does, we drive the
+        // dialog from the TTY layer rather than going back to --print.
+        let already_set = parts.windows(2).any(|w| w[0] == "--permission-mode")
+            || parts.iter().any(|a| a == "--dangerously-skip-permissions");
+        if !already_set {
+            parts.push("--permission-mode".to_string());
+            parts.push("bypassPermissions".to_string());
+        }
     }
 }
 

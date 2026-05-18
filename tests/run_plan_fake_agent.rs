@@ -99,8 +99,12 @@ printf 'fake claude interactive session\nCOMPLETED\n'
         "built-in claude smoke must NOT inject -p:\n{argv}"
     );
     assert!(
-        argv.contains("--dangerously-skip-permissions"),
-        "built-in claude smoke must inject --dangerously-skip-permissions for autonomous loops:\n{argv}"
+        argv.contains("--permission-mode") && argv.contains("bypassPermissions"),
+        "built-in claude smoke must inject --permission-mode bypassPermissions for autonomous loops:\n{argv}"
+    );
+    assert!(
+        !argv.contains("--dangerously-skip-permissions"),
+        "should use --permission-mode bypassPermissions (avoids the one-time safety-acceptance dialog), not the older flag:\n{argv}"
     );
     // The prompt must NOT be passed as argv — it arrives on stdin via the PTY writer.
     assert!(
