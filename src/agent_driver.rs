@@ -119,10 +119,13 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
         .with_context(|| format!("create {}", output_dir.display()))?;
     let output_path = output_dir.join(format!("{nonce}.md"));
     let prompt_path = output_dir.join(format!("{nonce}.prompt.txt"));
+    let transcript_path = output_dir.join(format!("{nonce}.transcript.txt"));
 
     let prompt = build_prompt_with_protocol(spec.task_prompt, &nonce, &output_path);
     std::fs::write(&prompt_path, &prompt)
         .with_context(|| format!("write {}", prompt_path.display()))?;
+    // Touch the transcript so `tail -f` works the moment the run starts.
+    let _ = std::fs::File::create(&transcript_path);
 
     // Expose paths to the spawned agent so non-interactive fixtures (or
     // headless wrappers) can satisfy the file-handoff contract without
@@ -276,6 +279,17 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
                     Some(bytes) => {
                         last_byte_at = Instant::now();
                         transcript.push_str(&String::from_utf8_lossy(&bytes));
+                        // Mirror the raw PTY bytes to a side-file the
+                        // operator can `tail -f` while the run is in
+                        // flight. Useful for distinguishing "agent in
+                        // silent tool-use" from "agent actually stuck".
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(&transcript_path)
+                        {
+                            let _ = std::io::Write::write_all(&mut f, &bytes);
+                        }
                         // Throttled heartbeat: emit at most once per
                         // 2 s while the agent is streaming. The spinner
                         // uses this to refresh its "last byte Ns ago"

@@ -72,7 +72,7 @@ async fn run_composite_review(
 
     if let Some(s) = spinner.as_ref() {
         s.set_label(format!(
-            "{phase_label}: reviewer running ({} dimensions in one session)",
+            "{phase_label}: reviewer running ({} dimensions in one session) — tail .ralphterm/iteration-output/<nonce>.transcript.txt to watch",
             agent_names.len()
         ));
     }
