@@ -6,7 +6,7 @@
 [![Website](https://img.shields.io/badge/website-ralphterm.rayforcedb.com-00d992)](https://ralphterm.rayforcedb.com)
 [![Social Preview](https://img.shields.io/badge/social-preview-818cf8)](https://ralphterm.rayforcedb.com/assets/social-preview.png)
 
-**Write a plan. Walk away.**
+**Hand off the plan. Come back to a branch.**
 
 Hand RalphTerm a markdown checkbox plan and let two AI agents do the work. One agent picks the next task, edits files, runs validation, commits. A different agent — different vendor if you want — cross-reviews the resulting diff across five dimensions (quality, implementation, testing, simplification, documentation) in a single session. They go back and forth until the plan is done and the review is clean. You read the branch when you come back.
 
