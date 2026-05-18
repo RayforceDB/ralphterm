@@ -254,15 +254,15 @@ pub struct RunOptions {
     pub max_external_iterations: Option<usize>,
 }
 
-pub fn run_plan(options: RunOptions) -> Result<String> {
+pub async fn run_plan(options: RunOptions) -> Result<String> {
     match options.mode {
-        RunMode::Full | RunMode::TasksOnly => run_plan_default(options),
-        RunMode::ReviewOnly => run_plan_review_only(options),
-        RunMode::ExternalOnly => run_plan_external_only(options),
+        RunMode::Full | RunMode::TasksOnly => run_plan_default(options).await,
+        RunMode::ReviewOnly => run_plan_review_only(options).await,
+        RunMode::ExternalOnly => run_plan_external_only(options).await,
     }
 }
 
-fn run_plan_default(options: RunOptions) -> Result<String> {
+async fn run_plan_default(options: RunOptions) -> Result<String> {
     use crate::output_format as fmt;
     use crate::preflight::Preflight;
     use crate::progress_log::ProgressLog;
@@ -353,47 +353,84 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
         vars.insert("DEFAULT_BRANCH", &default_branch);
 
         let prompt = substitute(&prompts.task, &vars);
-        let timeout = agent_timeout.unwrap_or_else(agent_timeout_default);
-        let run = run_agent_command_with_timeout(&agent_cmd, &prompt, timeout)?;
+        let idle_timeout = agent_timeout.unwrap_or_else(agent_timeout_default);
 
-        let cleaned = strip_ansi_escapes(&run.transcript);
-        // Strip the prompt echo so signal detection only looks at the
-        // agent's actual output. Real PTY-driven CLIs (claude --print,
-        // codex exec) emit the user prompt back as part of their
-        // transcript framing; the prompt itself contains
-        // `<<<RALPHEX:ALL_TASKS_DONE>>>` literally, which would otherwise
-        // false-positive on iteration 1 before the agent does any work.
-        let agent_output = transcript_without_prompt_echo(&cleaned, &prompt);
-        for line in agent_output.lines() {
-            let trimmed = line.trim_end();
-            if trimmed.is_empty() {
-                continue;
-            }
-            // Suppress the literal completion signal from user-facing
-            // stdout — ralphex does the same, treating the signal as
-            // internal protocol.
-            let uppered = trimmed.to_ascii_uppercase();
-            if uppered.contains("<<<RALPHEX:ALL_TASKS_DONE>>>")
-                || uppered.contains("RALPHEX:ALL_TASKS_DONE")
-            {
+        // Drive the agent through the v0.3 TTY-native file-handoff
+        // contract: PTY-only (no --print), bracketed-paste keystrokes,
+        // captured response retrieved from .ralphex/iteration-output/
+        // <nonce>.md (see agent_driver.rs for the formal protocol).
+        let run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
+            command: &agent_cmd,
+            task_prompt: &prompt,
+            repo_root: &repo_root,
+            idle_timeout,
+            cancel: None,
+            event_sink: None,
+        })
+        .await?;
+
+        // Stream the captured response (the agent's curated account of
+        // this iteration) into the progress log so the next iteration's
+        // fresh implementer and downstream reviewers can see what
+        // happened. Each line gets the ralphex-style [YYYY-MM-DD ...]
+        // prefix on stdout.
+        if let Some(captured) = run.captured_response.as_ref() {
+            for line in captured.lines() {
+                let trimmed = line.trim_end();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                println!("[{ts}] {trimmed}");
                 let _ = progress.write_narration(trimmed);
-                continue;
             }
-            // Match ralphex: every agent-emitted line gets a
-            // `[YYYY-MM-DD HH:MM:SS] ` prefix on stdout, matching the
-            // format of the progress log.
+        } else {
+            // No captured response. The full transcript still has the
+            // tool-use / TUI noise; record a single explanatory line so
+            // the progress log isn't silent for this iteration.
+            let reason = if run.timed_out {
+                "agent timed out before END marker"
+            } else if run.crashed_before_done {
+                "agent process exited before END marker"
+            } else if run.cancelled {
+                "agent cancelled"
+            } else {
+                "agent exited without writing a complete output file"
+            };
             let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-            println!("[{ts}] {trimmed}");
-            let _ = progress.write_narration(trimmed);
+            println!("[{ts}] {reason}");
+            let _ = progress.write_narration(reason);
         }
 
-        if crate::signals::detect_signal(&agent_output)
-            == Some(crate::signals::AgentSignal::Completed)
-        {
+        // Stop early when the agent signals the whole plan is done OR
+        // we observe all checkboxes flipped (cross-check, see
+        // count_unchecked_tasks).
+        let all_done_signal = run
+            .captured_response
+            .as_deref()
+            .map(|c| c.contains("RALPHEX:ALL_TASKS_DONE") || c.contains("ALL_TASKS_DONE"))
+            .unwrap_or(false);
+        if all_done_signal || count_unchecked_tasks(&plan_path)? == 0 {
             break;
         }
-        if run.exit_code != 0 {
-            anyhow::bail!("agent iteration {iteration} exited with {}", run.exit_code);
+
+        if run.crashed_before_done {
+            anyhow::bail!(
+                "agent iteration {iteration} exited (code={}) before writing the output file",
+                run.exit_code
+            );
+        }
+        if run.timed_out {
+            anyhow::bail!(
+                "agent iteration {iteration} timed out after {:?} with no END marker",
+                idle_timeout
+            );
+        }
+        if !run.done_via_file {
+            anyhow::bail!(
+                "agent iteration {iteration} did not produce a valid output file at {}",
+                run.output_path.display()
+            );
         }
     }
 
@@ -548,7 +585,7 @@ fn run_plan_default(options: RunOptions) -> Result<String> {
     Ok(String::new())
 }
 
-fn run_plan_review_only(options: RunOptions) -> Result<String> {
+async fn run_plan_review_only(options: RunOptions) -> Result<String> {
     use crate::preflight::Preflight;
     use crate::progress_log::ProgressLog;
     use crate::prompts::Prompts;
@@ -613,7 +650,7 @@ fn run_plan_review_only(options: RunOptions) -> Result<String> {
     Ok(String::new())
 }
 
-fn run_plan_external_only(options: RunOptions) -> Result<String> {
+async fn run_plan_external_only(options: RunOptions) -> Result<String> {
     use crate::preflight::Preflight;
     use crate::progress_log::ProgressLog;
     use crate::prompts::Prompts;

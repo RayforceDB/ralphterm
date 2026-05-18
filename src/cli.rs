@@ -444,23 +444,26 @@ pub async fn run() -> anyhow::Result<()> {
             no_commit,
             dry_run,
             workspace_id,
-        }) => run_plan_cli(RunCliOptions {
-            plan,
-            agent,
-            agent_command,
-            review_agent,
-            review_command,
-            require_review,
-            agent_timeout_ms,
-            max_review_retries,
-            no_commit,
-            dry_run,
-            workspace_id,
-            review_patience: None,
-            mode: crate::runner::RunMode::Full,
-            max_external_iterations: None,
-            notifier: None,
-        }),
+        }) => {
+            run_plan_cli(RunCliOptions {
+                plan,
+                agent,
+                agent_command,
+                review_agent,
+                review_command,
+                require_review,
+                agent_timeout_ms,
+                max_review_retries,
+                no_commit,
+                dry_run,
+                workspace_id,
+                review_patience: None,
+                mode: crate::runner::RunMode::Full,
+                max_external_iterations: None,
+                notifier: None,
+            })
+            .await
+        }
         Some(Command::Smoke {
             agent,
             agent_command,
@@ -476,7 +479,7 @@ pub async fn run() -> anyhow::Result<()> {
             if cli.compat_serve {
                 run_compat_serve(cli).await
             } else {
-                run_compat_cli(cli, &matches)
+                run_compat_cli(cli, &matches).await
             }
         }
     }
@@ -524,7 +527,7 @@ struct RunCliOptions {
     notifier: Option<Arc<crate::notify::Notifier>>,
 }
 
-fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
+async fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
     let RunCliOptions {
         plan,
         agent,
@@ -627,7 +630,8 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
         review_patience,
         mode,
         max_external_iterations,
-    });
+    })
+    .await;
 
     match run_result {
         Ok(output) => {
@@ -656,7 +660,7 @@ fn run_plan_cli(options: RunCliOptions) -> anyhow::Result<()> {
     }
 }
 
-fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
+async fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
     let Some(plan) = cli.compat_plan_file.clone() else {
         bail!("plan file required for ralphex-compatible execution");
     };
@@ -957,7 +961,8 @@ codex installed) or --external-review-tool=custom --custom-review-script <cmd>"
         mode,
         max_external_iterations: max_external_iterations_value,
         notifier,
-    })?;
+    })
+    .await?;
 
     install_ralphex_progress_symlink();
 
@@ -1657,7 +1662,12 @@ async fn create_run(
                     None => anyhow::bail!("run disappeared"),
                 }
             });
-            let run_output = match run_plan(RunOptions {
+            // `run_plan` is now async (v0.3 agent_driver lives on tokio).
+            // We're inside a `spawn_blocking` closure which runs on a
+            // dedicated blocking thread — `Handle::current().block_on`
+            // is the correct idiom here and does NOT starve the runtime.
+            let run_handle = tokio::runtime::Handle::current();
+            let run_output = match run_handle.block_on(run_plan(RunOptions {
                 plan_path: plan_path.clone(),
                 agent_command,
                 review_command: review_command.clone(),
@@ -1671,7 +1681,7 @@ async fn create_run(
                 review_patience: None,
                 mode: crate::runner::RunMode::Full,
                 max_external_iterations: None,
-            }) {
+            })) {
                 Ok(output) => output,
                 Err(err) => {
                     let summary_markdown = fs::read_to_string(&summary_path).ok();
