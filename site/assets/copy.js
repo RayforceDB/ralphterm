@@ -23,12 +23,12 @@
     btn.type = 'button';
     btn.className = 'rt-copy-btn';
     btn.setAttribute('aria-label', 'Copy to clipboard');
-    btn.textContent = 'Copy';
+    btn.textContent = 'copy';
     return btn;
   }
 
   function flash(btn, label, isError) {
-    var original = btn.dataset.originalLabel || 'Copy';
+    var original = btn.dataset.originalLabel || 'copy';
     btn.dataset.originalLabel = original;
     btn.textContent = label;
     btn.classList.toggle('is-error', !!isError);
@@ -42,12 +42,8 @@
   function copyText(text, btn) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
-        function () {
-          flash(btn, 'Copied');
-        },
-        function () {
-          fallbackCopy(text, btn);
-        }
+        function () { flash(btn, 'copied'); },
+        function () { fallbackCopy(text, btn); }
       );
     } else {
       fallbackCopy(text, btn);
@@ -69,7 +65,7 @@
       ok = false;
     }
     document.body.removeChild(ta);
-    flash(btn, ok ? 'Copied' : 'Copy failed', !ok);
+    flash(btn, ok ? 'copied' : 'failed', !ok);
   }
 
   function attach(pre) {
