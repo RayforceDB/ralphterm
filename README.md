@@ -40,6 +40,19 @@ ralphterm --tasks-only docs/plans/feature.md
 
 Keep the rest of your `~/.config/ralphex/` setup. RalphTerm reads it.
 
+## First-run trust precondition
+
+Claude Code gates every workspace behind a one-time interactive trust prompt ("Is this the project you want to trust?"). RalphTerm cannot answer it for you — it's the exact prompt Anthropic's CLI uses to confirm a human is in front of the keyboard. The first time you point RalphTerm at a directory it has not seen, you'll see:
+
+```
+ralphterm needs Claude Code to trust this workspace.
+Have you run `claude` here once and accepted the trust dialog? [y/N]
+```
+
+Run `claude` once in the workspace, accept the dialog, exit (Ctrl+D), then answer `y`. RalphTerm drops a `.ralphex/trusted` sentinel (SSH-`known_hosts`-style) so subsequent runs skip the prompt. In CI / non-TTY environments, set `RALPHTERM_ASSUME_TRUSTED=1` to bypass the check after you've validated trust out of band.
+
+Inside the loop, RalphTerm hands each iteration's response off through a file at `.ralphex/iteration-output/<nonce>.md` (wrapped in `<<<BEGIN>>>`/`<<<END>>>` markers). The captured slice — claude's own account of what changed — is appended to the progress log and fed to the next iteration's fresh implementer. This is robust against TUI rendering quirks: the marker channel is on disk, never in the PTY stream.
+
 ## Why
 
 AI coding tools are becoming interactive terminal products. Automation built around non-interactive prompt mode is fragile — the CLI may ask for approval, change output format, need follow-up input, hit auth, or move more behavior into the interactive terminal. RalphTerm takes the durable path: launch the real CLI in a real terminal and build a reliable control plane around it. The official CLI still owns login, rate limits, safety prompts, and account identity. RalphTerm owns session control, streaming, transcripts, signals, approvals, review gates, and notifications.

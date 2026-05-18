@@ -47,6 +47,25 @@ Flow:
 7. detect workflow signals from recent output
 8. wait for child exit and record exit code
 
+### Plan-loop agent driver
+
+`src/agent_driver.rs` is the v0.3 async driver that runs one implementer iteration per call. It is what `run_plan_default` invokes; the lower-level PTY runtime above is its substrate.
+
+Per iteration:
+
+1. generate a 32-hex-character nonce and an output path at `.ralphex/iteration-output/<nonce>.md`
+2. write the task prompt (with a protocol preamble pointing at the output path) to `.ralphex/iteration-output/<nonce>.prompt.txt`
+3. spawn the CLI promptlessly via portable-pty, exporting `RALPHTERM_OUTPUT_FILE`, `RALPHTERM_PROMPT_FILE`, and `RALPHTERM_NONCE`
+4. bridge the blocking PTY reader into a `tokio::sync::mpsc` channel via `spawn_blocking`
+5. wait for the Claude alt-screen-buffer sequence (REPL-ready) or auto-dismiss the bypass-permissions dialog with `↓ Enter`
+6. paste the prompt via bracketed-paste (`ESC[200~ … ESC[201~`) then submit with `\r`
+7. `tokio::select!` over (byte channel, 200 ms file-poll tick, idle-timeout sleep, cancellation watch)
+8. when the output file contains the literal `<<<END>>>` line, capture the slice between `<<<BEGIN>>>` and `<<<END>>>` as the response, send `/exit\r` to the PTY, and reap with a 3 s budget
+
+Failure paths: `timed_out`, `cancelled`, `crashed_before_done`, or `agent_exited_without_file`. The runner upgrades `timed_out` to a hard abort; the others are warnings that let the iteration loop reach its `max_iterations` cap. Per-iteration events (`agent_started`, `agent_prompt_pasted`, `agent_prompt_submitted`, `agent_output_file_complete`, etc.) flow into the runner's `RunEventSink` and out through `/v1/runs/:id/events`.
+
+The file-handoff channel is on disk, not in the PTY stream, so it survives Claude TUI rendering quirks (cursor-forward escapes, alt-screen redraws, mid-output redraws) that broke earlier in-band marker designs.
+
 ### Agent adapters
 
 An agent adapter maps a logical agent to a real command.

@@ -36,6 +36,15 @@ ralphterm --tasks-only docs/plans/<your-plan>.md
 
 `--tasks-only` skips the review gate, so this is the smallest possible exercise. The implementation agent runs in a real PTY using `claude_command` (from your config) or `claude` (from `$PATH`).
 
+**Workspace-trust precondition.** Unlike ralphex (which used `claude --print` and never saw an interactive REPL), RalphTerm launches `claude` interactively. Claude Code requires per-workspace trust acceptance the first time it sees a directory. RalphTerm refuses to drive an untrusted workspace and prints exactly what to do:
+
+```
+ralphterm needs Claude Code to trust this workspace.
+Have you run `claude` here once and accepted the trust dialog? [y/N]
+```
+
+Run `claude` in the directory once, accept the dialog, then Ctrl+D out and answer `y`. RalphTerm writes `.ralphex/trusted` (a small sentinel file with the acceptance timestamp) so it never asks again for that workspace. In CI / unattended environments, set `RALPHTERM_ASSUME_TRUSTED=1` to skip the check. The first run after migration is therefore one prompt longer than ralphex; subsequent runs are identical.
+
 If you see warnings about unsupported flags or missing config keys, see [ralphex-compat.md](ralphex-compat.md) for the current support matrix.
 
 ## 4. Re-enable the review gate
