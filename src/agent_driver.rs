@@ -255,6 +255,8 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     let mut last_data_event_at = Instant::now();
     let mut shutdown: Option<DriverShutdown> = None;
     let mut file_complete = false;
+    let mut output_file_seen_growing = false;
+    let mut last_output_file_size: u64 = 0;
     let mut file_check_tick = tokio::time::interval(Duration::from_millis(200));
     file_check_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -303,6 +305,26 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
                 }
             }
             _ = file_check_tick.tick() => {
+                // Surface output-file growth as a separate event so the
+                // spinner can show "writing response" before the END
+                // marker lands. This is the strongest "still working"
+                // signal during long claude tool-use phases that don't
+                // print anything to the PTY.
+                if let Ok(size) = std::fs::metadata(&output_path).map(|m| m.len()) {
+                    if size > 0 && size != last_output_file_size {
+                        last_output_file_size = size;
+                        if !output_file_seen_growing {
+                            output_file_seen_growing = true;
+                        }
+                        if let Some(sink) = spec.event_sink.as_ref() {
+                            sink(DriverEvent {
+                                kind: "agent_writing_output",
+                                nonce: nonce.clone(),
+                                detail: Some(format!("{size} bytes")),
+                            });
+                        }
+                    }
+                }
                 if output_file_has_end(&output_path, end_marker) {
                     file_complete = true;
                     if let Some(sink) = spec.event_sink.as_ref() {

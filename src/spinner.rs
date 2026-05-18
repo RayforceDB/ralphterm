@@ -128,7 +128,14 @@ async fn paint_loop(
         // Dim cyan glyph, dim trailing timestamps. When `idle` climbs
         // significantly past zero with no label change, that's the
         // signal: the agent is silent, suspect rate-limit or hang.
-        let timing = if idle >= 3 {
+        // Past 30 s of idle we add a heads-up about claude's silent
+        // tool-use / extended-thinking phase so the user can tell
+        // "still working" from "actually stuck".
+        let timing = if idle >= 30 {
+            format!(
+                "({elapsed}s elapsed, idle {idle}s — agent may be in silent tool-use / extended-thinking)"
+            )
+        } else if idle >= 3 {
             format!("({elapsed}s elapsed, idle {idle}s)")
         } else {
             format!("({elapsed}s)")
@@ -163,6 +170,11 @@ pub fn label_for_event(kind: &str) -> Option<&'static str> {
         // bytes; the runner's event sink should call bump_activity()
         // on it rather than overwriting the label.
         "agent_data" => None,
+        // agent_writing_output fires every time the output file grows.
+        // We don't overwrite the per-phase label, but it counts as
+        // activity and the runner can append a "(writing response)"
+        // suffix if it wants stronger signal.
+        "agent_writing_output" => None,
         _ => None,
     }
 }

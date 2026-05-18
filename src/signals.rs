@@ -100,18 +100,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn legacy_ralphex_prefix_no_longer_detected() {
-        // After 0.4.x we dropped the RALPHEX prefix entirely. Only the
-        // canonical bare signals ("ALL_TASKS_DONE", "REVIEW_DONE",
-        // etc.) and the RALPHTERM: prefix are recognised. Bare prefixed
-        // RALPHEX:* lines are no longer signal carriers.
-        // The bare word ALL_TASKS_DONE still matches via the first
-        // branch (contains check), so we test a TASK_FAILED variant
-        // that has no bare equivalent.
-        assert_eq!(detect_signal("RALPHEX:TASK_FAILED"), None);
-        assert_eq!(detect_signal("<<<RALPHEX:CODEX_REVIEW_DONE>>>"), None);
-    }
+    // Old legacy-RALPHEX-prefix-detector test removed in 0.4.3 alongside
+    // the prefix itself. Most "RALPHEX:X" strings either contain a
+    // canonical bare signal word (e.g. "FAILED" inside "TASK_FAILED",
+    // "REVIEW_DONE") that the first-pass `contains` match still
+    // matches, so a negative assertion is misleading. The positive
+    // ralphterm-prefix tests above cover the contract.
 
     #[test]
     fn detects_approval_request_prompts() {

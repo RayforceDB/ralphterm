@@ -567,9 +567,9 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
 
         crate::output_format::print_phase_start(
-            "phase 1 first review (5 parallel agents: quality, implementation, testing, simplification, documentation)",
+            "phase 1 first review (one reviewer session, 5 dimensions: quality, implementation, testing, simplification, documentation)",
         );
-        progress.write_control("phase 1 first review (5 parallel agents)")?;
+        progress.write_control("phase 1 first review (one reviewer session, 5 dimensions)")?;
         let started = std::time::Instant::now();
         let outcome = crate::review_phases::first_review(crate::review_phases::FirstReviewArgs {
             prompts: &prompts,
@@ -623,9 +623,9 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
     ) {
         let reviewer_cmd = derive_reviewer_command(review_override, &repo_root)?;
         crate::output_format::print_phase_start(
-            "phase 3 second review (2 parallel agents: quality, implementation)",
+            "phase 3 second review (one reviewer session, 2 dimensions: quality, implementation)",
         );
-        progress.write_control("phase 3 second review (2 parallel agents)")?;
+        progress.write_control("phase 3 second review (one reviewer session, 2 dimensions)")?;
         let started = std::time::Instant::now();
         let outcome = crate::review_phases::second_review(crate::review_phases::FirstReviewArgs {
             prompts: &prompts,
