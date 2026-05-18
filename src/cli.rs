@@ -724,8 +724,12 @@ async fn run_compat_cli(cli: Cli, matches: &ArgMatches) -> anyhow::Result<()> {
     );
     let review_command = match external_review_tool.as_deref() {
         Some("custom") => custom_review_script.clone(),
-        Some("codex") => crate::config::locate_wrapper_script("codex")
-            .map(|path| path.to_string_lossy().into_owned()),
+        // Default codex path: drive bare `codex` via PTY (same way we
+        // drive claude). The non-interactive `codex exec` wrapper at
+        // scripts/wrappers/codex.sh is no longer the default — it
+        // contradicted the PTY-native pitch and conflated process exit
+        // codes with review verdicts.
+        Some("codex") => Some("codex".to_string()),
         _ => None,
     };
 

@@ -2674,28 +2674,48 @@ pub(crate) fn spawn_agent_command_promptless_with_env(
 }
 
 fn apply_claude_autoflags(command: &str, parts: &mut Vec<String>) {
-    let claude_autoflags_disabled =
+    let autoflags_disabled =
         std::env::var_os("RALPHTERM_NO_CLAUDE_AUTOFLAGS").is_some_and(|v| !v.is_empty());
+    if autoflags_disabled {
+        return;
+    }
     let command_basename = std::path::Path::new(command)
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| command.to_string());
-    if !claude_autoflags_disabled && command_basename == "claude" {
-        // Use `--permission-mode bypassPermissions` rather than
-        // `--dangerously-skip-permissions`: the latter shows a blocking
-        // one-time safety-acceptance dialog ("By proceeding you accept
-        // all responsibility..." with 1/2 navigation) that an
-        // autonomous loop cannot answer. `--permission-mode
-        // bypassPermissions` is the equivalent opt-in via the explicit
-        // permission-mode knob and (we hope) does not gate behind a
-        // confirmation dialog. If it turns out it does, we drive the
-        // dialog from the TTY layer rather than going back to --print.
-        let already_set = parts.windows(2).any(|w| w[0] == "--permission-mode")
-            || parts.iter().any(|a| a == "--dangerously-skip-permissions");
-        if !already_set {
-            parts.push("--permission-mode".to_string());
-            parts.push("bypassPermissions".to_string());
+
+    match command_basename.as_str() {
+        "claude" => {
+            // Use `--permission-mode bypassPermissions` rather than
+            // `--dangerously-skip-permissions`: the latter shows a
+            // blocking one-time safety-acceptance dialog that an
+            // autonomous loop cannot answer.
+            let already_set = parts.windows(2).any(|w| w[0] == "--permission-mode")
+                || parts.iter().any(|a| a == "--dangerously-skip-permissions");
+            if !already_set {
+                parts.push("--permission-mode".to_string());
+                parts.push("bypassPermissions".to_string());
+            }
         }
+        "codex" => {
+            // Codex's interactive REPL gates writes / shell calls behind
+            // an approval prompt unless we opt out. --full-auto runs in
+            // workspace-write sandbox with --ask-for-approval=never, the
+            // closest equivalent to claude's bypassPermissions. Only
+            // inject when the operator hasn't already set an approval
+            // or sandbox flag (so power users keep control).
+            let already_set = parts.iter().any(|a| {
+                a == "--full-auto"
+                    || a == "--ask-for-approval"
+                    || a.starts_with("--ask-for-approval=")
+                    || a == "--sandbox"
+                    || a.starts_with("--sandbox=")
+            });
+            if !already_set {
+                parts.push("--full-auto".to_string());
+            }
+        }
+        _ => {}
     }
 }
 
@@ -2764,14 +2784,17 @@ fn derive_reviewer_command(explicit: Option<&str>, _repo_root: &std::path::Path)
             return Ok(cmd.to_string());
         }
     }
-    // Default: bundled codex wrapper script.
-    if let Some(path) = crate::config::locate_wrapper_script("codex") {
-        return Ok(path.to_string_lossy().into_owned());
-    }
-    anyhow::bail!(
-        "default reviewer not available: install codex (provides scripts/wrappers/codex.sh) \
-         or pass --external-review-tool=custom --custom-review-script <cmd>"
-    )
+    // Default: bare `codex`. drive_agent spawns it in a real PTY,
+    // pastes the prompt as keystrokes, captures the response via the
+    // same file-handoff side channel claude uses. apply_claude_autoflags
+    // adds --full-auto (codex's equivalent of claude's bypassPermissions)
+    // so the loop doesn't gate on an approval dialog.
+    //
+    // The bundled scripts/wrappers/codex.sh shim still exists for users
+    // who explicitly opt in (it uses `codex exec` non-interactive); the
+    // default no longer points at it because non-interactive codex
+    // contradicts the PTY-native pitch.
+    Ok("codex".to_string())
 }
 
 fn git_shortstat(repo: &std::path::Path, base: &str) -> Result<(usize, usize, usize)> {
