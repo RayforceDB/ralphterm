@@ -611,9 +611,7 @@ fn landing_page_leads_with_ralphex_drop_in_pitch() {
     // The "drop-in for ralphex" framing now lives in the lead paragraph,
     // not the h1 — assert it appears nearby in the hero copy.
     assert!(
-        h1_text.contains("pty")
-            || h1_text.contains("terminal")
-            || h1_text.contains("drop-in"),
+        h1_text.contains("pty") || h1_text.contains("terminal") || h1_text.contains("drop-in"),
         "landing rt-display h1 should lead with the PTY/terminal pitch (got: {h1_text:?})"
     );
     let hero_section_end = site_index[h1_close..]

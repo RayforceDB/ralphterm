@@ -367,20 +367,22 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         let prompt = substitute(&prompts.task, &vars);
         let idle_timeout = agent_timeout.unwrap_or_else(agent_timeout_default);
 
-        let driver_sink = event_sink.as_ref().map(|sink| -> crate::agent_driver::EventSink {
-            let sink = sink.clone();
-            let attempt = iteration;
-            Arc::new(move |ev: crate::agent_driver::DriverEvent| {
-                let _ = sink(PlanRunEvent {
-                    event_type: ev.kind,
-                    task_number: None,
-                    task_title: None,
-                    attempt: Some(attempt),
-                    artifact_path: None,
-                    message: ev.detail.clone(),
-                });
-            })
-        });
+        let driver_sink = event_sink
+            .as_ref()
+            .map(|sink| -> crate::agent_driver::EventSink {
+                let sink = sink.clone();
+                let attempt = iteration;
+                Arc::new(move |ev: crate::agent_driver::DriverEvent| {
+                    let _ = sink(PlanRunEvent {
+                        event_type: ev.kind,
+                        task_number: None,
+                        task_title: None,
+                        attempt: Some(attempt),
+                        artifact_path: None,
+                        message: ev.detail.clone(),
+                    });
+                })
+            });
 
         // Drive the agent through the v0.3 TTY-native file-handoff
         // contract: PTY-only (no --print), bracketed-paste keystrokes,
@@ -725,18 +727,17 @@ async fn run_plan_external_only(options: RunOptions) -> Result<String> {
     let progress = ProgressLog::open(&repo_root, &preflight.plan_slug)?;
     let prompts = Prompts::load(&repo_root, None);
 
-    let outcome =
-        crate::review_phases::external_review(crate::review_phases::ExternalReviewArgs {
-            prompts: &prompts,
-            implementer_command: &agent_cmd,
-            reviewer_command: &reviewer_cmd,
-            plan_path: &plan_path,
-            progress_path: progress.path(),
-            default_branch: &preflight.default_branch,
-            agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
-            max_iterations: max_external_iterations.unwrap_or(3),
-        })
-        .await?;
+    let outcome = crate::review_phases::external_review(crate::review_phases::ExternalReviewArgs {
+        prompts: &prompts,
+        implementer_command: &agent_cmd,
+        reviewer_command: &reviewer_cmd,
+        plan_path: &plan_path,
+        progress_path: progress.path(),
+        default_branch: &preflight.default_branch,
+        agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+        max_iterations: max_external_iterations.unwrap_or(3),
+    })
+    .await?;
     if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
         for f in findings {
             eprintln!("[review-external] {f}");

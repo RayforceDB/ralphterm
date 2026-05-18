@@ -74,3 +74,6 @@ allow-dirty = ["ci"]
 install-updater = false
 # The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.22.0"
+# GitHub retired ubuntu-20.04 hosted runners — pin linux build jobs to a
+# current runner. macOS and windows defaults are still served.
+github-custom-runners = { "aarch64-unknown-linux-gnu" = "ubuntu-latest", "x86_64-unknown-linux-gnu" = "ubuntu-latest" }

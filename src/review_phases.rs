@@ -51,9 +51,8 @@ async fn run_parallel_review(
     let review_template = args.prompts.review_first.clone();
     let repo_root = std::env::current_dir()?;
 
-    let mut handles: Vec<
-        tokio::task::JoinHandle<Result<(String, String, std::time::Duration)>>,
-    > = Vec::new();
+    let mut handles: Vec<tokio::task::JoinHandle<Result<(String, String, std::time::Duration)>>> =
+        Vec::new();
     for name in agent_names {
         let name = (*name).to_string();
         let agent_template = args.prompts.agents.get(&name).cloned().unwrap_or_default();

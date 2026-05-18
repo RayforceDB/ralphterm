@@ -50,9 +50,7 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-use crate::runner::{
-    spawn_agent_command_promptless_with_env, strip_ansi_escapes, SpawnedAgent,
-};
+use crate::runner::{spawn_agent_command_promptless_with_env, strip_ansi_escapes, SpawnedAgent};
 
 /// What the caller hands to `drive_agent`.
 pub struct AgentSpec<'a> {
