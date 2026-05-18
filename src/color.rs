@@ -15,6 +15,10 @@ const CYAN: &str = "\x1b[36m";
 const MAGENTA: &str = "\x1b[35m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
+const RED: &str = "\x1b[31m";
+const YELLOW_BOLD: &str = "\x1b[1;33m";
+const RED_BOLD: &str = "\x1b[1;31m";
+const CYAN_BOLD: &str = "\x1b[1;36m";
 
 fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
@@ -54,6 +58,39 @@ pub fn green(text: &str) -> String {
 }
 pub fn yellow(text: &str) -> String {
     wrap(YELLOW, text)
+}
+pub fn red(text: &str) -> String {
+    wrap(RED, text)
+}
+
+/// Format a structured warning line: `⚠  warn: <msg>` in bold yellow
+/// for the prefix, regular text for the message. Falls back to a plain
+/// `warn: <msg>` when colour is disabled.
+pub fn warn_line(msg: impl AsRef<str>) -> String {
+    if enabled() {
+        format!("{YELLOW_BOLD}⚠  warn:{RESET} {}", msg.as_ref())
+    } else {
+        format!("warn: {}", msg.as_ref())
+    }
+}
+
+/// Format a structured error line: `✖  error: <msg>` in bold red.
+pub fn error_line(msg: impl AsRef<str>) -> String {
+    if enabled() {
+        format!("{RED_BOLD}✖  error:{RESET} {}", msg.as_ref())
+    } else {
+        format!("error: {}", msg.as_ref())
+    }
+}
+
+/// Format a structured info line: `ℹ  info: <msg>` in bold cyan. Use
+/// for non-failure heads-up messages (resume notice, status changes).
+pub fn info_line(msg: impl AsRef<str>) -> String {
+    if enabled() {
+        format!("{CYAN_BOLD}ℹ  info:{RESET} {}", msg.as_ref())
+    } else {
+        format!("info: {}", msg.as_ref())
+    }
 }
 
 /// True if the line looks like a section header from an agent's

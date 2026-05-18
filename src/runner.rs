@@ -503,13 +503,19 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         }
         if run.crashed_before_done {
             eprintln!(
-                "warn: iteration {iteration} agent exited (code={}) before writing the output file; continuing",
-                run.exit_code
+                "{}",
+                crate::color::warn_line(format!(
+                    "iteration {iteration} agent exited (code={}) before writing the output file — continuing to next iteration",
+                    run.exit_code
+                ))
             );
         } else if !run.done_via_file {
             eprintln!(
-                "warn: iteration {iteration} produced no valid output file at {}; continuing",
-                run.output_path.display()
+                "{}",
+                crate::color::warn_line(format!(
+                    "iteration {iteration} produced no valid output file at {} — continuing to next iteration",
+                    run.output_path.display()
+                ))
             );
         }
     }
@@ -527,8 +533,12 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         anyhow::bail!("hit max iterations ({max_iterations}) without ALL_TASKS_DONE");
     }
     if agent_declared_done && remaining_unchecked > 0 {
+        let plural = if remaining_unchecked == 1 { "" } else { "es" };
         eprintln!(
-            "warn: agent signalled ALL_TASKS_DONE but {remaining_unchecked} plan checkbox(es) remain unchecked"
+            "{}",
+            crate::color::warn_line(format!(
+                "agent declared the plan done while {remaining_unchecked} checkbox{plural} remained unchecked — accepting on the agent's word (see the iteration log above for its reasoning)"
+            ))
         );
     }
 

@@ -61,9 +61,13 @@ impl<'a> Preflight<'a> {
         if resuming {
             let dirty = collect_uncommitted_paths(self.repo_root)?;
             if !dirty.is_empty() {
+                let plural = if dirty.len() == 1 { "" } else { "s" };
                 eprintln!(
-                    "resuming on branch {branch} with {} uncommitted file(s) — the next iteration will pick up where the previous run was interrupted",
-                    dirty.len()
+                    "{}",
+                    crate::color::info_line(format!(
+                        "resuming on branch {branch} with {} uncommitted file{plural} — the next iteration will pick up where the previous run was interrupted",
+                        dirty.len()
+                    ))
                 );
             }
         }
