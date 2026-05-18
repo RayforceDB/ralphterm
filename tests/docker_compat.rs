@@ -223,9 +223,14 @@ fn docker_smoke_runs_plan_against_in_test_image() {
         "#!/bin/sh\nset -u\necho \"docker-smoke-ran cwd=$(pwd) out=${RALPHTERM_OUTPUT_FILE:-UNSET}\" > docker-smoke-ran.txt\necho created > first.txt\nif [ -n \"${RALPHTERM_OUTPUT_FILE:-}\" ]; then\n  mkdir -p \"$(dirname \"$RALPHTERM_OUTPUT_FILE\")\"\n  printf '<<<BEGIN>>>\\ndocker smoke done\\nALL_TASKS_DONE\\n<<<END>>>\\n' > \"$RALPHTERM_OUTPUT_FILE\"\nfi\n",
     )
     .unwrap();
+    // Use ENTRYPOINT (not CMD) because ralphterm wraps the agent_command
+    // as `docker run <image> <agent_command> <args...>`, which would
+    // OVERRIDE a plain CMD and try to exec fake-agent.sh inside the
+    // (debian) container where it doesn't exist. With ENTRYPOINT the
+    // appended args become ENTRYPOINT's $@ (ignored by our script).
     fs::write(
         &dockerfile,
-        "FROM debian:stable-slim\nCOPY entrypoint.sh /entrypoint.sh\nRUN chmod +x /entrypoint.sh\nCMD [\"/entrypoint.sh\"]\n",
+        "FROM debian:stable-slim\nCOPY entrypoint.sh /entrypoint.sh\nRUN chmod +x /entrypoint.sh\nENTRYPOINT [\"/entrypoint.sh\"]\n",
     )
     .unwrap();
 
