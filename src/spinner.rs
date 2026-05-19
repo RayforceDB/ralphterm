@@ -193,8 +193,9 @@ async fn paint_loop(
             .saturating_sub(3) // glyph + space + safety
             .saturating_sub(timing_visible_len + 1); // " " separator
         let label_fitted = fit_to_width(&label, label_budget);
-        let painted =
-            format!("\r\x1b[2K\x1b[36m{frame}\x1b[0m \x1b[2m{timing}\x1b[0m {label_fitted}");
+        let painted = format!(
+            "\r\x1b[2K\x1b[36m{frame}\x1b[0m \x1b[2m{timing}\x1b[0m \x1b[2m{label_fitted}\x1b[0m"
+        );
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(painted.as_bytes());
         let _ = stderr.flush();

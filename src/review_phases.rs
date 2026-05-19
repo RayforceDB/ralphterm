@@ -20,6 +20,7 @@ pub struct FirstReviewArgs<'a> {
     pub progress_path: &'a std::path::Path,
     pub default_branch: &'a str,
     pub agent_timeout: Duration,
+    pub event_sink: Option<crate::runner::RunEventSink>,
 }
 
 const FIRST_REVIEW_AGENTS: &[&str] = &[
@@ -83,11 +84,11 @@ async fn run_composite_review(
         )
     );
 
-    let bumper: Option<crate::agent_driver::EventSink> = spinner.as_ref().map(|s| {
-        let s = s.clone();
-        let sink: crate::agent_driver::EventSink = Arc::new(move |_ev| s.bump_activity());
-        sink
-    });
+    let bumper = review_event_sink(
+        spinner.as_ref(),
+        format!("{phase_label} ({} dims)", agent_names.len()),
+        args.event_sink.clone(),
+    );
 
     let run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
         command: args.reviewer_command,
@@ -156,6 +157,64 @@ fn stream_captured_to_stdout(captured: &str) {
         };
         println!("{stamp} {body}");
     }
+}
+
+fn review_event_sink(
+    spinner: Option<&Arc<crate::spinner::Spinner>>,
+    base_label: String,
+    outer_sink: Option<crate::runner::RunEventSink>,
+) -> Option<crate::agent_driver::EventSink> {
+    if spinner.is_none() && outer_sink.is_none() {
+        return None;
+    }
+    let spinner = spinner.cloned();
+    Some({
+        let sink: crate::agent_driver::EventSink =
+            Arc::new(move |ev: crate::agent_driver::DriverEvent| match ev.kind {
+                "agent_data" => {
+                    if let Some(detail) = ev.detail.as_deref() {
+                        if let Some(s) = spinner.as_ref() {
+                            s.set_label(format!("{detail} - {base_label}"));
+                        }
+                    } else if let Some(s) = spinner.as_ref() {
+                        s.bump_activity();
+                    }
+                }
+                "agent_writing_output" => {
+                    if let Some(s) = spinner.as_ref() {
+                        if let Some(detail) = ev.detail.as_deref() {
+                            s.set_label(format!("writing handoff {detail} - {base_label}"));
+                        } else {
+                            s.set_label(format!("writing handoff - {base_label}"));
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(label) = crate::spinner::label_for_event(ev.kind) {
+                        if let Some(s) = spinner.as_ref() {
+                            s.set_label(format!("{label} - {base_label}"));
+                        }
+                    } else if let Some(s) = spinner.as_ref() {
+                        s.bump_activity();
+                    }
+                }
+            });
+        let sink: crate::agent_driver::EventSink =
+            Arc::new(move |ev: crate::agent_driver::DriverEvent| {
+                sink(ev.clone());
+                if let Some(outer) = outer_sink.as_ref() {
+                    let _ = outer(crate::runner::PlanRunEvent {
+                        event_type: ev.kind,
+                        task_number: None,
+                        task_title: None,
+                        attempt: None,
+                        artifact_path: None,
+                        message: ev.detail,
+                    });
+                }
+            });
+        sink
+    })
 }
 
 /// Build the single composite prompt that instructs the reviewer agent
@@ -303,6 +362,7 @@ pub struct ExternalReviewArgs<'a> {
     pub default_branch: &'a str,
     pub agent_timeout: Duration,
     pub max_iterations: usize,
+    pub event_sink: Option<crate::runner::RunEventSink>,
 }
 
 pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutcome> {
@@ -333,11 +393,11 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
         vars.insert("DEFAULT_BRANCH", &default_branch);
 
         let review_prompt = substitute(&args.prompts.codex_review, &vars);
-        let bumper: Option<crate::agent_driver::EventSink> = spinner.as_ref().map(|s| {
-            let s = s.clone();
-            let sink: crate::agent_driver::EventSink = Arc::new(move |_ev| s.bump_activity());
-            sink
-        });
+        let bumper = review_event_sink(
+            spinner.as_ref(),
+            format!("phase 2 review {iteration}/{}", args.max_iterations),
+            args.event_sink.clone(),
+        );
         let review_run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
             command: args.reviewer_command,
             task_prompt: &review_prompt,
@@ -401,13 +461,11 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
                 let mut fix_vars = vars.clone();
                 fix_vars.insert("REVIEW_FINDINGS", &findings);
                 let fix_prompt = substitute(&args.prompts.codex, &fix_vars);
-                let fix_bumper: Option<crate::agent_driver::EventSink> =
-                    spinner.as_ref().map(|s| {
-                        let s = s.clone();
-                        let sink: crate::agent_driver::EventSink =
-                            Arc::new(move |_ev| s.bump_activity());
-                        sink
-                    });
+                let fix_bumper = review_event_sink(
+                    spinner.as_ref(),
+                    format!("phase 2 fix {iteration}/{}", args.max_iterations),
+                    args.event_sink.clone(),
+                );
                 let fix_run = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
                     command: args.implementer_command,
                     task_prompt: &fix_prompt,

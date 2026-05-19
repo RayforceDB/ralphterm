@@ -145,7 +145,7 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
         ("RALPHTERM_NONCE", nonce_env.as_str()),
     ];
 
-    let SpawnedAgent { child, master } =
+    let SpawnedAgent { mut child, master } =
         spawn_agent_command_promptless_with_env(spec.command, &env).context("spawn agent")?;
 
     let writer = Arc::new(Mutex::new(master.take_writer().context("take pty writer")?));
@@ -272,8 +272,13 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     // Phase 3: main loop. Three concurrent signals decide we're done:
     //   - File watchdog finds END marker in the output file
     //   - Child process exits
-    //   - Idle timer elapses with no PTY output activity (failure)
-    let mut last_byte_at = Instant::now();
+    //   - Session timeout elapses before file handoff completes (failure)
+    //
+    // Do not use PTY bytes as the timeout heartbeat here. Interactive TUIs
+    // (Codex especially) repaint spinner frames while doing no useful work,
+    // which can otherwise keep a stuck reviewer alive indefinitely without
+    // ever creating the side-channel output file.
+    let session_deadline = Instant::now() + spec.idle_timeout;
     let mut last_data_event_at = Instant::now();
     let mut output_file_seen_growing = false;
     let mut last_output_file_size: u64 = 0;
@@ -281,9 +286,12 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     file_check_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     while !file_complete && shutdown.is_none() {
-        let idle_deadline = last_byte_at + spec.idle_timeout;
         let now = Instant::now();
-        let idle_wait = idle_deadline.saturating_duration_since(now);
+        if now >= session_deadline {
+            shutdown = Some(DriverShutdown::IdleTimeout);
+            break;
+        }
+        let timeout_wait = session_deadline.saturating_duration_since(now);
 
         tokio::select! {
             biased;
@@ -291,51 +299,11 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
                 shutdown = done;
                 break;
             }
-            chunk = byte_rx.recv() => {
-                match chunk {
-                    Some(bytes) => {
-                        last_byte_at = Instant::now();
-                        transcript.push_str(&String::from_utf8_lossy(&bytes));
-                        // Mirror the raw PTY bytes to a side-file the
-                        // operator can `tail -f` while the run is in
-                        // flight. Useful for distinguishing "agent in
-                        // silent tool-use" from "agent actually stuck".
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .append(true)
-                            .create(true)
-                            .open(&transcript_path)
-                        {
-                            let _ = std::io::Write::write_all(&mut f, &bytes);
-                        }
-                        // Throttled heartbeat: emit at most once per
-                        // 2 s while the agent is streaming. The spinner
-                        // uses this to refresh its "last byte Ns ago"
-                        // liveness indicator without flooding event
-                        // sinks on every 8 KiB chunk.
-                        if last_byte_at.duration_since(last_data_event_at)
-                            >= Duration::from_secs(2)
-                        {
-                            last_data_event_at = last_byte_at;
-                            if let Some(sink) = spec.event_sink.as_ref() {
-                                sink(DriverEvent {
-                                    kind: "agent_data",
-                                    nonce: nonce.clone(),
-                                    detail: Some(format!("{} bytes", transcript.len())),
-                                });
-                            }
-                        }
-                    }
-                    None => {
-                        // Reader sender dropped without sending shutdown.
-                        // Treat as EOF.
-                        if shutdown.is_none() {
-                            shutdown = shutdown_rx.recv().await;
-                        }
-                        break;
-                    }
-                }
-            }
             _ = file_check_tick.tick() => {
+                if let Ok(Some(_status)) = child.try_wait() {
+                    shutdown = Some(DriverShutdown::ReaderEof);
+                    break;
+                }
                 // Surface output-file growth as a separate event so the
                 // spinner can show "writing response" before the END
                 // marker lands. This is the strongest "still working"
@@ -368,9 +336,54 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
                     break;
                 }
             }
-            _ = sleep(idle_wait) => {
+            _ = sleep(timeout_wait) => {
                 shutdown = Some(DriverShutdown::IdleTimeout);
                 break;
+            }
+            chunk = byte_rx.recv() => {
+                match chunk {
+                    Some(bytes) => {
+                        let byte_at = Instant::now();
+                        transcript.push_str(&String::from_utf8_lossy(&bytes));
+                        // Mirror the raw PTY bytes to a side-file the
+                        // operator can `tail -f` while the run is in
+                        // flight. Useful for distinguishing "agent in
+                        // silent tool-use" from "agent actually stuck".
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(&transcript_path)
+                        {
+                            let _ = std::io::Write::write_all(&mut f, &bytes);
+                        }
+                        // Throttled heartbeat: emit at most once per
+                        // 2 s while the agent is streaming. The spinner
+                        // uses this to refresh its "last byte Ns ago"
+                        // liveness indicator without flooding event
+                        // sinks on every 8 KiB chunk.
+                        if byte_at.duration_since(last_data_event_at)
+                            >= Duration::from_secs(2)
+                        {
+                            last_data_event_at = byte_at;
+                            if let Some(sink) = spec.event_sink.as_ref() {
+                                sink(DriverEvent {
+                                    kind: "agent_data",
+                                    nonce: nonce.clone(),
+                                    detail: latest_agent_activity(&transcript)
+                                        .or_else(|| Some(format!("{} bytes", transcript.len()))),
+                                });
+                            }
+                        }
+                    }
+                    None => {
+                        // Reader sender dropped without sending shutdown.
+                        // Treat as EOF.
+                        if shutdown.is_none() {
+                            shutdown = shutdown_rx.recv().await;
+                        }
+                        break;
+                    }
+                }
             }
         }
     }
@@ -383,9 +396,12 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
             Some(DriverShutdown::ReaderEof) | Some(DriverShutdown::ReaderError(_))
         );
 
-    // Teardown: send /exit to ask for graceful shutdown if the agent is
-    // still around, then reap with a 3s budget.
-    if file_complete {
+    // Teardown: ask Claude for a graceful shutdown, but do not rely on
+    // typing `/exit` into other TUIs. Codex may keep repainting after the
+    // side-channel file is complete, and writes to its PTY can block the
+    // parent before the reap budget is reached.
+    let kill_after_file_handoff = file_complete && !is_claude_like_command(spec.command);
+    if file_complete && !kill_after_file_handoff {
         let mut w = writer.lock().expect("writer mutex");
         let _ = w.write_all(b"/exit\r");
         let _ = w.flush();
@@ -394,14 +410,19 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     let mut child_for_reap = child;
     let exit_code = tokio::task::spawn_blocking(move || {
         const REAP_BUDGET: Duration = Duration::from_secs(3);
+        let child_pid = child_for_reap.process_id();
+        if kill_after_file_handoff {
+            terminate_process(child_pid);
+            let _ = child_for_reap.kill();
+        }
         let deadline = Instant::now() + REAP_BUDGET;
         loop {
             match child_for_reap.try_wait() {
                 Ok(Some(status)) => return status.exit_code() as i32,
                 Ok(None) => {
                     if Instant::now() >= deadline {
+                        kill_process(child_pid);
                         let _ = child_for_reap.kill();
-                        let _ = child_for_reap.wait();
                         return -1;
                     }
                     std::thread::sleep(Duration::from_millis(50));
@@ -547,6 +568,92 @@ fn output_file_has_end(path: &Path, end_marker: &str) -> bool {
     };
     body.lines().any(|line| line.trim() == end_marker)
 }
+
+fn latest_agent_activity(transcript: &str) -> Option<String> {
+    let cleaned = strip_ansi_escapes(transcript);
+    cleaned
+        .split(['\n', '\r'])
+        .rev()
+        .filter_map(normalize_agent_activity_line)
+        .next()
+}
+
+fn normalize_agent_activity_line(line: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut previous_was_space = false;
+    for ch in line.chars().filter(|ch| !ch.is_control()) {
+        if ch.is_whitespace() {
+            if !previous_was_space {
+                out.push(' ');
+                previous_was_space = true;
+            }
+        } else {
+            out.push(ch);
+            previous_was_space = false;
+        }
+    }
+    let out = out.trim();
+    if out.len() < 4 {
+        return None;
+    }
+    let lower = out.to_ascii_lowercase();
+    if lower.contains("esc to interrupt")
+        || lower.contains("ctrl+t")
+        || lower.contains("press enter")
+        || lower == "working"
+        || lower == "thinking"
+    {
+        return None;
+    }
+    let alpha_numeric = out.chars().filter(|ch| ch.is_alphanumeric()).count();
+    if alpha_numeric < 3 {
+        return None;
+    }
+    Some(truncate_chars(out, 120))
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn is_claude_like_command(command: &str) -> bool {
+    let Some(program) = shlex::split(command).and_then(|parts| parts.into_iter().next()) else {
+        return false;
+    };
+    Path::new(&program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "claude" || name.starts_with("claude-"))
+}
+
+fn terminate_process(pid: Option<u32>) {
+    signal_process(pid, 15);
+}
+
+fn kill_process(pid: Option<u32>) {
+    signal_process(pid, 9);
+}
+
+#[cfg(unix)]
+fn signal_process(pid: Option<u32>, signal: i32) {
+    let Some(pid) = pid else {
+        return;
+    };
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    unsafe {
+        let _ = kill(pid as i32, signal);
+    }
+}
+
+#[cfg(not(unix))]
+fn signal_process(_pid: Option<u32>, _signal: i32) {}
 
 /// Extract the text strictly between the first `<<<BEGIN>>>` line and
 /// the first subsequent `<<<END>>>` line. Trailing newline trimmed.
@@ -758,5 +865,32 @@ mod tests {
         let body = read_between_markers(&tmp).unwrap();
         assert_eq!(body, "line 1\nline 2");
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn claude_like_command_detection_is_basename_based() {
+        assert!(is_claude_like_command(
+            "claude --permission-mode bypassPermissions"
+        ));
+        assert!(is_claude_like_command("/opt/bin/claude-code"));
+        assert!(!is_claude_like_command("codex --ask-for-approval never"));
+        assert!(!is_claude_like_command("/opt/homebrew/bin/codex"));
+    }
+
+    #[test]
+    fn latest_agent_activity_ignores_tui_chrome_and_returns_message() {
+        let transcript = "\x1b[2KWorking\rEsc to interrupt\n\x1b[32mRan git diff --check\x1b[0m\n";
+        assert_eq!(
+            latest_agent_activity(transcript).as_deref(),
+            Some("Ran git diff --check")
+        );
+    }
+
+    #[test]
+    fn latest_agent_activity_truncates_long_lines() {
+        let line = format!("Ran {}", "x".repeat(160));
+        let got = latest_agent_activity(&line).unwrap();
+        assert_eq!(got.chars().count(), 120);
+        assert!(got.ends_with('…'));
     }
 }

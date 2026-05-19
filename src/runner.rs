@@ -279,6 +279,7 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         agent_timeout,
         review_command,
         event_sink,
+        max_external_iterations,
         ..
     } = options;
 
@@ -578,6 +579,7 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             progress_path: progress.path(),
             default_branch: &preflight.default_branch,
             agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+            event_sink: event_sink.clone(),
         })
         .await?;
         crate::output_format::print_phase_done("phase 1 first review", started.elapsed());
@@ -605,7 +607,8 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
                 progress_path: progress.path(),
                 default_branch: &preflight.default_branch,
                 agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
-                max_iterations: 3,
+                max_iterations: max_external_iterations.unwrap_or(3),
+                event_sink: event_sink.clone(),
             })
             .await?;
         crate::output_format::print_phase_done("phase 2 external review", started.elapsed());
@@ -634,6 +637,7 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
             progress_path: progress.path(),
             default_branch: &preflight.default_branch,
             agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+            event_sink: event_sink.clone(),
         })
         .await?;
         crate::output_format::print_phase_done("phase 3 second review", started.elapsed());
@@ -654,11 +658,15 @@ async fn run_plan_default(options: RunOptions) -> Result<String> {
         vars.insert("PROGRESS_FILE", &progress_str);
         vars.insert("DEFAULT_BRANCH", &default_branch);
         let prompt = crate::prompts::substitute(&prompts.finalize, &vars);
-        let _ = run_agent_command_with_timeout(
-            &agent_cmd,
-            &prompt,
-            agent_timeout.unwrap_or_else(agent_timeout_default),
-        )?;
+        let _ = crate::agent_driver::drive_agent(crate::agent_driver::AgentSpec {
+            command: &agent_cmd,
+            task_prompt: &prompt,
+            repo_root: &repo_root,
+            idle_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+            cancel: None,
+            event_sink: None,
+        })
+        .await;
     }
 
     if !matches!(mode, RunMode::TasksOnly) {
@@ -703,6 +711,7 @@ async fn run_plan_review_only(options: RunOptions) -> Result<String> {
         plan_path,
         agent_timeout,
         review_command,
+        event_sink,
         ..
     } = options;
     let review_override = review_command.as_deref();
@@ -730,6 +739,7 @@ async fn run_plan_review_only(options: RunOptions) -> Result<String> {
         progress_path: progress.path(),
         default_branch: &preflight.default_branch,
         agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+        event_sink: event_sink.clone(),
     };
     let outcome = crate::review_phases::first_review(args).await?;
     if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
@@ -748,6 +758,7 @@ async fn run_plan_review_only(options: RunOptions) -> Result<String> {
         progress_path: progress.path(),
         default_branch: &preflight.default_branch,
         agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
+        event_sink: event_sink.clone(),
     };
     let outcome = crate::review_phases::second_review(args).await?;
     if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
@@ -770,6 +781,7 @@ async fn run_plan_external_only(options: RunOptions) -> Result<String> {
         review_command,
         agent_timeout,
         max_external_iterations,
+        event_sink,
         ..
     } = options;
     let agent_cmd = agent_command.unwrap_or_else(|| DEFAULT_PLAN_AGENT_COMMAND.to_string());
@@ -799,6 +811,7 @@ async fn run_plan_external_only(options: RunOptions) -> Result<String> {
         default_branch: &preflight.default_branch,
         agent_timeout: agent_timeout.unwrap_or_else(agent_timeout_default),
         max_iterations: max_external_iterations.unwrap_or(3),
+        event_sink,
     })
     .await?;
     if let crate::review_phases::ReviewOutcome::Issues(findings) = outcome {
@@ -2535,7 +2548,8 @@ pub(crate) fn run_agent_command_with_timeout(
     let mut reader_done = false;
     let mut read_error = None;
     let mut timed_out = false;
-    let status = loop {
+    let child_pid = agent.child.process_id();
+    let status = 'agent_loop: loop {
         while let Ok(event) = rx.try_recv() {
             match event {
                 ReaderEvent::Chunk(chunk) => transcript.push_str(&chunk),
@@ -2553,8 +2567,20 @@ pub(crate) fn run_agent_command_with_timeout(
 
         if Instant::now() >= deadline {
             timed_out = true;
-            agent.child.kill().context("kill timed out agent")?;
-            break agent.child.wait().context("wait for killed agent")?;
+            terminate_process(child_pid);
+            let _ = agent.child.kill();
+            let reap_deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Some(status) = agent.child.try_wait().context("poll killed agent")? {
+                    break 'agent_loop status;
+                }
+                if Instant::now() >= reap_deadline {
+                    kill_process(child_pid);
+                    let _ = agent.child.kill();
+                    break 'agent_loop portable_pty::ExitStatus::with_exit_code(124);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
         }
 
         thread::sleep(Duration::from_millis(10));
@@ -2575,8 +2601,9 @@ pub(crate) fn run_agent_command_with_timeout(
             }
         }
     } else {
-        while !reader_done {
-            match rx.recv() {
+        let drain_deadline = Instant::now() + Duration::from_millis(200);
+        while !reader_done && Instant::now() < drain_deadline {
+            match rx.recv_timeout(Duration::from_millis(10)) {
                 Ok(ReaderEvent::Chunk(chunk)) => transcript.push_str(&chunk),
                 Ok(ReaderEvent::Error(err)) => {
                     read_error = Some(err);
@@ -2598,6 +2625,30 @@ pub(crate) fn run_agent_command_with_timeout(
         timed_out,
     })
 }
+
+fn terminate_process(pid: Option<u32>) {
+    signal_process(pid, 15);
+}
+
+fn kill_process(pid: Option<u32>) {
+    signal_process(pid, 9);
+}
+
+#[cfg(unix)]
+fn signal_process(pid: Option<u32>, signal: i32) {
+    let Some(pid) = pid else {
+        return;
+    };
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    unsafe {
+        let _ = kill(pid as i32, signal);
+    }
+}
+
+#[cfg(not(unix))]
+fn signal_process(_pid: Option<u32>, _signal: i32) {}
 
 pub(crate) struct SpawnedAgent {
     pub(crate) child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -2824,7 +2875,17 @@ fn derive_reviewer_command(explicit: Option<&str>, _repo_root: &std::path::Path)
             return Ok(cmd.to_string());
         }
     }
-    // Default: bare `codex`. drive_agent spawns it in a real PTY,
+    // Default: bare `codex`. Resolve the command to a working binary instead
+    // of blindly trusting PATH order: users can have an old/broken npm shim
+    // earlier than a working native install (e.g. /usr/local/bin before
+    // /opt/homebrew/bin on macOS).
+    if let Some(cmd) = resolve_working_codex_command() {
+        return Ok(cmd);
+    }
+    // Fall back to PATH lookup so the downstream spawn error still tells the
+    // operator what failed when no probeable binary exists.
+    //
+    // drive_agent spawns it in a real PTY,
     // pastes the prompt as keystrokes, captures the response via the
     // same file-handoff side channel claude uses. apply_claude_autoflags
     // adds supported Codex approval/sandbox flags so the loop doesn't gate
@@ -2835,6 +2896,25 @@ fn derive_reviewer_command(explicit: Option<&str>, _repo_root: &std::path::Path)
     // default no longer points at it because non-interactive codex
     // contradicts the PTY-native pitch.
     Ok("codex".to_string())
+}
+
+fn resolve_working_codex_command() -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    let mut seen = BTreeSet::new();
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join("codex");
+        let key = candidate.to_string_lossy().to_string();
+        if !seen.insert(key.clone()) || !candidate.is_file() {
+            continue;
+        }
+        let Ok(output) = Command::new(&candidate).arg("--version").output() else {
+            continue;
+        };
+        if output.status.success() {
+            return Some(key);
+        }
+    }
+    None
 }
 
 fn git_shortstat(repo: &std::path::Path, base: &str) -> Result<(usize, usize, usize)> {
