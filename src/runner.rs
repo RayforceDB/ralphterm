@@ -1453,6 +1453,44 @@ mod tests {
             "{progress_log}"
         );
     }
+
+    #[test]
+    fn codex_autoflags_use_current_approval_and_sandbox_flags() {
+        let mut parts = Vec::new();
+
+        apply_claude_autoflags("codex", &mut parts);
+
+        assert_eq!(
+            parts,
+            [
+                "--ask-for-approval",
+                "never",
+                "--sandbox",
+                "workspace-write"
+            ]
+        );
+        assert!(
+            !parts.iter().any(|part| part == "--full-auto"),
+            "obsolete codex flag must not be injected"
+        );
+    }
+
+    #[test]
+    fn codex_autoflags_respect_operator_supplied_policy() {
+        let mut parts = vec![
+            "--ask-for-approval".to_string(),
+            "on-request".to_string(),
+            "--sandbox".to_string(),
+            "read-only".to_string(),
+        ];
+
+        apply_claude_autoflags("codex", &mut parts);
+
+        assert_eq!(
+            parts,
+            ["--ask-for-approval", "on-request", "--sandbox", "read-only"]
+        );
+    }
 }
 
 #[allow(dead_code)]
@@ -2699,20 +2737,22 @@ fn apply_claude_autoflags(command: &str, parts: &mut Vec<String>) {
         }
         "codex" => {
             // Codex's interactive REPL gates writes / shell calls behind
-            // an approval prompt unless we opt out. --full-auto runs in
-            // workspace-write sandbox with --ask-for-approval=never, the
-            // closest equivalent to claude's bypassPermissions. Only
-            // inject when the operator hasn't already set an approval
-            // or sandbox flag (so power users keep control).
+            // an approval prompt unless we opt out. Current Codex exposes
+            // this as explicit approval + sandbox flags; older --full-auto
+            // releases are not universally available. Only inject when the
+            // operator hasn't already set an approval or sandbox flag (so
+            // power users keep control).
             let already_set = parts.iter().any(|a| {
-                a == "--full-auto"
-                    || a == "--ask-for-approval"
+                a == "--ask-for-approval"
                     || a.starts_with("--ask-for-approval=")
                     || a == "--sandbox"
                     || a.starts_with("--sandbox=")
             });
             if !already_set {
-                parts.push("--full-auto".to_string());
+                parts.push("--ask-for-approval".to_string());
+                parts.push("never".to_string());
+                parts.push("--sandbox".to_string());
+                parts.push("workspace-write".to_string());
             }
         }
         _ => {}
@@ -2787,8 +2827,8 @@ fn derive_reviewer_command(explicit: Option<&str>, _repo_root: &std::path::Path)
     // Default: bare `codex`. drive_agent spawns it in a real PTY,
     // pastes the prompt as keystrokes, captures the response via the
     // same file-handoff side channel claude uses. apply_claude_autoflags
-    // adds --full-auto (codex's equivalent of claude's bypassPermissions)
-    // so the loop doesn't gate on an approval dialog.
+    // adds supported Codex approval/sandbox flags so the loop doesn't gate
+    // on an approval dialog.
     //
     // The bundled scripts/wrappers/codex.sh shim still exists for users
     // who explicitly opt in (it uses `codex exec` non-interactive); the
