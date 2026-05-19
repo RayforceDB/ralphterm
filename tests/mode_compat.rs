@@ -129,6 +129,53 @@ fn review_mode_fails_when_review_fails() {
 }
 
 #[test]
+fn review_mode_fails_when_reviewer_exits_without_file_handoff() {
+    let repo = TempRepo::new("review-crash");
+    repo.init_git();
+    let plan_path = repo.path.join("plan.md");
+    write_completed_plan(&plan_path);
+    repo.git(["add", "plan.md"]);
+    repo.git(["commit", "-m", "docs: add plan"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ralphterm"))
+        .current_dir(&repo.path)
+        .args([
+            "--review",
+            "--claude-command",
+            fixture_path("fake-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--external-review-tool",
+            "custom",
+            "--custom-review-script",
+            fixture_path("failing-agent.sh")
+                .to_str()
+                .expect("utf8 fixture path"),
+            "--no-commit",
+            plan_path.to_str().expect("utf8 plan path"),
+        ])
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run ralphterm");
+
+    assert!(
+        !output.status.success(),
+        "review mode must fail when reviewer exits without file handoff\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("exited without completing file handoff"),
+        "diagnostic should explain missing reviewer handoff:\n{combined}"
+    );
+}
+
+#[test]
 fn external_only_mode_iterates_implementer_and_reviewer_until_pass() {
     let repo = TempRepo::new("external");
     repo.init_git();

@@ -108,9 +108,16 @@ async fn run_composite_review(
         anyhow::bail!("{phase_label} reviewer timed out");
     }
 
-    let transcript = run.captured_response.unwrap_or_else(|| {
+    let transcript = run.captured_response.clone().unwrap_or_else(|| {
         crate::runner::transcript_without_prompt_echo(&run.transcript, &composite_prompt)
     });
+    if !run.done_via_file {
+        stream_captured_to_stdout(&transcript);
+        anyhow::bail!(
+            "{phase_label} reviewer exited without completing file handoff (exit code {})",
+            run.exit_code
+        );
+    }
 
     // Stream the reviewer's captured response to stdout the same way
     // the implementer's per-iteration narration is shown — so the
@@ -350,6 +357,13 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
         let agent_transcript = review_run.captured_response.clone().unwrap_or_else(|| {
             crate::runner::transcript_without_prompt_echo(&review_run.transcript, &review_prompt)
         });
+        if !review_run.done_via_file {
+            stream_captured_to_stdout(&agent_transcript);
+            anyhow::bail!(
+                "external reviewer iteration {iteration} exited without completing file handoff (exit code {})",
+                review_run.exit_code
+            );
+        }
         stream_captured_to_stdout(&agent_transcript);
         let decision = external_review_decision(&agent_transcript);
         match decision {
@@ -409,6 +423,13 @@ pub async fn external_review(args: ExternalReviewArgs<'_>) -> Result<ReviewOutco
                 let fix_transcript = fix_run.captured_response.clone().unwrap_or_else(|| {
                     crate::runner::transcript_without_prompt_echo(&fix_run.transcript, &fix_prompt)
                 });
+                if !fix_run.done_via_file {
+                    stream_captured_to_stdout(&fix_transcript);
+                    anyhow::bail!(
+                        "external review fixer iteration {iteration} exited without completing file handoff (exit code {})",
+                        fix_run.exit_code
+                    );
+                }
                 stream_captured_to_stdout(&fix_transcript);
             }
             None => {
