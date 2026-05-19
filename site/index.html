@@ -70,24 +70,38 @@
   <main class="rt-page">
     <!-- Hero -->
     <section class="rt-hero" id="overview">
-      <div>
-        <p class="rt-eyebrow is-tagline">RALPHTERM / v0.4.4 / MIT</p>
+      <div class="rt-hero-copy">
+        <p class="rt-eyebrow is-tagline">RALPHTERM / v0.4.16 / MIT</p>
         <h1 class="rt-display">Hand off the plan. Come back to a branch.</h1>
-        <p class="rt-lead">Hand RalphTerm a markdown checkbox plan and let two AI agents do the work. One agent picks the next task, edits files, runs validation, commits. A different agent — different vendor if you want — cross-reviews the resulting diff against quality, implementation, testing, simplification, and documentation in a single session. They go back and forth until the plan is done and the review is clean. You read the branch when you come back.</p>
+        <p class="rt-lead">RalphTerm turns a markdown checkbox plan into an unattended engineering run. One agent implements task by task in a real terminal. A different agent cross-reviews the diff across quality, implementation, testing, simplification, and docs. The loop keeps going until the plan is done and the review is clean.</p>
         <div class="rt-cta-row">
           <a class="rt-btn is-primary" href="https://github.com/RayforceDB/ralphterm">GitHub</a>
           <a class="rt-btn" href="/docs/">Docs</a>
         </div>
       </div>
-      <aside class="rt-hero-spec" aria-label="At a glance">
-        <p class="rt-eyebrow">— spec</p>
-        <div><dt>language</dt>    <dd>Rust 2021</dd></div>
-        <div><dt>binary</dt>      <dd>ralphterm</dd></div>
-        <div><dt>license</dt>     <dd>MIT</dd></div>
-        <div><dt>implementer</dt> <dd>claude / codex / …</dd></div>
-        <div><dt>reviewer</dt>    <dd>different agent, your pick</dd></div>
-        <div><dt>install</dt>     <dd>curl | sh &nbsp;·&nbsp; cargo install ralphterm</dd></div>
-        <div><dt>update</dt>      <dd>ralphterm update</dd></div>
+      <aside class="rt-hero-run" aria-label="RalphTerm run preview">
+        <div class="rt-terminal-bar">
+          <span></span><span></span><span></span>
+          <strong>ralphterm run</strong>
+        </div>
+        <pre class="rt-terminal"><code>$ ralphterm docs/plans/feature.md
+starting task execution phase
+
+[10:56:39] task 1 implement auth flow — done
+[10:59:12] task 2 add validation — done
+[11:02:44] phase 1 first review — running
+  quality: no blocking findings
+  testing: asks for edge-case coverage
+
+[11:07:18] reviewer feedback sent to implementer
+[11:11:03] fixes committed, second review clean
+
+branch ready: feature-plan</code></pre>
+        <dl class="rt-run-facts">
+          <div><dt>agents</dt><dd>implementer + reviewer</dd></div>
+          <div><dt>review</dt><dd>5 dimensions, one session</dd></div>
+          <div><dt>resume</dt><dd>Ctrl+C safe</dd></div>
+        </dl>
       </aside>
     </section>
 
