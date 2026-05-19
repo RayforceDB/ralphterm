@@ -59,74 +59,71 @@
       <div class="rt-sidebar-group">
         <p class="rt-sidebar-group-label">API</p>
         <ul>
-          <li><a href="/docs/api.html" class="is-active">HTTP API</a></li>
+          <li><a href="/docs/api.html">HTTP API</a></li>
         </ul>
       </div>
     </aside>
 
     <article class="rt-doc">
-      <h1>Documentation</h1>
-      <p class="rt-lead">RalphTerm is a drop-in replacement for ralphex with PTY-native execution. Start with <a href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a> if you already have a ralphex setup; otherwise <a href="/docs/cli.html">CLI reference</a> covers every supported flag.</p>
+      <section class="rt-doc-hero">
+        <p class="rt-eyebrow">docs</p>
+        <h1>Run a plan, review the branch, keep the trail.</h1>
+        <p class="rt-lead">Start with the plan workflow if you are new to RalphTerm. Start with migration if you already use ralphex. The detailed API docs are here too, but the main product path is the unattended plan loop.</p>
+        <div class="rt-cta-row">
+          <a class="rt-btn is-primary" href="/docs/workflows.html">Plan workflows</a>
+          <a class="rt-btn" href="/docs/cli.html">CLI reference</a>
+          <a class="rt-btn" href="/docs/migrate-from-ralphex.html">Migrate from ralphex</a>
+        </div>
+      </section>
 
-      <h2>Overview</h2>
-      <p><strong>Architecture.</strong> <a href="/docs/architecture.html">How the daemon, PTY runtime, runner, and event store fit together.</a></p>
-      <p><strong>Security.</strong> <a href="/docs/security.html">Authentication, rate-limiting boundaries, isolation guarantees.</a></p>
-      <p><strong>Milestone 1.</strong> <a href="/docs/milestone-one.html">Autonomous engineering workflow shipped on the PTY core.</a></p>
+      <section class="rt-doc-panel">
+        <h2>Fast path</h2>
+        <p>Install, point RalphTerm at a markdown plan, and let the implementer and reviewer loop run from the terminal.</p>
+        <pre><code>curl -sSf https://ralphterm.rayforcedb.com/install.sh | sh
+ralphterm docs/plans/feature.md --review-agent codex</code></pre>
+        <p>For strict review configuration, use <code>--require-review</code> with either <code>--review-command</code> or <code>--review-agent</code>.</p>
+      </section>
 
-      <h2>CLI</h2>
-      <p><strong>CLI reference.</strong> <a href="/docs/cli.html">Every flag from <code>--help</code>, grouped by purpose.</a></p>
-      <p><strong>Ralphex compatibility.</strong> <a href="/docs/ralphex-compat.html">Per-flag status table: supported, accepted, pending.</a></p>
-      <p><strong>Migration guide.</strong> <a href="/docs/migrate-from-ralphex.html">Step-by-step from an existing ralphex install.</a></p>
+      <section class="rt-doc-grid">
+        <a href="/docs/workflows.html">
+          <strong>Workflows</strong>
+          <span>Plan run, review-only, external-only, retry behavior, transcripts, validation output.</span>
+        </a>
+        <a href="/docs/cli.html">
+          <strong>CLI reference</strong>
+          <span>Every supported flag from <code>--help</code>, grouped by what you are trying to control.</span>
+        </a>
+        <a href="/docs/providers.html">
+          <strong>Providers</strong>
+          <span>Claude, Codex, Copilot, Gemini, and OpenCode command wrappers.</span>
+        </a>
+        <a href="/docs/ralphex-compat.html">
+          <strong>Ralphex compatibility</strong>
+          <span>Drop-in behavior, accepted flags, supported flags, and deliberate differences.</span>
+        </a>
+        <a href="/docs/docker.html">
+          <strong>Docker</strong>
+          <span>Containerized execution with extra volumes and environment passthrough.</span>
+        </a>
+        <a href="/docs/notifications.html">
+          <strong>Notifications</strong>
+          <span>Telegram, Slack, email, and webhook events for unattended runs.</span>
+        </a>
+        <a href="/docs/architecture.html">
+          <strong>Architecture</strong>
+          <span>PTY runtime, runner, event store, dashboard, and file handoff design.</span>
+        </a>
+        <a href="/docs/security.html">
+          <strong>Security</strong>
+          <span>Local trust boundaries, provider credentials, isolation, and operational limits.</span>
+        </a>
+        <a href="/docs/api.html">
+          <strong>HTTP API</strong>
+          <span>Session and run endpoints, transcripts, progress, and dashboard integration.</span>
+        </a>
+      </section>
 
-      <h2>Run</h2>
-      <p><strong>Workflows.</strong> <a href="/docs/workflows.html">Plan run, review-only, external-only modes.</a></p>
-      <p><strong>Providers.</strong> <a href="/docs/providers.html">Codex, Copilot, Gemini, OpenCode wrappers.</a></p>
-      <p><strong>Docker.</strong> <a href="/docs/docker.html">Isolated container execution.</a></p>
-      <p><strong>Notifications.</strong> <a href="/docs/notifications.html">Telegram / Slack / Email / Webhook configuration.</a></p>
-
-      <h2>API</h2>
-      <p><strong>HTTP API.</strong> <a href="/docs/api.html">Session and run endpoints, transcripts, events.</a></p>
-
-      <h2>Getting started</h2>
-      <p>RalphTerm is a local Rust daemon that launches official AI CLIs inside real PTYs and exposes an API for orchestration.</p>
-      <h3>Install from source</h3>
-      <pre><code>git clone git@github.com:RayforceDB/ralphterm.git
-cd ralphterm
-cargo build --release</code></pre>
-      <h3>Start the daemon</h3>
-      <pre><code>cargo run -- serve --bind 127.0.0.1:7878</code></pre>
-      <h3>Health check</h3>
-      <pre><code>curl http://127.0.0.1:7878/health
-# {"ok":true}</code></pre>
-      <h3>Deterministic smoke test</h3>
-      <p>Use a shell command override before testing real agents.</p>
-      <pre><code>cat > /tmp/ralphterm-smoke.json <<'JSON'
-{
-  "agent": "claude",
-  "command": "/bin/sh",
-  "args": ["-lc", "read line; printf '%s\\n' \"$line\"; echo COMPLETED"],
-  "prompt": "hello from ralphterm"
-}
-JSON
-
-ID=$(curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
-  -H 'content-type: application/json' \
-  --data-binary @/tmp/ralphterm-smoke.json \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
-
-curl http://127.0.0.1:7878/v1/sessions/$ID
-curl http://127.0.0.1:7878/v1/sessions/$ID/transcript</code></pre>
-      <h3>Real agent smoke check</h3>
-      <p>After authenticating the official CLI, verify it can start in a real PTY, receive input, emit <code>COMPLETED</code>, and exit.</p>
-      <pre><code>ralphterm smoke --agent claude
-ralphterm smoke --agent codex</code></pre>
-      <h3>Preview a plan</h3>
-      <pre><code>ralphterm run docs/plans/example.md --dry-run</code></pre>
-      <p>That prints pending tasks, review mode, review retry budget, and validation commands only. It does not start an agent, edit the plan, write <code>.ralphterm/progress/</code>, or commit.</p>
-      <h3>Workspace-isolated plan run</h3>
-      <pre><code>ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude</code></pre>
-      <p>RalphTerm creates a managed git worktree at <code>.ralphterm/workspaces/&lt;id&gt;</code>, resolves the caller-relative plan path before switching directories, and runs from the matching path inside that worktree. It does not auto-clean the worktree after the run; inspect it or remove it later with <code>ralphterm workspace cleanup &lt;id&gt;</code>. With <code>--dry-run --workspace-id &lt;id&gt;</code>, dry run only previews the workspace path and plan work without creating the worktree or running an agent.</p>
-      <p>A minimal plan is just a validation block plus unchecked task items:</p>
+      <h2>Minimal reviewed plan</h2>
       <pre><code># Example plan
 
 ## Validation Commands
@@ -136,25 +133,14 @@ ralphterm smoke --agent codex</code></pre>
 - [ ] Write the failing test first
 - [ ] Implement the slice
 - [ ] Run the validation command</code></pre>
-      <p>RalphTerm sends the pending task to the implementation agent, then runs the validation commands. If review is required, the reviewer sees the transcript, validation output, and git diff before it can print <code>REVIEW_PASS</code>.</p>
-      <h3>Plan run with review</h3>
-      <p>Use <code>--require-review</code> for real plan runs that must have an independent reviewer. RalphTerm fails before agent execution unless <code>--review-command</code> or <code>--review-agent</code> is supplied.</p>
-      <pre><code>ralphterm run docs/plans/example.md --agent claude \
-  --require-review \
-  --review-agent codex
+      <p>RalphTerm sends the pending task to the implementation agent, runs validation, then starts the independent reviewer. The reviewer sees the transcript, validation output, and git diff before it can print <code>REVIEW_PASS</code>.</p>
 
-ralphterm run docs/plans/example.md --agent claude \
-  --require-review \
-  --review-command "codex exec review-task"</code></pre>
-      <p>The reviewer starts after validation and must print an exact <code>REVIEW_PASS</code> line. By default, <code>REVIEW_FAIL</code> triggers one retry with reviewer feedback; if review still fails, the task stays unchecked and no commit is made. Use <code>--max-review-retries N</code> to allow more review-driven retries, or <code>--max-review-retries 0</code> to block on the first failed review.</p>
-      <h3>Real agent sessions</h3>
-      <p>Install and authenticate the official CLI first. RalphTerm does not own provider credentials.</p>
-      <pre><code>claude auth login
-codex login
-
-curl -sS -X POST http://127.0.0.1:7878/v1/sessions \
-  -H 'content-type: application/json' \
-  -d '{"agent":"claude","prompt":"Say hello and end with COMPLETED"}'</code></pre>
+      <h2>Useful first commands</h2>
+        <pre><code>ralphterm run docs/plans/example.md --dry-run
+ralphterm run docs/plans/example.md --workspace-id docs-slice --agent claude
+ralphterm run docs/plans/example.md --agent claude --review-agent codex
+ralphterm serve</code></pre>
+      <p>Use dry run to inspect pending tasks, review mode, retry budget, workspace path, and validation commands before agents start. With <code>--workspace-id &lt;id&gt;</code>, RalphTerm creates a managed worktree at <code>.ralphterm/workspaces/&lt;id&gt;</code>, resolves the caller-relative plan path before switching workspace, and does not auto-clean it after the run. In dry-run mode, dry run only previews the workspace path and plan work. Use <code>ralphterm serve</code> when you want the dashboard and live transcripts.</p>
     </article>
   </div>
 

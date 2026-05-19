@@ -135,6 +135,43 @@ branch ready: feature-plan</code></pre>
       <p style="max-width:var(--rt-read-max);margin-top:12px"><strong>4. You walk away.</strong> Per-task commits + transcripts let you read what happened. A web dashboard, notifications (Telegram, Slack, Email, Webhook), and clean Ctrl+C resume mean you don't have to babysit it. Come back to a finished branch — or a clear "here's what blocked" if the cross-review couldn't be satisfied.</p>
     </section>
 
+    <!-- Trace -->
+    <section class="rt-section">
+      <p class="rt-eyebrow">— trace</p>
+      <div class="rt-trace">
+        <div>
+          <p class="rt-trace-label">input</p>
+          <pre><code># docs/plans/imports.md
+
+## Validation Commands
+- `cargo test --all`
+
+### Task 1
+- [ ] Replace ad hoc imports
+- [ ] Run validation</code></pre>
+        </div>
+        <div>
+          <p class="rt-trace-label">run</p>
+          <pre><code>$ ralphterm docs/plans/imports.md
+
+task 1: implementation committed
+phase 1: reviewer found missing coverage
+fixer: added regression test
+phase 3: review clean</code></pre>
+        </div>
+        <div>
+          <p class="rt-trace-label">output</p>
+          <pre><code>branch: imports-plan
+
+commits:
+  implement task 1
+  address review feedback
+
+status: ready for human review</code></pre>
+        </div>
+      </div>
+    </section>
+
     <!-- Invoke -->
     <section class="rt-section">
       <p class="rt-eyebrow">— invoke</p>

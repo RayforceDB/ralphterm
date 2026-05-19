@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#fafafa"/>
+  <rect x="58" y="58" width="1084" height="514" fill="#ffffff" stroke="#0a0a0b" stroke-width="2"/>
+  <rect x="740" y="92" width="326" height="260" fill="#111316" stroke="#0a0a0b" stroke-width="2"/>
+  <rect x="740" y="92" width="326" height="42" fill="#111316" stroke="#2b3035" stroke-width="1"/>
+  <circle cx="762" cy="113" r="6" fill="#d6655a"/>
+  <circle cx="782" cy="113" r="6" fill="#d8a643"/>
+  <circle cx="802" cy="113" r="6" fill="#44a97a"/>
+  <text x="828" y="118" fill="#b8c0c7" font-family="IBM Plex Mono, Menlo, monospace" font-size="16">ralphterm run</text>
+  <text x="764" y="174" fill="#e9edf0" font-family="IBM Plex Mono, Menlo, monospace" font-size="17">
+    <tspan x="764" dy="0">$ ralphterm plan.md</tspan>
+    <tspan x="764" dy="34">task 1: done</tspan>
+    <tspan x="764" dy="34">review: feedback</tspan>
+    <tspan x="764" dy="34">fixer: committed</tspan>
+    <tspan x="764" dy="34">review: clean</tspan>
+  </text>
+  <g fill="#0a0a0b">
+    <rect x="108" y="100" width="24" height="24"/>
+    <rect x="138" y="100" width="24" height="24"/>
+    <rect x="108" y="130" width="24" height="24"/>
+    <rect x="168" y="130" width="24" height="24"/>
+    <rect x="108" y="160" width="24" height="24"/>
+    <rect x="138" y="160" width="24" height="24"/>
+    <rect x="108" y="190" width="24" height="24"/>
+    <rect x="168" y="190" width="24" height="24"/>
+    <rect x="198" y="190" width="24" height="24"/>
+  </g>
+  <text x="108" y="278" fill="#737373" font-family="IBM Plex Mono, Menlo, monospace" font-size="22">RALPHTERM / v0.4.16</text>
+  <text x="108" y="356" fill="#0a0a0b" font-family="IBM Plex Sans, Arial, sans-serif" font-size="58" font-weight="700">
+    <tspan x="108" dy="0">Hand off the plan.</tspan>
+    <tspan x="108" dy="68">Come back to a branch.</tspan>
+  </text>
+  <text x="108" y="510" fill="#737373" font-family="IBM Plex Sans, Arial, sans-serif" font-size="25">
+    <tspan x="108" dy="0">One agent implements. A different agent reviews.</tspan>
+    <tspan x="108" dy="38">RalphTerm keeps the terminal trail.</tspan>
+  </text>
+  <rect x="740" y="458" width="326" height="2" fill="#e5e5e5"/>
+  <text x="740" y="506" fill="#0a0a0b" font-family="IBM Plex Mono, Menlo, monospace" font-size="18">claude / codex / copilot / gemini</text>
+</svg>
