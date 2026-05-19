@@ -167,6 +167,34 @@ fn landing_page_leads_with_plan_execution_not_pty_api() {
 }
 
 #[test]
+fn landing_page_uses_versioned_social_preview_metadata() {
+    let site_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("site");
+    let site_index =
+        std::fs::read_to_string(site_root.join("index.html")).expect("read site index");
+    let preview_path = site_root.join("assets/social-preview-v0.4.16.png");
+
+    assert!(
+        preview_path.exists(),
+        "versioned social preview image should exist so Telegram does not reuse a stale cached image URL"
+    );
+    for expected in [
+        "property=\"og:image\" content=\"https://ralphterm.rayforcedb.com/assets/social-preview-v0.4.16.png\"",
+        "property=\"og:image:secure_url\" content=\"https://ralphterm.rayforcedb.com/assets/social-preview-v0.4.16.png\"",
+        "property=\"og:image:type\" content=\"image/png\"",
+        "property=\"og:image:width\" content=\"1200\"",
+        "property=\"og:image:height\" content=\"630\"",
+        "property=\"og:image:alt\" content=\"RalphTerm: Hand off the plan. Come back to a branch.\"",
+        "name=\"twitter:image\" content=\"https://ralphterm.rayforcedb.com/assets/social-preview-v0.4.16.png\"",
+        "name=\"twitter:image:alt\" content=\"RalphTerm: Hand off the plan. Come back to a branch.\"",
+    ] {
+        assert!(
+            site_index.contains(expected),
+            "landing page should include social metadata {expected}"
+        );
+    }
+}
+
+#[test]
 fn repo_docs_describe_review_retry_before_blocking() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let readme = std::fs::read_to_string(root.join("README.md")).expect("read README");
