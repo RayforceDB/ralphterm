@@ -182,9 +182,10 @@ status: ready for human review</code></pre>
     <section class="rt-section">
       <p class="rt-eyebrow">— install</p>
       <pre class="rt-code-block">$ curl -sSf https://ralphterm.rayforcedb.com/install.sh | sh</pre>
+      <pre class="rt-code-block">$ brew tap RayforceDB/ralphterm https://github.com/RayforceDB/ralphterm &amp;&amp; brew install ralphterm</pre>
       <pre class="rt-code-block">PS&gt; irm https://ralphterm.rayforcedb.com/install.ps1 | iex</pre>
       <pre class="rt-code-block">$ cargo install ralphterm</pre>
-      <p style="margin-top:10px;font-size:12px;color:var(--rt-muted)">The installer lands <code>ralphterm</code> in <code>~/.local/bin</code> and supports <code>ralphterm update</code> for in-place upgrades.</p>
+      <p style="margin-top:10px;font-size:12px;color:var(--rt-muted)">The shell and PowerShell installers land <code>ralphterm</code> in <code>~/.local/bin</code> and support <code>ralphterm update</code>. Homebrew manages upgrades through <code>brew upgrade ralphterm</code>.</p>
     </section>
 
     <!-- Features grid -->

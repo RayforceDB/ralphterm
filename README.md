@@ -16,6 +16,10 @@ Hand RalphTerm a markdown checkbox plan and let two AI agents do the work. One a
 # Linux / macOS — prebuilt binary
 curl -sSf https://ralphterm.rayforcedb.com/install.sh | sh
 
+# macOS / Linuxbrew — tap this repository as a formula source
+brew tap RayforceDB/ralphterm https://github.com/RayforceDB/ralphterm
+brew install ralphterm
+
 # Windows PowerShell — prebuilt binary
 irm https://ralphterm.rayforcedb.com/install.ps1 | iex
 
@@ -23,7 +27,7 @@ irm https://ralphterm.rayforcedb.com/install.ps1 | iex
 cargo install ralphterm
 ```
 
-The installer lands `ralphterm` in `~/.local/bin` and supports `ralphterm update` for in-place upgrades.
+The shell and PowerShell installers land `ralphterm` in `~/.local/bin` and support `ralphterm update` for in-place upgrades. Homebrew manages upgrades through `brew upgrade ralphterm`.
 
 ## Run a plan
 

@@ -79,7 +79,10 @@
       <section class="rt-doc-panel">
         <h2>Fast path</h2>
         <p>Install, point RalphTerm at a markdown plan, and let the implementer and reviewer loop run from the terminal.</p>
-        <pre><code>curl -sSf https://ralphterm.rayforcedb.com/install.sh | sh
+        <pre><code>brew tap RayforceDB/ralphterm https://github.com/RayforceDB/ralphterm
+brew install ralphterm
+
+curl -sSf https://ralphterm.rayforcedb.com/install.sh | sh
 ralphterm docs/plans/feature.md --review-agent codex</code></pre>
         <p>For strict review configuration, use <code>--require-review</code> with either <code>--review-command</code> or <code>--review-agent</code>.</p>
       </section>
