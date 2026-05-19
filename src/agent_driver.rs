@@ -201,12 +201,25 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
         });
     }
 
+    let end_marker = "<<<END>>>";
+    let mut shutdown: Option<DriverShutdown> = None;
+    let mut file_complete: bool;
+
     // Phase 1: wait for claude to be ready (alt-screen-buffer signal,
     // or 5s fallback), and drive the bypass-permissions dialog if it
     // appears. The wait deliberately consumes whatever startup noise
     // and dialog content the TTY produces so the steady-state reader
     // loop starts from a clean point.
     wait_for_repl_ready(&mut transcript, &mut byte_rx, &writer, &spec).await?;
+
+    // Headless/custom commands can use the RALPHTERM_* env vars to
+    // satisfy the file-handoff contract immediately, before we paste
+    // anything. In that case the PTY reader has usually already hit
+    // EOF; do not try to write a bracketed paste into a dead TTY.
+    file_complete = output_file_has_end(&output_path, end_marker);
+    if !file_complete {
+        shutdown = shutdown_rx.try_recv().ok();
+    }
 
     // Phase 2: paste the prompt now that claude's REPL is alive and the
     // safety dialog (if any) is past.
@@ -225,50 +238,49 @@ pub async fn drive_agent(spec: AgentSpec<'_>) -> Result<AgentRun> {
     //     ESC[200~ and ESC[201~ is one atomic paste — preserve
     //     internal newlines as message content, not keystrokes."
     //   - We log the paste via the event sink so failures are visible.
-    {
-        let mut w = writer.lock().expect("writer mutex");
-        w.write_all(b"\x1b[200~").context("paste start")?;
-        w.write_all(prompt.as_bytes())
-            .context("write task prompt")?;
-        w.write_all(b"\x1b[201~").context("paste end")?;
-        w.flush().context("flush paste")?;
-    }
-    if let Some(sink) = spec.event_sink.as_ref() {
-        sink(DriverEvent {
-            kind: "agent_prompt_pasted",
-            nonce: nonce.clone(),
-            detail: Some(format!("{} bytes", prompt.len())),
-        });
-    }
-    sleep(Duration::from_millis(200)).await;
-    {
-        let mut w = writer.lock().expect("writer mutex");
-        w.write_all(b"\r").context("submit prompt")?;
-        w.flush().context("flush submit")?;
-    }
-    if let Some(sink) = spec.event_sink.as_ref() {
-        sink(DriverEvent {
-            kind: "agent_prompt_submitted",
-            nonce: nonce.clone(),
-            detail: None,
-        });
+    if !file_complete && shutdown.is_none() {
+        {
+            let mut w = writer.lock().expect("writer mutex");
+            w.write_all(b"\x1b[200~").context("paste start")?;
+            w.write_all(prompt.as_bytes())
+                .context("write task prompt")?;
+            w.write_all(b"\x1b[201~").context("paste end")?;
+            w.flush().context("flush paste")?;
+        }
+        if let Some(sink) = spec.event_sink.as_ref() {
+            sink(DriverEvent {
+                kind: "agent_prompt_pasted",
+                nonce: nonce.clone(),
+                detail: Some(format!("{} bytes", prompt.len())),
+            });
+        }
+        sleep(Duration::from_millis(200)).await;
+        {
+            let mut w = writer.lock().expect("writer mutex");
+            w.write_all(b"\r").context("submit prompt")?;
+            w.flush().context("flush submit")?;
+        }
+        if let Some(sink) = spec.event_sink.as_ref() {
+            sink(DriverEvent {
+                kind: "agent_prompt_submitted",
+                nonce: nonce.clone(),
+                detail: None,
+            });
+        }
     }
 
     // Phase 3: main loop. Three concurrent signals decide we're done:
     //   - File watchdog finds END marker in the output file
     //   - Child process exits
     //   - Idle timer elapses with no PTY output activity (failure)
-    let end_marker = "<<<END>>>";
     let mut last_byte_at = Instant::now();
     let mut last_data_event_at = Instant::now();
-    let mut shutdown: Option<DriverShutdown> = None;
-    let mut file_complete = false;
     let mut output_file_seen_growing = false;
     let mut last_output_file_size: u64 = 0;
     let mut file_check_tick = tokio::time::interval(Duration::from_millis(200));
     file_check_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    loop {
+    while !file_complete && shutdown.is_none() {
         let idle_deadline = last_byte_at + spec.idle_timeout;
         let now = Instant::now();
         let idle_wait = idle_deadline.saturating_duration_since(now);
