@@ -112,7 +112,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; }
   background: var(--rt-bg);
 }
 @media (min-width: 768px) {
-  .rt-hero { grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr); gap: 44px; padding: 72px var(--rt-pad-x-lg) 56px; }
+  .rt-hero { grid-template-columns: minmax(0, 0.9fr) minmax(480px, 1.1fr); gap: 44px; padding: 72px var(--rt-pad-x-lg) 56px; }
 }
 .rt-hero-copy {
   align-self: center;
@@ -122,10 +122,13 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; }
   font-size: 15px;
 }
 .rt-hero-run {
-  align-self: stretch;
+  align-self: center;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  width: 100%;
+  max-width: 560px;
+  justify-self: end;
   border: 1px solid var(--rt-fg);
   background: var(--rt-terminal);
   color: var(--rt-fg-invert);
@@ -154,12 +157,12 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; }
 .rt-terminal {
   flex: 1;
   margin: 0;
-  padding: 18px 16px;
+  padding: 15px 16px;
   overflow-x: auto;
   color: #e9edf0;
   font-family: var(--rt-font-mono);
   font-size: 12px;
-  line-height: 1.65;
+  line-height: 1.5;
 }
 .rt-terminal code { font-size: inherit; }
 .rt-run-facts {
